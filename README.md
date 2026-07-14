@@ -1,12 +1,15 @@
-<H1> Qashy </H1>
+<H1 div align="center"> Qashy </H1>
 
+<div align="center">
+  
 private and fully open source budgeting app
 
-## Description
+### Description
 cool app, THANK YOU FOR YOUR ATTENTION TO THIS MATTER
 
-## Roadmap
+### Roadmap
 TBD
 
-## Installation
+### Installation
 TBD
+</div>
