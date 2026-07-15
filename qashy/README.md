@@ -1,56 +1,39 @@
-# Welcome to your Expo app 👋
+# Qashy
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Qashy is a private, local-first personal budget app for iOS, Android, and the web. It tracks accounts, expenses, income, transfers, budgets, goals, recurring transactions, exchange rates, and CSV imports without requiring an account or backend.
 
-## Get started
-
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Run locally
 
 ```bash
-npm run reset-project
+npm install
+npm start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Open the project in Expo Go for iOS or Android, or press `w` for the responsive web app.
 
-### Other setup steps
+Useful checks:
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run build:web
+npm run test:web
+```
 
-## Learn more
+`npm run build:web` creates the static PWA and its Workbox service worker in `dist/`. Serve that directory over HTTPS (or localhost) to test installation and offline startup.
 
-To learn more about developing your project with Expo, look at the following resources:
+## Architecture
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+- `src/domain` contains sync-ready finance entities. Money is stored as integer minor units; exchange rates are decimal strings and each transaction snapshots its base-currency value.
+- `src/data/local-finance-repository.ts` is the shared repository contract implementation for atomic transfers, derived balances, budgets, recurring occurrences, dashboard aggregation, soft deletion, and CSV portability.
+- `src/data/storage.native.ts` persists records through Expo SQLite with versioned migrations and WAL mode.
+- `src/data/storage.web.ts` persists the same records in IndexedDB through Dexie. The service worker caches only the app shell; it never caches finance records.
+- `src/theme` centralizes semantic light/dark tokens, curated and custom accents, Android dynamic colors, and web tonal palettes.
+- `src/app` uses Expo Router with four mobile tabs and responsive web navigation: bottom bar, compact rail, then full sidebar.
 
-## Join the community
+## Privacy and portability
 
-Join our community of developers creating universal apps.
+Qashy has no authentication, analytics, remote finance API, or cloud sync. Native records stay in SQLite and web records stay in IndexedDB. CSV export is UTF-8 with stable columns; import validates and previews rejected and duplicate rows before committing.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Clearing app storage or browser site data removes local records. Export CSV data regularly if it is your only copy.
