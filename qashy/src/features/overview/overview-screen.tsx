@@ -32,16 +32,18 @@ export function OverviewScreen() {
   const summary = useMemo(() => {
     // Repository reads are synchronous; these references make their external-store inputs explicit.
     void state.accounts;
+    void state.budgetPeriods;
     void state.budgets;
     void state.categories;
     void state.exchangeRates;
+    void state.settings;
     void state.transactions;
     return repository.getDashboard(startOfMonth(month), endOfMonth(month));
-  }, [repository, month, state.accounts, state.budgets, state.categories, state.exchangeRates, state.transactions]);
+  }, [repository, month, state.accounts, state.budgetPeriods, state.budgets, state.categories, state.exchangeRates, state.settings, state.transactions]);
   const wide = width >= 900;
   const currency = state.settings.baseCurrency;
   const locale = state.settings.locale;
-  const budgetProgress = summary.budgetLimitMinor ? summary.budgetSpentMinor / summary.budgetLimitMinor : 0;
+  const budgetProgress = summary.budgetLimitMinor > 0 ? summary.budgetSpentMinor / summary.budgetLimitMinor : summary.budgetSpentMinor > 0 ? 1 : 0;
 
   return (
     <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }}>
@@ -65,6 +67,11 @@ export function OverviewScreen() {
             <AppText variant="money" style={{ color: theme.onAccentContainer, fontSize: width < 520 ? 34 : 44, lineHeight: 50 }}>
               {formatMoney(summary.netWorthMinor, currency, locale)}
             </AppText>
+            {summary.missingExchangeRates.length ? (
+              <AppText variant="caption" style={{ color: theme.warning }}>
+                Excludes {summary.missingExchangeRates.map((rate) => rate.fromCurrency).join(', ')} until an effective exchange rate is added.
+              </AppText>
+            ) : null}
           </View>
           <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
             {[
@@ -94,7 +101,7 @@ export function OverviewScreen() {
         <View style={{ flexDirection: wide ? 'row' : 'column', gap: 18, alignItems: 'stretch' }}>
           <Card style={{ flex: 1, gap: 14 }}>
             <SectionHeader title="Budget pulse" action="Open plan" onAction={() => router.push('/plan')} />
-            {summary.budgetLimitMinor ? (
+            {summary.budgetLimitMinor > 0 || summary.budgetSpentMinor > 0 ? (
               <>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
                   <AppText variant="headline">{formatMoney(summary.budgetSpentMinor, currency, locale)}</AppText>

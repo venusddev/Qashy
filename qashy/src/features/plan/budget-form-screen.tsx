@@ -46,7 +46,7 @@ export function BudgetFormScreen() {
         rollover,
         filters: { accountIds: [], categoryIds: selectedCategories, tagIds: [] },
         categoryLimits: selectedCategories
-          .filter((categoryId) => Number(categoryLimits[categoryId]) > 0)
+          .filter((categoryId) => categoryLimits[categoryId]?.trim())
           .map((categoryId) => ({ categoryId, limitMinor: parseMoney(categoryLimits[categoryId], state.settings.baseCurrency, state.settings.locale) })),
         archived: false,
       }, existing?.id);

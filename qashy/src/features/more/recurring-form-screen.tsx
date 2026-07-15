@@ -19,7 +19,8 @@ export function RecurringFormScreen() {
   const state = useFinanceState();
   const theme = useQashyTheme();
   const existing = params.id ? state.recurringRules.find((item) => item.id === params.id) : undefined;
-  const initialAccount = state.accounts.find((item) => item.id === (existing?.template.accountId ?? params.accountId)) ?? state.accounts[0];
+  const initialAccount = state.accounts.find((item) => item.id === (existing?.template.accountId ?? params.accountId))
+    ?? state.accounts.find((item) => !item.archived);
   const [kind, setKind] = useState<CategoryKind>(existing?.template.kind ?? params.kind ?? 'expense');
   const [title, setTitle] = useState(existing?.template.title ?? params.title ?? '');
   const [amount, setAmount] = useState(existing ? String(existing.template.amountMinor / 10 ** currencyDigits(existing.template.currency, state.settings.locale)) : params.amount ?? '');
@@ -36,13 +37,21 @@ export function RecurringFormScreen() {
   const save = async () => {
     if (!account) return;
     try {
+      const normalizedInterval = Math.max(1, Math.floor(Number(interval) || 1));
+      const normalizedEndDate = endDate || null;
+      const scheduleChanged = !!existing && (
+        existing.unit !== unit ||
+        existing.interval !== normalizedInterval ||
+        existing.startDate !== startDate ||
+        existing.endDate !== normalizedEndDate
+      );
       await repository.saveRecurringRule({
         template: { kind, title: title.trim() || 'Recurring transaction', note: '', accountId: account.id, categoryId: categoryId || null, tagIds: [], amountMinor: parseMoney(amount, account.currency, state.settings.locale), currency: account.currency },
         unit,
-        interval: Math.max(1, Number(interval) || 1),
+        interval: normalizedInterval,
         startDate,
-        endDate: endDate || null,
-        nextDueDate: existing?.nextDueDate ?? startDate,
+        endDate: normalizedEndDate,
+        nextDueDate: !existing || scheduleChanged ? startDate : existing.nextDueDate,
         autoPost,
         active: true,
       }, existing?.id);

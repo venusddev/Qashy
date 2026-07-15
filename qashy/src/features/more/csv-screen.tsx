@@ -7,7 +7,7 @@ import { Alert, Pressable, ScrollView, View } from 'react-native';
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
-import type { CsvImportRow, ImportResult, TransactionKind } from '@/domain/models';
+import type { CsvImportRow, ImportResult, TransactionKind, TransactionStatus } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { parseCsvTable } from '@/utils/csv';
@@ -18,6 +18,7 @@ type CsvField = Exclude<keyof CsvImportRow, 'rowNumber'>;
 const CSV_FIELDS: { key: CsvField; label: string; optional?: boolean; aliases: string[] }[] = [
   { key: 'date', label: 'Date', aliases: ['date', 'transaction_date', 'posted_date'] },
   { key: 'type', label: 'Type', aliases: ['type', 'kind', 'transaction_type'] },
+  { key: 'status', label: 'Status', optional: true, aliases: ['status', 'transaction_status'] },
   { key: 'title', label: 'Title', aliases: ['title', 'description', 'merchant', 'name'] },
   { key: 'amount', label: 'Amount', aliases: ['amount', 'value'] },
   { key: 'currency', label: 'Currency', aliases: ['currency', 'currency_code'] },
@@ -72,6 +73,7 @@ export function CsvScreen() {
       rowNumber: Number(record.rowNumber),
       date: value(record, 'date'),
       type: (value(record, 'type') || 'expense').toLowerCase() as TransactionKind,
+      status: (value(record, 'status') || 'posted').toLowerCase() as TransactionStatus,
       title: value(record, 'title'),
       amount: value(record, 'amount'),
       currency: (value(record, 'currency') || state.settings.baseCurrency).toUpperCase(),
@@ -79,7 +81,7 @@ export function CsvScreen() {
       category: value(record, 'category') || defaultCategory,
       tags: value(record, 'tags'),
       note: value(record, 'note'),
-      exchangeRate: value(record, 'exchangeRate') || '1',
+      exchangeRate: value(record, 'exchangeRate'),
       destinationAccount: value(record, 'destinationAccount'),
       destinationAmount: value(record, 'destinationAmount'),
     }));
@@ -101,6 +103,8 @@ export function CsvScreen() {
       const result = await repository.importCsv(rows, true);
       setPreview(result);
       Alert.alert('Import complete', `${result.committedIds.length} transactions imported.`);
+    } catch (reason) {
+      Alert.alert('Couldn’t import CSV', reason instanceof Error ? reason.message : 'No rows were imported.');
     } finally {
       setBusy(false);
     }
@@ -129,7 +133,7 @@ export function CsvScreen() {
     <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }} contentContainerStyle={{ padding: 18, paddingBottom: 40, gap: 16, width: '100%', maxWidth: 760, alignSelf: 'center' }}>
       <Card style={{ gap: 14 }}>
         <AppText variant="headline">Export transactions</AppText>
-        <AppText muted>Creates a UTF-8 CSV with dates, amounts, currencies, source and destination accounts, categories, tags, notes, exchange-rate snapshots, and transfer linkage.</AppText>
+        <AppText muted>Creates a UTF-8 CSV with dates, statuses, amounts, currencies, source and destination accounts, categories, tags, notes, exchange-rate snapshots, and transfer linkage.</AppText>
         <ActionButton title="Export CSV" icon="tray" onPress={exportData} />
       </Card>
       <Card style={{ gap: 14 }}>

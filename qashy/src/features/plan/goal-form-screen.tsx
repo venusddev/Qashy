@@ -45,7 +45,7 @@ export function GoalFormScreen() {
         linkedCategoryId: linkedCategoryId || null,
         archived: false,
       }, existing?.id);
-      if (contribution && Number(contribution) > 0) {
+      if (contribution.trim()) {
         await repository.saveContribution({ goalId: goal.id, amountMinor: parseMoney(contribution, state.settings.baseCurrency, state.settings.locale), localDate: todayLocal(), transactionId: null, note: 'Manual contribution' });
       }
       router.replace('/plan');

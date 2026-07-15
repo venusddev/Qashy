@@ -210,6 +210,15 @@ export interface DashboardSummary {
   recentTransactions: TransactionRecord[];
   upcomingTransactions: TransactionRecord[];
   dailySpend: { date: string; amountMinor: number }[];
+  missingExchangeRates: { fromCurrency: CurrencyCode; toCurrency: CurrencyCode }[];
+}
+
+export interface BudgetStatus {
+  budget: Budget;
+  snapshot: BudgetPeriodSnapshot;
+  spentMinor: number;
+  effectiveLimitMinor: number;
+  categorySpend: { categoryId: string; amountMinor: number; limitMinor: number }[];
 }
 
 export interface CsvImportRow {
@@ -226,6 +235,7 @@ export interface CsvImportRow {
   exchangeRate: string;
   destinationAccount: string;
   destinationAmount: string;
+  status?: TransactionStatus;
 }
 
 export interface ImportResult {

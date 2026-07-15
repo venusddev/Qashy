@@ -14,4 +14,13 @@ describe('money utilities', () => {
   it('formats signed currency values', () => {
     expect(formatMoney(1250, 'USD', 'en-US', { sign: true })).toContain('+');
   });
+
+  it('parses locale decimal separators without changing magnitude', () => {
+    expect(parseMoney('12,50', 'EUR', 'de-DE')).toBe(1250);
+    expect(parseMoney('1.234,56', 'EUR', 'de-DE')).toBe(123456);
+  });
+
+  it('rejects malformed amounts', () => {
+    expect(() => parseMoney('12,3,4', 'EUR', 'de-DE')).toThrow('valid amount');
+  });
 });

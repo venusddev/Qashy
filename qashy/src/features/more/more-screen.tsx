@@ -20,12 +20,14 @@ export function MoreScreen() {
   const wide = width >= 860;
   const summary = useMemo(() => {
     void state.accounts;
+    void state.budgetPeriods;
     void state.budgets;
     void state.categories;
     void state.exchangeRates;
+    void state.settings;
     void state.transactions;
     return repository.getDashboard(startOfMonth(), endOfMonth());
-  }, [repository, state.accounts, state.budgets, state.categories, state.exchangeRates, state.transactions]);
+  }, [repository, state.accounts, state.budgetPeriods, state.budgets, state.categories, state.exchangeRates, state.settings, state.transactions]);
   const activeAccounts = state.accounts.filter((item) => !item.archived);
   const recurring = state.recurringRules.filter((item) => item.active);
 

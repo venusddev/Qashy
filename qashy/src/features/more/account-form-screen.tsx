@@ -25,6 +25,10 @@ export function AccountFormScreen() {
   const [currency, setCurrency] = useState(existing?.currency ?? state.settings.baseCurrency);
   const [opening, setOpening] = useState(existing ? String(existing.openingBalanceMinor / 10 ** currencyDigits(existing.currency, state.settings.locale)) : '0');
   const [color, setColor] = useState(existing?.color ?? theme.staticAccent);
+  const currencyLocked = !!existing && (
+    state.transactions.some((item) => item.accountId === existing.id || item.destinationAccountId === existing.id) ||
+    state.recurringRules.some((item) => item.template.accountId === existing.id)
+  );
 
   const save = async () => {
     try {
@@ -41,7 +45,7 @@ export function AccountFormScreen() {
         <FormField label="Account name" value={name} onChangeText={setName} placeholder="Everyday" autoFocus={!existing} />
         <AppText variant="label">Type</AppText>
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{(['checking', 'cash', 'savings', 'credit', 'wallet'] as AccountType[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={type === item} onPress={() => setType(item)} />)}</View>
-        <FormField label="Currency" value={currency} onChangeText={setCurrency} maxLength={3} autoCapitalize="characters" />
+        <FormField label="Currency" value={currency} onChangeText={setCurrency} maxLength={3} autoCapitalize="characters" editable={!currencyLocked} hint={currencyLocked ? 'Currency is locked because this account has transaction or schedule history.' : undefined} />
         <FormField label="Opening balance" value={opening} onChangeText={setOpening} keyboardType="decimal-pad" hint="Changing this adjusts the derived account balance." />
         <AppText variant="label">Color</AppText>
         <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>{COLORS.map((item) => <Pressable key={item} accessibilityRole="button" accessibilityLabel={`Use ${item} account color`} onPress={() => setColor(item)} style={{ width: 44, height: 44, borderRadius: 99, backgroundColor: item, borderWidth: color === item ? 3 : 0, borderColor: theme.text }} />)}</View>

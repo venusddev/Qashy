@@ -2,6 +2,7 @@ const HEADER_ALIASES: Record<string, string> = {
   date: 'date',
   type: 'type',
   kind: 'type',
+  status: 'status',
   title: 'title',
   description: 'title',
   amount: 'amount',
@@ -13,6 +14,10 @@ const HEADER_ALIASES: Record<string, string> = {
   notes: 'note',
   exchange_rate: 'exchangeRate',
   exchangerate: 'exchangeRate',
+  destination_account: 'destinationAccount',
+  destinationaccount: 'destinationAccount',
+  destinationamount: 'destinationAmount',
+  destination_amount: 'destinationAmount',
 };
 
 export function parseCsvText(input: string) {

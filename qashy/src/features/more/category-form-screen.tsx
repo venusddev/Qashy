@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Alert, Pressable, ScrollView, View } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
@@ -25,8 +25,12 @@ export function CategoryFormScreen() {
   const [parentId, setParentId] = useState(existing?.parentId ?? '');
 
   const save = async () => {
-    await repository.saveCategory({ name: name.trim() || 'Category', kind, color, icon: existing?.icon ?? (kind === 'income' ? 'arrow.down' : 'arrow.up'), parentId: parentId || null, archived: false }, existing?.id);
-    router.replace('/more');
+    try {
+      await repository.saveCategory({ name: name.trim() || 'Category', kind, color, icon: existing?.icon ?? (kind === 'income' ? 'arrow.down' : 'arrow.up'), parentId: parentId || null, archived: false }, existing?.id);
+      router.replace('/more');
+    } catch (reason) {
+      Alert.alert('Couldn’t save category', reason instanceof Error ? reason.message : 'Check the form and try again.');
+    }
   };
 
   return (

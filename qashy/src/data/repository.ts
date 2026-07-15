@@ -2,6 +2,7 @@ import type {
   Account,
   AppSettings,
   Budget,
+  BudgetStatus,
   Category,
   CsvImportRow,
   DashboardSummary,
@@ -70,6 +71,8 @@ export interface FinanceRepository {
   saveExchangeRate(input: RateInput, id?: string): Promise<ExchangeRate>;
   queryTransactions(query?: TransactionQuery): TransactionRecord[];
   getDashboard(fromDate: string, toDate: string): DashboardSummary;
+  getBudgetStatuses(onDate: string): BudgetStatus[];
+  getGoalProgress(goalId: string): number;
   generateRecurring(horizonDate?: string): Promise<number>;
   confirmUpcoming(id: string): Promise<void>;
   skipUpcoming(id: string): Promise<void>;

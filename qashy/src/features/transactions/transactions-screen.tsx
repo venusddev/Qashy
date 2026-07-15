@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Pressable, SectionList, TextInput, View } from 'react-native';
+import { Alert, Pressable, SectionList, TextInput, View } from 'react-native';
 
 import { TransactionRow } from '@/components/finance/transaction-row';
 import { ActionButton } from '@/components/ui/action-button';
@@ -24,6 +24,10 @@ export function TransactionsScreen() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [categoryOverrides, setCategoryOverrides] = useState<Record<string, string | null>>({});
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
+  const selectedKinds = [...new Set(state.transactions
+    .filter((item) => selectedIds.includes(item.id) && item.kind !== 'transfer')
+    .map((item) => item.kind))];
+  const compatibleCategoryKind = selectedKinds.length === 1 ? selectedKinds[0] : null;
   const transactions = useMemo(() => {
     void selectedIds;
     void state.transactions;
@@ -51,12 +55,16 @@ export function TransactionsScreen() {
 
   const changeCategory = async (categoryId: string | null) => {
     const ids = [...selectedIds];
-    await repository.updateTransactionsCategory(ids, categoryId);
-    setCategoryOverrides((current) => ({
-      ...current,
-      ...Object.fromEntries(ids.map((id) => [id, categoryId])),
-    }));
-    setSelectedIds([]);
+    try {
+      await repository.updateTransactionsCategory(ids, categoryId);
+      setCategoryOverrides((current) => ({
+        ...current,
+        ...Object.fromEntries(ids.map((id) => [id, categoryId])),
+      }));
+      setSelectedIds([]);
+    } catch (reason) {
+      Alert.alert('Couldn’t change category', reason instanceof Error ? reason.message : 'Try a compatible category.');
+    }
   };
 
   const deleteSelected = async () => {
@@ -106,9 +114,10 @@ export function TransactionsScreen() {
                 <Pressable accessibilityRole="button" onPress={() => setSelectedIds([])}><AppText variant="label" style={{ color: theme.accent }}>Clear</AppText></Pressable>
               </View>
               <AppText variant="caption" muted>Change category</AppText>
+              {selectedKinds.length > 1 ? <AppText variant="caption" muted>Select only income or only expense transactions to assign a category.</AppText> : null}
               <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                 <ChoiceChip label="Uncategorized" selected={false} onPress={() => changeCategory(null)} />
-                {state.categories.filter((item) => item.kind === 'expense' && !item.archived).map((category) => (
+                {state.categories.filter((item) => item.kind === compatibleCategoryKind && !item.archived).map((category) => (
                   <ChoiceChip key={category.id} label={category.name} selected={false} onPress={() => changeCategory(category.id)} />
                 ))}
               </View>

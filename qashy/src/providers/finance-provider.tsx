@@ -1,5 +1,5 @@
 import { createContext, use, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, Text, View } from 'react-native';
 
 import type { FinanceRepository } from '@/data/repository';
 import { financeRepository } from '@/data/local-finance-repository';
@@ -25,6 +25,25 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     financeRepository.initialize().catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : 'Qashy could not open its local database.');
     });
+  }, []);
+
+  useEffect(() => {
+    const reconcile = () => {
+      if (financeRepository.getSnapshot().ready) financeRepository.generateRecurring().catch(() => undefined);
+    };
+    if (process.env.EXPO_OS === 'web' && typeof document !== 'undefined') {
+      const onVisibilityChange = () => {
+        if (document.visibilityState === 'visible') reconcile();
+      };
+      document.addEventListener('visibilitychange', onVisibilityChange);
+      return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+    }
+    let previousState = AppState.currentState;
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (previousState !== 'active' && nextState === 'active') reconcile();
+      previousState = nextState;
+    });
+    return () => subscription.remove();
   }, []);
 
   if (error) {

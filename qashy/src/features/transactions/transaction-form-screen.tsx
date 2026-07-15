@@ -28,9 +28,16 @@ export function TransactionFormScreen() {
   const [destinationAccountId, setDestinationAccountId] = useState(existing?.destinationAccountId ?? '');
   const [categoryId, setCategoryId] = useState(existing?.categoryId ?? '');
   const [note, setNote] = useState(existing?.note ?? '');
-  const [exchangeRate, setExchangeRate] = useState(existing?.exchangeRate ?? '1');
+  const [exchangeRate, setExchangeRate] = useState(existing?.exchangeRate ?? '');
+  const existingDestination = state.accounts.find((item) => item.id === existing?.destinationAccountId);
+  const [destinationAmount, setDestinationAmount] = useState(() =>
+    existing && existing.destinationAmountMinor !== null && existingDestination
+      ? String(existing.destinationAmountMinor / 10 ** currencyDigits(existingDestination.currency, state.settings.locale))
+      : '',
+  );
   const [saving, setSaving] = useState(false);
   const account = state.accounts.find((item) => item.id === accountId) ?? defaultAccount;
+  const destinationAccount = state.accounts.find((item) => item.id === destinationAccountId);
   const categories = useMemo(() => state.categories.filter((item) => !item.archived && item.kind === (kind === 'income' ? 'income' : 'expense')), [state.categories, kind]);
   const needsRate = account && account.currency !== state.settings.baseCurrency;
 
@@ -45,9 +52,12 @@ export function TransactionFormScreen() {
         localDate: date,
         accountId: account.id,
         destinationAccountId: kind === 'transfer' ? destinationAccountId : null,
+        destinationAmountMinor: kind === 'transfer' && destinationAccount && destinationAmount.trim()
+          ? parseMoney(destinationAmount, destinationAccount.currency, state.settings.locale)
+          : null,
         categoryId: kind === 'transfer' ? null : categoryId || null,
         amountMinor: parseMoney(amount, account.currency, state.settings.locale),
-        exchangeRate: needsRate ? exchangeRate : '1',
+        exchangeRate: needsRate && exchangeRate.trim() ? exchangeRate.trim() : undefined,
         status: existing?.status ?? 'posted',
       }, existing?.id);
       router.replace(returnTo === '/overview' ? '/overview' : '/transactions');
@@ -68,7 +78,7 @@ export function TransactionFormScreen() {
     <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }} contentContainerStyle={{ padding: 18, paddingBottom: 44, gap: 18, width: '100%', maxWidth: 680, alignSelf: 'center' }}>
       <View style={{ flexDirection: 'row', gap: 8 }}>
         {(['expense', 'income', 'transfer'] as TransactionKind[]).map((item) => (
-          <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => setKind(item)} /></View>
+          <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => { setKind(item); setCategoryId(''); }} /></View>
         ))}
       </View>
 
@@ -81,14 +91,24 @@ export function TransactionFormScreen() {
       <Card style={{ gap: 14 }}>
         <AppText variant="label">From account</AppText>
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-          {state.accounts.filter((item) => !item.archived).map((item) => <ChoiceChip key={item.id} label={`${item.name} · ${item.currency}`} selected={accountId === item.id} onPress={() => { setAccountId(item.id); if (destinationAccountId === item.id) setDestinationAccountId(''); }} />)}
+          {state.accounts.filter((item) => !item.archived).map((item) => <ChoiceChip key={item.id} label={`${item.name} · ${item.currency}`} selected={accountId === item.id} onPress={() => { setAccountId(item.id); setExchangeRate(''); setDestinationAmount(''); if (destinationAccountId === item.id) setDestinationAccountId(''); }} />)}
         </View>
         {kind === 'transfer' ? (
           <>
             <AppText variant="label">To account</AppText>
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              {state.accounts.filter((item) => !item.archived && item.id !== accountId).map((item) => <ChoiceChip key={item.id} label={`${item.name} · ${item.currency}`} selected={destinationAccountId === item.id} onPress={() => setDestinationAccountId(item.id)} />)}
+              {state.accounts.filter((item) => !item.archived && item.id !== accountId).map((item) => <ChoiceChip key={item.id} label={`${item.name} · ${item.currency}`} selected={destinationAccountId === item.id} onPress={() => { setDestinationAccountId(item.id); setDestinationAmount(''); }} />)}
             </View>
+            {destinationAccount ? (
+              <FormField
+                label={`Destination amount (${destinationAccount.currency})`}
+                value={destinationAmount}
+                onChangeText={setDestinationAmount}
+                keyboardType="decimal-pad"
+                placeholder="Calculated from saved rates"
+                hint="Leave blank to calculate through your effective exchange rates."
+              />
+            ) : null}
           </>
         ) : (
           <>
@@ -101,7 +121,7 @@ export function TransactionFormScreen() {
       </Card>
 
       {needsRate ? (
-        <Card><FormField label={`1 ${account.currency} equals how many ${state.settings.baseCurrency}?`} value={exchangeRate} onChangeText={setExchangeRate} keyboardType="decimal-pad" hint="The rate is saved on this transaction so old reports stay stable." /></Card>
+        <Card><FormField label={`1 ${account.currency} equals how many ${state.settings.baseCurrency}?`} value={exchangeRate} onChangeText={setExchangeRate} keyboardType="decimal-pad" placeholder="Use saved effective rate" hint="Leave blank to use the saved rate for this date. The applied rate is snapshotted." /></Card>
       ) : null}
 
       <Card style={{ gap: 14 }}>

@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
+import { Alert, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
@@ -48,6 +48,8 @@ export function OnboardingScreen() {
         navigator.storage.persist().catch(() => false);
       }
       router.replace('/overview');
+    } catch (reason) {
+      Alert.alert('Couldn’t finish setup', reason instanceof Error ? reason.message : 'Check the form and try again.');
     } finally {
       setSaving(false);
     }

@@ -7,6 +7,12 @@ describe('calendar behavior', () => {
     expect(addRecurrence('2027-01-31', 'month', 1)).toBe('2027-02-28');
   });
 
+  it('preserves a non-month-end recurrence anchor after a short month', () => {
+    const february = addRecurrence('2026-01-30', 'month', 1, '2026-01-30');
+    expect(february).toBe('2026-02-28');
+    expect(addRecurrence(february, 'month', 1, '2026-01-30')).toBe('2026-03-30');
+  });
+
   it('resolves anchored multi-month budget periods', () => {
     expect(resolvePeriod({ unit: 'month', interval: 3, anchorDate: '2026-01-01', endDate: null }, '2026-05-15')).toEqual({
       start: '2026-04-01',

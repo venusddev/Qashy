@@ -27,23 +27,35 @@ export function endOfMonth(value = todayLocal()) {
   return toLocalDate(date);
 }
 
-export function addRecurrence(value: string, unit: 'day' | 'week' | 'month' | 'year', interval: number) {
+export function isLocalDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year] = value.split('-').map(Number);
+  return year >= 1000 && toLocalDate(parseLocalDate(value)) === value;
+}
+
+export function addRecurrence(
+  value: string,
+  unit: 'day' | 'week' | 'month' | 'year',
+  interval: number,
+  anchorValue = value,
+) {
   const date = parseLocalDate(value);
-  const originalDay = date.getDate();
-  const originalWasMonthEnd = originalDay === new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  const anchor = parseLocalDate(anchorValue);
+  const anchorDay = anchor.getDate();
+  const anchorMonth = anchor.getMonth();
+  const anchorWasMonthEnd = anchorDay === new Date(anchor.getFullYear(), anchorMonth + 1, 0).getDate();
   if (unit === 'day') date.setDate(date.getDate() + interval);
   if (unit === 'week') date.setDate(date.getDate() + interval * 7);
   if (unit === 'month') {
     date.setDate(1);
     date.setMonth(date.getMonth() + interval);
     const maxDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-    date.setDate(originalWasMonthEnd ? maxDay : Math.min(originalDay, maxDay));
+    date.setDate(anchorWasMonthEnd ? maxDay : Math.min(anchorDay, maxDay));
   }
   if (unit === 'year') {
-    const month = date.getMonth();
-    date.setFullYear(date.getFullYear() + interval, month, 1);
-    const maxDay = new Date(date.getFullYear(), month + 1, 0).getDate();
-    date.setDate(originalWasMonthEnd ? maxDay : Math.min(originalDay, maxDay));
+    date.setFullYear(date.getFullYear() + interval, anchorMonth, 1);
+    const maxDay = new Date(date.getFullYear(), anchorMonth + 1, 0).getDate();
+    date.setDate(anchorWasMonthEnd ? maxDay : Math.min(anchorDay, maxDay));
   }
   return toLocalDate(date);
 }
