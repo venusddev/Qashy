@@ -50,7 +50,7 @@ export function GoalFormScreen() {
       if (contribution.trim()) {
         await repository.saveContribution({ goalId: goal.id, amountMinor: parseMoney(contribution, state.settings.baseCurrency, state.settings.locale), localDate: todayLocal(), transactionId: null, note: 'Manual contribution' });
       }
-      router.replace('/plan');
+      router.dismissTo('/plan');
     } catch (reason) {
       showError('Couldn’t save goal', errorMessage(reason, 'Try again.'));
     } finally {
@@ -64,7 +64,7 @@ export function GoalFormScreen() {
     setSaving(true);
     try {
       await repository.deleteEntities('goals', [existing.id]);
-      router.replace('/plan');
+      router.dismissTo('/plan');
     } catch (reason) {
       showError('Couldn’t delete goal', errorMessage(reason, 'Try again.'));
     } finally {

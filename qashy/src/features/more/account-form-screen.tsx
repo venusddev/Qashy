@@ -52,7 +52,7 @@ export function AccountFormScreen() {
     setBusy(true);
     try {
       await repository.saveAccount({ name: name.trim() || 'Account', type, currency: currency.toUpperCase(), openingBalanceMinor: parseMoney(opening, currency, state.settings.locale), icon: 'wallet.bifold', color, archived: false }, existing?.id);
-      router.replace('/more');
+      router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t save account', errorMessage(reason, 'Try again.'));
     } finally {
@@ -66,7 +66,7 @@ export function AccountFormScreen() {
     setBusy(true);
     try {
       await repository.saveAccount({ ...existing, archived: true }, existing.id);
-      router.replace('/more');
+      router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t archive account', errorMessage(reason, 'Try again.'));
     } finally {

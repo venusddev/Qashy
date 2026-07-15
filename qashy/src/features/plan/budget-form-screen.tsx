@@ -52,7 +52,7 @@ export function BudgetFormScreen() {
           .map((categoryId) => ({ categoryId, limitMinor: parseMoney(categoryLimits[categoryId], state.settings.baseCurrency, state.settings.locale) })),
         archived: false,
       }, existing?.id);
-      router.replace('/plan');
+      router.dismissTo('/plan');
     } catch (reason) {
       showError('Couldn’t save budget', errorMessage(reason, 'Try again.'));
     } finally {
@@ -66,7 +66,7 @@ export function BudgetFormScreen() {
     setSaving(true);
     try {
       await repository.deleteEntities('budgets', [existing.id]);
-      router.replace('/plan');
+      router.dismissTo('/plan');
     } catch (reason) {
       showError('Couldn’t delete budget', errorMessage(reason, 'Try again.'));
     } finally {

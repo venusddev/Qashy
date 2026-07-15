@@ -81,7 +81,7 @@ export function TransactionFormScreen() {
         exchangeRate: needsRate && exchangeRate.trim() ? exchangeRate.trim() : undefined,
         status: existing?.status ?? 'posted',
       }, existing?.id);
-      router.replace(returnTo === '/overview' ? '/overview' : '/transactions');
+      router.dismissTo(returnTo === '/overview' ? '/overview' : '/transactions');
     } catch (reason) {
       showError('Couldn’t save transaction', errorMessage(reason, 'Check the form and try again.'));
     } finally {
@@ -95,7 +95,7 @@ export function TransactionFormScreen() {
     setBusy(true);
     try {
       await repository.deleteEntities('transactions', [existing.id]);
-      router.replace(returnTo === '/overview' ? '/overview' : '/transactions');
+      router.dismissTo(returnTo === '/overview' ? '/overview' : '/transactions');
     } catch (reason) {
       showError('Couldn’t delete transaction', errorMessage(reason, 'Try again.'));
     } finally {

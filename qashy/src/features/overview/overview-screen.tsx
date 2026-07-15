@@ -62,8 +62,8 @@ export function OverviewScreen() {
   return (
     <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }}>
       <ScreenContainer>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <View style={{ gap: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <View style={{ gap: 4, flexShrink: 1, minWidth: 200 }}>
             <AppText variant="caption" muted>YOUR MONEY AT A GLANCE</AppText>
             <AppText variant="headline">A quieter view of your finances.</AppText>
           </View>

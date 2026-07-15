@@ -60,7 +60,7 @@ export function RecurringFormScreen() {
         active: true,
       }, existing?.id);
       await repository.generateRecurring();
-      router.replace('/more');
+      router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t save schedule', errorMessage(reason, 'Try again.'));
     } finally {
@@ -74,7 +74,7 @@ export function RecurringFormScreen() {
     setBusy(true);
     try {
       await repository.deleteEntities('recurringRules', [existing.id]);
-      router.replace('/more');
+      router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t delete schedule', errorMessage(reason, 'Try again.'));
     } finally {

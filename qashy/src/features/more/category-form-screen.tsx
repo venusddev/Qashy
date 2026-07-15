@@ -40,7 +40,7 @@ export function CategoryFormScreen() {
     setBusy(true);
     try {
       await repository.saveCategory({ name: name.trim() || 'Category', kind, color, icon: existing?.icon ?? (kind === 'income' ? 'arrow.down' : 'arrow.up'), parentId: parentId || null, archived: false }, existing?.id);
-      router.replace('/more');
+      router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t save category', errorMessage(reason, 'Check the form and try again.'));
     } finally {
@@ -54,7 +54,7 @@ export function CategoryFormScreen() {
     setBusy(true);
     try {
       await repository.saveCategory({ ...existing, archived: true }, existing.id);
-      router.replace('/more');
+      router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t archive category', errorMessage(reason, 'Try again.'));
     } finally {

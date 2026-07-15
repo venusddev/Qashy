@@ -23,7 +23,7 @@ export function ExchangeRateScreen() {
     setSaving(true);
     try {
       await repository.saveExchangeRate({ fromCurrency: fromCurrency.toUpperCase(), toCurrency: state.settings.baseCurrency, rate, effectiveDate }, existing?.id);
-      router.replace('/more');
+      router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t save rate', errorMessage(reason, 'Check the form and try again.'));
     } finally {
@@ -36,7 +36,7 @@ export function ExchangeRateScreen() {
     setSaving(true);
     try {
       await repository.deleteEntities('exchangeRates', [existing.id]);
-      router.replace('/more');
+      router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t delete rate', errorMessage(reason, 'Try again.'));
     } finally {

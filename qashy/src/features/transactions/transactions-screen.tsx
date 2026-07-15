@@ -25,20 +25,32 @@ export function TransactionsScreen() {
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // Optimistic overlays for batch mutations: context updates from the
+  // repository don't always reach an already-mounted screen on web, so the
+  // list applies the change locally, then drops the overlay as soon as a
+  // fresh transactions snapshot arrives (keeping it from masking later edits).
+  const [categoryOverrides, setCategoryOverrides] = useState<Record<string, string | null>>({});
+  const [hiddenIds, setHiddenIds] = useState<string[]>([]);
+  const [seenTransactions, setSeenTransactions] = useState(state.transactions);
+  if (seenTransactions !== state.transactions) {
+    setSeenTransactions(state.transactions);
+    if (Object.keys(categoryOverrides).length) setCategoryOverrides({});
+    if (hiddenIds.length) setHiddenIds([]);
+  }
   const selectedKinds = [...new Set(state.transactions
     .filter((item) => selectedIds.includes(item.id) && item.kind !== 'transfer')
     .map((item) => item.kind))];
   const compatibleCategoryKind = selectedKinds.length === 1 ? selectedKinds[0] : null;
-  // The repository updates its snapshot synchronously after each mutation, so
-  // the list can render straight from state without optimistic overrides.
   const transactions = useMemo(() => {
     void state.transactions;
     return repository.queryTransactions({
       search,
       kinds: kind !== 'all' && kind !== 'upcoming' ? [kind] : undefined,
       statuses: kind === 'upcoming' ? ['upcoming'] : kind === 'all' ? ['posted', 'upcoming'] : ['posted'],
-    });
-  }, [repository, state.transactions, search, kind]);
+    })
+      .filter((item) => !hiddenIds.includes(item.id))
+      .map((item) => Object.hasOwn(categoryOverrides, item.id) ? { ...item, categoryId: categoryOverrides[item.id] } : item);
+  }, [repository, state.transactions, categoryOverrides, hiddenIds, search, kind]);
   const sections = useMemo(() => {
     const groups = new Map<string, typeof transactions>();
     transactions.forEach((transaction) => {
@@ -57,6 +69,10 @@ export function TransactionsScreen() {
     const ids = [...selectedIds];
     try {
       await repository.updateTransactionsCategory(ids, categoryId);
+      setCategoryOverrides((current) => ({
+        ...current,
+        ...Object.fromEntries(ids.map((id) => [id, categoryId])),
+      }));
       setSelectedIds([]);
     } catch (reason) {
       showError('Couldn’t change category', errorMessage(reason, 'Try a compatible category.'));
@@ -68,6 +84,7 @@ export function TransactionsScreen() {
     if (!(await confirmDestructive({ title: ids.length === 1 ? 'Delete 1 transaction?' : `Delete ${ids.length} transactions?`, message: 'They will be removed from your ledger.' }))) return;
     try {
       await repository.deleteEntities('transactions', ids);
+      setHiddenIds((current) => [...new Set([...current, ...ids])]);
       setSelectedIds([]);
     } catch (reason) {
       showError('Couldn’t delete transactions', errorMessage(reason, 'Try again.'));
@@ -81,7 +98,7 @@ export function TransactionsScreen() {
       style={{ flex: 1, backgroundColor: theme.background }}
       contentContainerStyle={[screenContentMetrics(width), { gap: 8 }]}
       sections={sections}
-      extraData={`${selectedIds.join(',')}|${repository.getSnapshot().transactions.map((item) => `${item.id}:${item.revision}`).join(',')}`}
+      extraData={`${selectedIds.join(',')}|${JSON.stringify(categoryOverrides)}|${hiddenIds.join(',')}|${repository.getSnapshot().transactions.map((item) => `${item.id}:${item.revision}`).join(',')}`}
       keyExtractor={(item) => `${item.id}:${item.revision}`}
       stickySectionHeadersEnabled={false}
       ListHeaderComponent={
