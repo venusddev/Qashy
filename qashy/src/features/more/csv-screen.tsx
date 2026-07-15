@@ -2,14 +2,16 @@ import * as DocumentPicker from 'expo-document-picker';
 import { File as ExpoFile, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
 import type { CsvImportRow, ImportResult, TransactionKind, TransactionStatus } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
+import { FormScreen } from '@/components/ui/form-screen';
 import { useQashyTheme } from '@/theme/theme';
+import { errorMessage, showError } from '@/utils/confirm';
 import { parseCsvTable } from '@/utils/csv';
 import { todayLocal } from '@/utils/date';
 
@@ -102,9 +104,9 @@ export function CsvScreen() {
     try {
       const result = await repository.importCsv(rows, true);
       setPreview(result);
-      Alert.alert('Import complete', `${result.committedIds.length} transactions imported.`);
+      showError('Import complete', `${result.committedIds.length} transactions imported.`);
     } catch (reason) {
-      Alert.alert('Couldn’t import CSV', reason instanceof Error ? reason.message : 'No rows were imported.');
+      showError('Couldn’t import CSV', errorMessage(reason, 'No rows were imported.'));
     } finally {
       setBusy(false);
     }
@@ -130,7 +132,7 @@ export function CsvScreen() {
   };
 
   return (
-    <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }} contentContainerStyle={{ padding: 18, paddingBottom: 40, gap: 16, width: '100%', maxWidth: 760, alignSelf: 'center' }}>
+    <FormScreen maxWidth={760} contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 14 }}>
         <AppText variant="headline">Export transactions</AppText>
         <AppText muted>Creates a UTF-8 CSV with dates, statuses, amounts, currencies, source and destination accounts, categories, tags, notes, exchange-rate snapshots, and transfer linkage.</AppText>
@@ -186,6 +188,6 @@ export function CsvScreen() {
         ) : null}
       </Card>
       <Card><AppText variant="caption" muted>CSV is transaction portability, not a complete backup. Budgets, goals, schedules, and appearance settings are not included.</AppText></Card>
-    </ScrollView>
+    </FormScreen>
   );
 }

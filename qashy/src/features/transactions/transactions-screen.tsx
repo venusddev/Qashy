@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, SectionList, TextInput, View } from 'react-native';
+import { Pressable, SectionList, TextInput, View } from 'react-native';
 
 import { TransactionRow } from '@/components/finance/transaction-row';
 import { ActionButton } from '@/components/ui/action-button';
@@ -11,6 +11,7 @@ import { ChoiceChip } from '@/components/ui/choice-chip';
 import { GlassSurface } from '@/components/ui/glass-surface';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { shortDate } from '@/utils/date';
 
 type KindFilter = 'all' | 'expense' | 'income' | 'transfer' | 'upcoming';
@@ -22,23 +23,20 @@ export function TransactionsScreen() {
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [categoryOverrides, setCategoryOverrides] = useState<Record<string, string | null>>({});
-  const [hiddenIds, setHiddenIds] = useState<string[]>([]);
   const selectedKinds = [...new Set(state.transactions
     .filter((item) => selectedIds.includes(item.id) && item.kind !== 'transfer')
     .map((item) => item.kind))];
   const compatibleCategoryKind = selectedKinds.length === 1 ? selectedKinds[0] : null;
+  // The repository updates its snapshot synchronously after each mutation, so
+  // the list can render straight from state without optimistic overrides.
   const transactions = useMemo(() => {
-    void selectedIds;
     void state.transactions;
     return repository.queryTransactions({
       search,
       kinds: kind !== 'all' && kind !== 'upcoming' ? [kind] : undefined,
       statuses: kind === 'upcoming' ? ['upcoming'] : kind === 'all' ? ['posted', 'upcoming'] : ['posted'],
-    })
-      .filter((item) => !hiddenIds.includes(item.id))
-      .map((item) => Object.hasOwn(categoryOverrides, item.id) ? { ...item, categoryId: categoryOverrides[item.id] } : item);
-  }, [repository, state.transactions, selectedIds, categoryOverrides, hiddenIds, search, kind]);
+    });
+  }, [repository, state.transactions, search, kind]);
   const sections = useMemo(() => {
     const groups = new Map<string, typeof transactions>();
     transactions.forEach((transaction) => {
@@ -57,21 +55,21 @@ export function TransactionsScreen() {
     const ids = [...selectedIds];
     try {
       await repository.updateTransactionsCategory(ids, categoryId);
-      setCategoryOverrides((current) => ({
-        ...current,
-        ...Object.fromEntries(ids.map((id) => [id, categoryId])),
-      }));
       setSelectedIds([]);
     } catch (reason) {
-      Alert.alert('Couldn’t change category', reason instanceof Error ? reason.message : 'Try a compatible category.');
+      showError('Couldn’t change category', errorMessage(reason, 'Try a compatible category.'));
     }
   };
 
   const deleteSelected = async () => {
     const ids = [...selectedIds];
-    await repository.deleteEntities('transactions', ids);
-    setHiddenIds((current) => [...new Set([...current, ...ids])]);
-    setSelectedIds([]);
+    if (!(await confirmDestructive({ title: ids.length === 1 ? 'Delete 1 transaction?' : `Delete ${ids.length} transactions?`, message: 'They will be removed from your ledger.' }))) return;
+    try {
+      await repository.deleteEntities('transactions', ids);
+      setSelectedIds([]);
+    } catch (reason) {
+      showError('Couldn’t delete transactions', errorMessage(reason, 'Try again.'));
+    }
   };
 
   return (
@@ -81,7 +79,7 @@ export function TransactionsScreen() {
       style={{ flex: 1, backgroundColor: theme.background }}
       contentContainerStyle={{ width: '100%', maxWidth: 920, alignSelf: 'center', paddingHorizontal: 16, paddingTop: process.env.EXPO_OS === 'web' ? 92 : 12, paddingBottom: process.env.EXPO_OS === 'web' ? 112 : 32, gap: 8 }}
       sections={sections}
-      extraData={`${selectedIds.join(',')}|${JSON.stringify(categoryOverrides)}|${hiddenIds.join(',')}|${repository.getSnapshot().transactions.map((item) => `${item.id}:${item.revision}`).join(',')}`}
+      extraData={`${selectedIds.join(',')}|${repository.getSnapshot().transactions.map((item) => `${item.id}:${item.revision}`).join(',')}`}
       keyExtractor={(item) => `${item.id}:${item.revision}`}
       stickySectionHeadersEnabled={false}
       ListHeaderComponent={

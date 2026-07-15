@@ -1,17 +1,19 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Alert, ScrollView, Switch, View } from 'react-native';
+import { Switch, View } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
 import { ChoiceChip } from '@/components/ui/choice-chip';
 import { FormField } from '@/components/ui/form-field';
+import { FormScreen } from '@/components/ui/form-screen';
 import type { PeriodUnit } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
-import { currencyDigits, parseMoney } from '@/utils/money';
+import { minorToDecimalString, parseMoney } from '@/utils/money';
 
 export function BudgetFormScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -19,14 +21,14 @@ export function BudgetFormScreen() {
   const state = useFinanceState();
   const theme = useQashyTheme();
   const existing = id ? state.budgets.find((item) => item.id === id) : undefined;
-  const scale = 10 ** currencyDigits(state.settings.baseCurrency, state.settings.locale);
+  const toMoneyText = (minor: number) => minorToDecimalString(minor, state.settings.baseCurrency, state.settings.locale);
   const [name, setName] = useState(existing?.name ?? 'Everyday spending');
-  const [limit, setLimit] = useState(existing ? String(existing.limitMinor / scale) : '1000');
+  const [limit, setLimit] = useState(existing ? toMoneyText(existing.limitMinor) : '1000');
   const [unit, setUnit] = useState<PeriodUnit>(existing?.period.unit ?? 'month');
   const [endDate, setEndDate] = useState(existing?.period.endDate ?? todayLocal());
   const [rollover, setRollover] = useState(existing?.rollover ?? false);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(existing?.filters.categoryIds ?? []);
-  const [categoryLimits, setCategoryLimits] = useState<Record<string, string>>(() => Object.fromEntries(existing?.categoryLimits.map((item) => [item.categoryId, String(item.limitMinor / scale)]) ?? []));
+  const [categoryLimits, setCategoryLimits] = useState<Record<string, string>>(() => Object.fromEntries(existing?.categoryLimits.map((item) => [item.categoryId, toMoneyText(item.limitMinor)]) ?? []));
   const [saving, setSaving] = useState(false);
   const expenseCategories = state.categories.filter((item) => item.kind === 'expense' && !item.archived);
 
@@ -52,14 +54,28 @@ export function BudgetFormScreen() {
       }, existing?.id);
       router.replace('/plan');
     } catch (reason) {
-      Alert.alert('Couldn’t save budget', reason instanceof Error ? reason.message : 'Try again.');
+      showError('Couldn’t save budget', errorMessage(reason, 'Try again.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!existing || saving) return;
+    if (!(await confirmDestructive({ title: `Delete ${existing.name}?`, message: 'Past period snapshots are removed with it.' }))) return;
+    setSaving(true);
+    try {
+      await repository.deleteEntities('budgets', [existing.id]);
+      router.replace('/plan');
+    } catch (reason) {
+      showError('Couldn’t delete budget', errorMessage(reason, 'Try again.'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }} contentContainerStyle={{ padding: 18, paddingBottom: 40, gap: 16, width: '100%', maxWidth: 680, alignSelf: 'center' }}>
+    <FormScreen contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 16 }}>
         <FormField label="Budget name" value={name} onChangeText={setName} />
         <FormField label={`Total limit (${state.settings.baseCurrency})`} value={limit} onChangeText={setLimit} keyboardType="decimal-pad" />
@@ -87,7 +103,7 @@ export function BudgetFormScreen() {
       </Card>
 
       <ActionButton title={saving ? 'Saving…' : existing ? 'Save budget' : 'Create budget'} icon="checkmark" onPress={save} disabled={saving} />
-      {existing ? <ActionButton title="Delete budget" variant="danger" onPress={async () => { await repository.deleteEntities('budgets', [existing.id]); router.replace('/plan'); }} /> : null}
-    </ScrollView>
+      {existing ? <ActionButton title="Delete budget" variant="danger" onPress={remove} disabled={saving} /> : null}
+    </FormScreen>
   );
 }

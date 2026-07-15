@@ -14,6 +14,7 @@ import { ScreenContainer } from '@/components/ui/screen-container';
 import { SectionHeader } from '@/components/ui/section-header';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { errorMessage, showError } from '@/utils/confirm';
 import { endOfMonth, monthLabel, parseLocalDate, startOfMonth, toLocalDate } from '@/utils/date';
 import { formatMoney } from '@/utils/money';
 
@@ -29,6 +30,19 @@ export function OverviewScreen() {
   const theme = useQashyTheme();
   const { width } = useWindowDimensions();
   const [month, setMonth] = useState(startOfMonth());
+  const [pendingUpcomingId, setPendingUpcomingId] = useState<string | null>(null);
+
+  const resolveUpcoming = async (id: string, action: 'skip' | 'confirm') => {
+    if (pendingUpcomingId) return;
+    setPendingUpcomingId(id);
+    try {
+      await (action === 'skip' ? repository.skipUpcoming(id) : repository.confirmUpcoming(id));
+    } catch (reason) {
+      showError(action === 'skip' ? 'Couldn’t skip this item' : 'Couldn’t mark this item paid', errorMessage(reason, 'Try again.'));
+    } finally {
+      setPendingUpcomingId(null);
+    }
+  };
   const summary = useMemo(() => {
     // Repository reads are synchronous; these references make their external-store inputs explicit.
     void state.accounts;
@@ -133,8 +147,8 @@ export function OverviewScreen() {
               <View key={transaction.id} style={{ gap: 2 }}>
                 <TransactionRow transaction={transaction} compact returnTo="/overview" />
                 <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
-                  <Pressable onPress={() => repository.skipUpcoming(transaction.id)} style={{ padding: 8 }}><AppText variant="caption" muted>Skip</AppText></Pressable>
-                  <Pressable onPress={() => repository.confirmUpcoming(transaction.id)} style={{ padding: 8 }}><AppText variant="caption" style={{ color: theme.accent }}>Mark paid</AppText></Pressable>
+                  <Pressable disabled={pendingUpcomingId !== null} onPress={() => resolveUpcoming(transaction.id, 'skip')} style={{ padding: 8, opacity: pendingUpcomingId === transaction.id ? 0.5 : 1 }}><AppText variant="caption" muted>Skip</AppText></Pressable>
+                  <Pressable disabled={pendingUpcomingId !== null} onPress={() => resolveUpcoming(transaction.id, 'confirm')} style={{ padding: 8, opacity: pendingUpcomingId === transaction.id ? 0.5 : 1 }}><AppText variant="caption" style={{ color: theme.accent }}>Mark paid</AppText></Pressable>
                 </View>
               </View>
             ))}

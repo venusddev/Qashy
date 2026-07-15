@@ -21,7 +21,7 @@ export default function WebTabsLayout() {
   const mobile = width < 768;
 
   const navigation = NAV_ITEMS.map((item) => {
-    const active = pathname.includes(item.match) || (item.match === '/overview' && pathname === '/');
+    const active = pathname === item.match || pathname.startsWith(`${item.match}/`) || (item.match === '/overview' && pathname === '/');
     return (
       <Link key={item.label} href={item.href} asChild>
         <Pressable
