@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Alert, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
+import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
 import { ChoiceChip } from '@/components/ui/choice-chip';
@@ -11,9 +12,8 @@ import { QASHY_ACCENT } from '@/domain/defaults';
 import type { AccountType, AccentSource, ThemeMode } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { ACCENT_PRESETS } from '@/theme/tokens';
 import { parseMoney } from '@/utils/money';
-
-const ACCENTS = ['#5966E9', '#007AFF', '#00A58E', '#36A852', '#E7892C', '#E0516B', '#A95BCD', '#6D7885'];
 
 export function OnboardingScreen() {
   const repository = useFinanceRepository();
@@ -89,7 +89,7 @@ export function OnboardingScreen() {
               ].map(([title, description]) => (
                 <View key={title} style={{ flexDirection: 'row', gap: 14, alignItems: 'flex-start' }}>
                   <View style={{ width: 34, height: 34, borderRadius: 12, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}>
-                    <AppText selectable={false} style={{ color: theme.accent }}>✓</AppText>
+                    <AppIcon name="checkmark" color={theme.accent} size={18} />
                   </View>
                   <View style={{ flex: 1, gap: 2 }}><AppText variant="label">{title}</AppText><AppText muted>{description}</AppText></View>
                 </View>
@@ -129,7 +129,7 @@ export function OnboardingScreen() {
               <AppText variant="label">Accent</AppText>
               <ChoiceChip label="System accent" selected={accentSource === 'system'} onPress={() => setAccentSource('system')} icon="paintbrush" />
               <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
-                {ACCENTS.map((color) => (
+                {ACCENT_PRESETS.map((color) => (
                   <View key={color} style={{ borderRadius: 99, borderWidth: accentSource !== 'system' && accentHex === color ? 3 : 0, borderColor: theme.text, padding: 3 }}>
                     <Pressable
                       accessibilityRole="button"

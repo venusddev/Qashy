@@ -54,7 +54,7 @@ export function TransactionRow({
         <AppText variant="caption" muted numberOfLines={1}>{category?.name ?? (isTransfer ? 'Transfer' : 'Uncategorized')} · {account?.name ?? 'Unknown account'}</AppText>
       </View>
       <View style={{ alignItems: 'flex-end', gap: 2 }}>
-        {selected ? <AppText selectable={false} variant="label" style={{ color: theme.accent }}>✓</AppText> : <AppText variant="label" style={{ color, fontVariant: ['tabular-nums'] }}>
+        {selected ? <AppIcon name="checkmark" color={theme.accent} size={18} /> : <AppText variant="label" style={{ color, fontVariant: ['tabular-nums'] }}>
           {isIncome ? '+' : isTransfer ? '' : '-'}{formatMoney(transaction.amountMinor, transaction.currency, settings.locale)}
         </AppText>}
         {!compact ? <AppText variant="caption" muted>{transaction.localDate}</AppText> : null}

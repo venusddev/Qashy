@@ -1,9 +1,11 @@
 import { createContext, use, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { ActivityIndicator, AppState, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, Text, View, useColorScheme } from 'react-native';
 
 import type { FinanceRepository } from '@/data/repository';
 import { financeRepository } from '@/data/local-finance-repository';
+import { QASHY_ACCENT } from '@/domain/defaults';
 import type { FinanceState } from '@/domain/models';
+import { darkTokens, lightTokens, readableTextColor } from '@/theme/tokens';
 
 interface FinanceContextValue {
   repository: FinanceRepository;
@@ -14,6 +16,10 @@ const FinanceContext = createContext<FinanceContextValue | null>(null);
 
 export function FinanceProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
+  // This component renders above QashyThemeProvider, so it themes its own
+  // loading and error states from the static token sets.
+  const scheme = useColorScheme();
+  const tokens = scheme === 'dark' ? darkTokens : lightTokens;
   const state = useSyncExternalStore(
     financeRepository.subscribe,
     financeRepository.getSnapshot,
@@ -48,9 +54,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   if (error) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 }}>
-        <Text selectable style={{ fontSize: 20, fontWeight: '700' }}>Couldn’t open Qashy</Text>
-        <Text selectable style={{ textAlign: 'center', color: '#6B7280' }}>{error}</Text>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12, backgroundColor: tokens.background }}>
+        <Text selectable style={{ fontSize: 20, fontWeight: '700', color: tokens.text }}>Couldn’t open Qashy</Text>
+        <Text selectable style={{ textAlign: 'center', color: tokens.textMuted }}>{error}</Text>
         <Pressable
           accessibilityRole="button"
           onPress={() => {
@@ -59,8 +65,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
               setError(reason instanceof Error ? reason.message : 'Database error'),
             );
           }}
-          style={{ backgroundColor: '#5966E9', borderRadius: 999, paddingHorizontal: 20, paddingVertical: 12 }}>
-          <Text style={{ color: 'white', fontWeight: '700' }}>Try again</Text>
+          style={{ backgroundColor: QASHY_ACCENT, borderRadius: 999, paddingHorizontal: 20, paddingVertical: 12 }}>
+          <Text style={{ color: readableTextColor(QASHY_ACCENT), fontWeight: '700' }}>Try again</Text>
         </Pressable>
       </View>
     );
@@ -68,8 +74,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   if (!state.ready) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F7F7FB' }}>
-        <ActivityIndicator color="#5966E9" />
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: tokens.background }}>
+        <ActivityIndicator color={QASHY_ACCENT} />
       </View>
     );
   }

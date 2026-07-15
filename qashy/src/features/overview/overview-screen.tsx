@@ -54,9 +54,9 @@ export function OverviewScreen() {
             <AppText variant="headline">A quieter view of your finances.</AppText>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: theme.surface, borderRadius: 999, padding: 4, borderWidth: 1, borderColor: theme.border }}>
-            <Pressable accessibilityLabel="Previous month" onPress={() => setMonth((value) => moveMonth(value, -1))} style={{ padding: 9 }}><AppText selectable={false}>‹</AppText></Pressable>
+            <Pressable accessibilityLabel="Previous month" onPress={() => setMonth((value) => moveMonth(value, -1))} style={{ padding: 9 }}><AppIcon name="chevron.left" color={theme.text} size={16} /></Pressable>
             <AppText variant="label" style={{ minWidth: 116, textAlign: 'center' }}>{monthLabel(month, locale)}</AppText>
-            <Pressable accessibilityLabel="Next month" onPress={() => setMonth((value) => moveMonth(value, 1))} style={{ padding: 9 }}><AppText selectable={false}>›</AppText></Pressable>
+            <Pressable accessibilityLabel="Next month" onPress={() => setMonth((value) => moveMonth(value, 1))} style={{ padding: 9 }}><AppIcon name="chevron.right" color={theme.text} size={16} /></Pressable>
           </View>
         </View>
 

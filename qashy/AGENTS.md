@@ -75,7 +75,7 @@ Use Expo Router and preserve real public web paths such as `/overview`, `/transa
 
 - Use semantic values from `useQashyTheme()` instead of hard-coded light/dark surface colors.
 - Keep native controls inside the shared `@expo/ui` `Host`.
-- Android system accent uses dynamic Material colors; web derives a tonal palette from the chosen seed; iOS uses semantic system surfaces.
+- Surfaces come from hand-tuned neutral light/dark tokens in `src/theme/tokens.ts`; the chosen accent only drives the accent color family. Android system accent optionally uses dynamic Material colors; iOS and web use the default indigo accent on the same neutral surfaces.
 - Liquid Glass is selective: navigation, sheets, and floating actions on supported iOS versions only.
 - Always provide blur and opaque reduced-transparency fallbacks.
 - Prefer continuous corners, restrained shadows, tabular financial figures, and subtle motion.
