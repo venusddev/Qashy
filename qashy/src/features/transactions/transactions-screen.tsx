@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Pressable, SectionList, TextInput, View } from 'react-native';
+import { Pressable, SectionList, TextInput, View, useWindowDimensions } from 'react-native';
 
 import { TransactionRow } from '@/components/finance/transaction-row';
 import { ActionButton } from '@/components/ui/action-button';
@@ -8,9 +8,10 @@ import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
 import { ChoiceChip } from '@/components/ui/choice-chip';
-import { GlassSurface } from '@/components/ui/glass-surface';
+import { screenContentMetrics } from '@/components/ui/screen-container';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { radius } from '@/theme/tokens';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { shortDate } from '@/utils/date';
 
@@ -20,6 +21,7 @@ export function TransactionsScreen() {
   const repository = useFinanceRepository();
   const state = useFinanceState();
   const theme = useQashyTheme();
+  const { width } = useWindowDimensions();
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -77,14 +79,14 @@ export function TransactionsScreen() {
       <SectionList
       contentInsetAdjustmentBehavior="automatic"
       style={{ flex: 1, backgroundColor: theme.background }}
-      contentContainerStyle={{ width: '100%', maxWidth: 920, alignSelf: 'center', paddingHorizontal: 16, paddingTop: process.env.EXPO_OS === 'web' ? 92 : 12, paddingBottom: process.env.EXPO_OS === 'web' ? 112 : 32, gap: 8 }}
+      contentContainerStyle={[screenContentMetrics(width), { gap: 8 }]}
       sections={sections}
       extraData={`${selectedIds.join(',')}|${repository.getSnapshot().transactions.map((item) => `${item.id}:${item.revision}`).join(',')}`}
       keyExtractor={(item) => `${item.id}:${item.revision}`}
       stickySectionHeadersEnabled={false}
       ListHeaderComponent={
         <View style={{ gap: 14, paddingBottom: 16 }}>
-          <View style={{ minHeight: 50, borderRadius: 18, borderCurve: 'continuous', backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 10 }}>
+          <View style={{ minHeight: 50, borderRadius: radius.control, borderCurve: 'continuous', backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 10 }}>
             <AppIcon name="magnifyingglass" color={theme.textMuted} size={19} />
             <TextInput
               accessibilityLabel="Search transactions"
@@ -130,24 +132,25 @@ export function TransactionsScreen() {
         </View>
       )}
       renderItem={({ item, index, section }) => (
-        <Card style={{ paddingVertical: 0, paddingHorizontal: 14, borderRadius: index === 0 && section.data.length === 1 ? 22 : 18, marginBottom: 4, backgroundColor: selectedIds.includes(item.id) ? theme.accentContainer : theme.surface }}>
+        <Card style={{ paddingVertical: 0, paddingHorizontal: 14, marginBottom: 4, backgroundColor: selectedIds.includes(item.id) ? theme.accentContainer : theme.surface }}>
           <TransactionRow transaction={item} selected={selectedIds.includes(item.id)} onLongPress={() => toggleSelected(item.id)} onPress={selectedIds.length ? () => toggleSelected(item.id) : undefined} />
         </Card>
       )}
       ListEmptyComponent={
         <View style={{ alignItems: 'center', gap: 12, paddingVertical: 72 }}>
-          <View style={{ width: 58, height: 58, borderRadius: 20, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="magnifyingglass" color={theme.accent} size={24} /></View>
+          <View style={{ width: 58, height: 58, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="magnifyingglass" color={theme.accent} size={24} /></View>
           <AppText variant="headline">{search || kind !== 'all' ? 'Nothing matches' : 'No transactions yet'}</AppText>
           <AppText muted style={{ textAlign: 'center' }}>{search || kind !== 'all' ? 'Try another search or filter.' : 'Add your first income, expense, or transfer.'}</AppText>
         </View>
       }
       ListFooterComponent={<View style={{ height: 72 }} />}
       />
-      <GlassSurface interactive style={{ position: 'absolute', right: 24, bottom: process.env.EXPO_OS === 'web' ? 88 : 24, borderRadius: 999, overflow: 'hidden' }}>
-        <Pressable accessibilityLabel="Add transaction" onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/transactions' } })} style={{ width: 58, height: 58, alignItems: 'center', justifyContent: 'center' }}>
-          <AppIcon name="plus" color={theme.accent} size={25} />
-        </Pressable>
-      </GlassSurface>
+      <Pressable
+        accessibilityLabel="Add transaction"
+        onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/transactions' } })}
+        style={({ pressed }) => ({ position: 'absolute', right: 24, bottom: process.env.EXPO_OS === 'web' && width < 768 ? 92 : 24, width: 58, height: 58, borderRadius: 999, backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 14px rgba(25,27,32,0.28)', opacity: pressed ? 0.85 : 1 })}>
+        <AppIcon name="plus" color={theme.onAccent} size={25} />
+      </Pressable>
     </View>
   );
 }

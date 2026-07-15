@@ -37,14 +37,24 @@ export function SpendLineChart({ points, currency, locale }: { points: Dashboard
   );
 }
 
+const DONUT_TOP_COUNT = 5;
+
 export function CategoryDonut({ items, currency, locale }: { items: DashboardSummary['categorySpend']; currency: string; locale: string }) {
   const theme = useQashyTheme();
   const total = items.reduce((sum, item) => sum + item.amountMinor, 0);
   const radius = 46;
   const circumference = 2 * Math.PI * radius;
-  const segments = items.slice(0, 6).map((item, index, source) => ({
-    item,
-    length: total ? (item.amountMinor / total) * circumference : 0,
+  // The ring and the legend share the same slices, with everything past the
+  // top entries aggregated into "Other" so both always account for 100%.
+  const top = items.slice(0, DONUT_TOP_COUNT);
+  const otherMinor = items.slice(DONUT_TOP_COUNT).reduce((sum, item) => sum + item.amountMinor, 0);
+  const slices = [
+    ...top.map((item) => ({ key: item.category.id, name: item.category.name, color: item.category.color, amountMinor: item.amountMinor })),
+    ...(otherMinor > 0 ? [{ key: 'other', name: 'Other', color: theme.textMuted as string, amountMinor: otherMinor }] : []),
+  ];
+  const segments = slices.map((slice, index, source) => ({
+    slice,
+    length: total ? (slice.amountMinor / total) * circumference : 0,
     offset: source
       .slice(0, index)
       .reduce((sum, previous) => sum + (total ? (previous.amountMinor / total) * circumference : 0), 0),
@@ -54,18 +64,18 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
       <View style={{ width: 126, height: 126 }}>
         <Svg width="126" height="126" viewBox="0 0 126 126">
           <Circle cx="63" cy="63" r={radius} fill="none" stroke={theme.surfaceMuted as string} strokeWidth="16" />
-          {segments.map(({ item, length, offset }) => (
+          {segments.map(({ slice, length, offset }) => (
               <Circle
-                key={item.category.id}
+                key={slice.key}
                 cx="63"
                 cy="63"
                 r={radius}
                 fill="none"
-                stroke={item.category.color}
+                stroke={slice.color}
                 strokeWidth="16"
                 strokeDasharray={`${length} ${circumference - length}`}
                 strokeDashoffset={-offset}
-                strokeLinecap="round"
+                strokeLinecap="butt"
                 rotation="-90"
                 origin="63, 63"
               />
@@ -77,11 +87,11 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
         </Svg>
       </View>
       <View style={{ flex: 1, minWidth: 160, gap: 9 }}>
-        {items.slice(0, 4).map((item) => (
-          <View key={item.category.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View style={{ width: 9, height: 9, borderRadius: 99, backgroundColor: item.category.color }} />
-            <AppText variant="caption" style={{ flex: 1 }}>{item.category.name}</AppText>
-            <AppText variant="caption" muted>{total ? Math.round((item.amountMinor / total) * 100) : 0}%</AppText>
+        {slices.map((slice) => (
+          <View key={slice.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ width: 9, height: 9, borderRadius: 99, backgroundColor: slice.color }} />
+            <AppText variant="caption" style={{ flex: 1 }}>{slice.name}</AppText>
+            <AppText variant="caption" muted>{total ? Math.round((slice.amountMinor / total) * 100) : 0}%</AppText>
           </View>
         ))}
         {!items.length ? <AppText muted>No spending yet</AppText> : null}

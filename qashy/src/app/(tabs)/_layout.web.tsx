@@ -3,7 +3,6 @@ import { Pressable, View, useWindowDimensions } from 'react-native';
 
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
-import { GlassSurface } from '@/components/ui/glass-surface';
 import { useQashyTheme } from '@/theme/theme';
 
 const NAV_ITEMS = [
@@ -55,23 +54,24 @@ export default function WebTabsLayout() {
     return (
       <View style={{ flex: 1, backgroundColor: theme.background }}>
         <Slot />
-        <GlassSurface
+        <View
           style={{
             position: 'absolute',
-            left: 12,
-            right: 12,
-            bottom: 12,
-            minHeight: 66,
-            borderRadius: 24,
-            borderCurve: 'continuous',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            minHeight: 64,
+            backgroundColor: theme.surfaceElevated,
             flexDirection: 'row',
             alignItems: 'center',
-            padding: 6,
-            borderWidth: 1,
-            borderColor: theme.border,
+            paddingHorizontal: 8,
+            paddingVertical: 6,
+            borderTopWidth: 1,
+            borderTopColor: theme.border,
+            boxShadow: '0 -2px 12px rgba(25,27,32,0.06)',
           }}>
           {navigation}
-        </GlassSurface>
+        </View>
       </View>
     );
   }

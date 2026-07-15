@@ -12,7 +12,7 @@ import { QASHY_ACCENT } from '@/domain/defaults';
 import type { AccountType, AccentSource, ThemeMode } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
-import { ACCENT_PRESETS } from '@/theme/tokens';
+import { ACCENT_PRESETS, radius } from '@/theme/tokens';
 import { errorMessage, showError } from '@/utils/confirm';
 import { parseMoney } from '@/utils/money';
 
@@ -78,7 +78,7 @@ export function OnboardingScreen() {
       contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <View style={{ width: '100%', maxWidth: 720, gap: 22 }}>
         <View style={{ alignItems: 'center', gap: 12 }}>
-          <View style={{ width: 64, height: 64, borderRadius: 22, backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center', boxShadow: '0 18px 40px rgba(89,102,233,0.25)' }}>
+          <View style={{ width: 64, height: 64, borderRadius: radius.card, backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(25,27,32,0.18)' }}>
             <AppText selectable={false} variant="title" style={{ color: theme.onAccent }}>Q</AppText>
           </View>
           <AppText variant="title">{step === 0 ? 'Money, made calmer.' : ['Your home currency', 'Create your first account', 'Make it yours'][step - 1]}</AppText>
@@ -104,7 +104,7 @@ export function OnboardingScreen() {
                 ['Ready everywhere', 'A native-feeling phone app and a responsive desktop PWA.'],
               ].map(([title, description]) => (
                 <View key={title} style={{ flexDirection: 'row', gap: 14, alignItems: 'flex-start' }}>
-                  <View style={{ width: 34, height: 34, borderRadius: 12, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}>
+                  <View style={{ width: 34, height: 34, borderRadius: radius.control, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}>
                     <AppIcon name="checkmark" color={theme.accent} size={18} />
                   </View>
                   <View style={{ flex: 1, gap: 2 }}><AppText variant="label">{title}</AppText><AppText muted>{description}</AppText></View>

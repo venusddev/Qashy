@@ -7,6 +7,9 @@ export function TabStackLayout({ title }: { title: string }) {
   return (
     <Stack
       screenOptions={{
+        // Web tab screens render their own headings; the floating transparent
+        // header only added dead space there.
+        headerShown: process.env.EXPO_OS !== 'web',
         headerLargeTitle: true,
         headerTransparent: true,
         headerShadowVisible: false,

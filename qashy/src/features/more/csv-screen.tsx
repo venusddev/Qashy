@@ -11,6 +11,7 @@ import type { CsvImportRow, ImportResult, TransactionKind, TransactionStatus } f
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { FormScreen } from '@/components/ui/form-screen';
 import { useQashyTheme } from '@/theme/theme';
+import { radius } from '@/theme/tokens';
 import { errorMessage, showError } from '@/utils/confirm';
 import { parseCsvTable } from '@/utils/csv';
 import { todayLocal } from '@/utils/date';
@@ -160,16 +161,16 @@ export function CsvScreen() {
             <AppText variant="label">Default account</AppText>
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               {state.accounts.filter((item) => !item.archived).map((account) => (
-                <Pressable key={account.id} accessibilityRole="radio" accessibilityState={{ selected: defaultAccountId === account.id }} onPress={() => { setDefaultAccountId(account.id); setPreview(null); }} style={{ padding: 10, borderRadius: 14, backgroundColor: defaultAccountId === account.id ? theme.accentContainer : theme.surfaceMuted }}>
+                <Pressable key={account.id} accessibilityRole="radio" accessibilityState={{ selected: defaultAccountId === account.id }} onPress={() => { setDefaultAccountId(account.id); setPreview(null); }} style={{ padding: 10, borderRadius: radius.control, backgroundColor: defaultAccountId === account.id ? theme.accentContainer : theme.surfaceMuted }}>
                   <AppText variant="label" style={{ color: defaultAccountId === account.id ? theme.accent : theme.text }}>{account.name}</AppText>
                 </Pressable>
               ))}
             </View>
             <AppText variant="label">Default category</AppText>
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              <Pressable onPress={() => { setDefaultCategoryId(''); setPreview(null); }} style={{ padding: 10, borderRadius: 14, backgroundColor: !defaultCategoryId ? theme.accentContainer : theme.surfaceMuted }}><AppText variant="label">None</AppText></Pressable>
+              <Pressable onPress={() => { setDefaultCategoryId(''); setPreview(null); }} style={{ padding: 10, borderRadius: radius.control, backgroundColor: !defaultCategoryId ? theme.accentContainer : theme.surfaceMuted }}><AppText variant="label">None</AppText></Pressable>
               {state.categories.filter((item) => !item.archived).map((category) => (
-                <Pressable key={category.id} onPress={() => { setDefaultCategoryId(category.id); setPreview(null); }} style={{ padding: 10, borderRadius: 14, backgroundColor: defaultCategoryId === category.id ? theme.accentContainer : theme.surfaceMuted }}><AppText variant="label">{category.name}</AppText></Pressable>
+                <Pressable key={category.id} onPress={() => { setDefaultCategoryId(category.id); setPreview(null); }} style={{ padding: 10, borderRadius: radius.control, backgroundColor: defaultCategoryId === category.id ? theme.accentContainer : theme.surfaceMuted }}><AppText variant="label">{category.name}</AppText></Pressable>
               ))}
             </View>
             <ActionButton title="Preview import" icon="checkmark" onPress={previewImport} />
@@ -178,9 +179,9 @@ export function CsvScreen() {
         {preview ? (
           <View style={{ gap: 10, paddingTop: 6 }}>
             <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
-              <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: 16, backgroundColor: theme.accentContainer }}><AppText variant="headline" style={{ color: theme.accent }}>{preview.validRows.length}</AppText><AppText variant="caption" muted>Ready</AppText></View>
-              <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: 16, backgroundColor: theme.surfaceMuted }}><AppText variant="headline">{preview.duplicateRows.length}</AppText><AppText variant="caption" muted>Duplicates</AppText></View>
-              <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: 16, backgroundColor: theme.surfaceMuted }}><AppText variant="headline" style={{ color: preview.rejectedRows.length ? theme.negative : theme.text }}>{preview.rejectedRows.length}</AppText><AppText variant="caption" muted>Rejected</AppText></View>
+              <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: radius.card, backgroundColor: theme.accentContainer }}><AppText variant="headline" style={{ color: theme.accent }}>{preview.validRows.length}</AppText><AppText variant="caption" muted>Ready</AppText></View>
+              <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: radius.card, backgroundColor: theme.surfaceMuted }}><AppText variant="headline">{preview.duplicateRows.length}</AppText><AppText variant="caption" muted>Duplicates</AppText></View>
+              <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: radius.card, backgroundColor: theme.surfaceMuted }}><AppText variant="headline" style={{ color: preview.rejectedRows.length ? theme.negative : theme.text }}>{preview.rejectedRows.length}</AppText><AppText variant="caption" muted>Rejected</AppText></View>
             </View>
             {preview.rejectedRows.slice(0, 4).map((row) => <AppText key={row.rowNumber} variant="caption" style={{ color: theme.negative }}>Row {row.rowNumber}: {row.reason}</AppText>)}
             {preview.validRows.length && !preview.committedIds.length ? <ActionButton title={busy ? 'Importing…' : `Import ${preview.validRows.length} transactions`} icon="checkmark" onPress={commit} disabled={busy} /> : null}

@@ -6,6 +6,7 @@ import { AppText } from '@/components/ui/app-text';
 import type { TransactionRecord } from '@/domain/models';
 import { useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { radius, readableTextColor } from '@/theme/tokens';
 import { formatMoney } from '@/utils/money';
 
 export function TransactionRow({
@@ -39,8 +40,8 @@ export function TransactionRow({
       onPress={onPress ?? (() => router.push({ pathname: '/transaction', params: { id: transaction.id, returnTo } }))}
       onLongPress={onLongPress}
       style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: compact ? 54 : 64, opacity: pressed ? 0.65 : 1 })}>
-      <View style={{ width: compact ? 38 : 44, height: compact ? 38 : 44, borderRadius: 15, backgroundColor: category?.color ?? theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}>
-        <AppIcon name={isTransfer ? 'arrow.left.arrow.right' : isIncome ? 'arrow.down' : 'arrow.up'} color={category ? '#FFFFFF' : theme.accent} size={18} />
+      <View style={{ width: compact ? 38 : 44, height: compact ? 38 : 44, borderRadius: radius.control, backgroundColor: category?.color ?? theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}>
+        <AppIcon name={isTransfer ? 'arrow.left.arrow.right' : isIncome ? 'arrow.down' : 'arrow.up'} color={category ? readableTextColor(category.color) : theme.accent} size={18} />
       </View>
       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
         <View style={{ flexDirection: 'row', gap: 7, alignItems: 'center' }}>
