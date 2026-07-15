@@ -28,6 +28,10 @@ export function resolvePeriod(period: PeriodDefinition, onDate: string) {
     end.setDate(start.getDate() + cycleDays - 1);
   }
 
+  // Month and year periods intentionally snap to calendar boundaries (day 1 /
+  // Jan 1) instead of honoring the anchor's day-of-month: the budget form
+  // always anchors "today", and persisted budgetPeriod snapshots are looked up
+  // by exact periodStart, so shifting boundaries would orphan existing data.
   if (period.unit === 'month') {
     const months =
       (target.getFullYear() - anchor.getFullYear()) * 12 + target.getMonth() - anchor.getMonth();

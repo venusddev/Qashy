@@ -15,6 +15,11 @@ describe('money utilities', () => {
     expect(formatMoney(1250, 'USD', 'en-US', { sign: true })).toContain('+');
   });
 
+  it('formats large and zero-decimal amounts exactly', () => {
+    expect(formatMoney(900719925474099, 'USD')).toContain('9,007,199,254,740.99');
+    expect(formatMoney(1200, 'JPY')).toContain('1,200');
+  });
+
   it('parses locale decimal separators without changing magnitude', () => {
     expect(parseMoney('12,50', 'EUR', 'de-DE')).toBe(1250);
     expect(parseMoney('1.234,56', 'EUR', 'de-DE')).toBe(123456);

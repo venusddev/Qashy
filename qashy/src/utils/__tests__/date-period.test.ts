@@ -13,6 +13,15 @@ describe('calendar behavior', () => {
     expect(addRecurrence(february, 'month', 1, '2026-01-30')).toBe('2026-03-30');
   });
 
+  it('snaps monthly periods to calendar months regardless of anchor day', () => {
+    // Intentional behavior: see the comment in resolvePeriod. Persisted budget
+    // snapshots are keyed by periodStart, so these boundaries must stay stable.
+    expect(resolvePeriod({ unit: 'month', interval: 1, anchorDate: '2026-01-15', endDate: null }, '2026-02-10')).toEqual({
+      start: '2026-02-01',
+      end: '2026-02-28',
+    });
+  });
+
   it('resolves anchored multi-month budget periods', () => {
     expect(resolvePeriod({ unit: 'month', interval: 3, anchorDate: '2026-01-01', endDate: null }, '2026-05-15')).toEqual({
       start: '2026-04-01',
