@@ -2,14 +2,17 @@ import * as DocumentPicker from 'expo-document-picker';
 import { File as ExpoFile, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
 import type { CsvImportRow, ImportResult, TransactionKind, TransactionStatus } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
+import { FormScreen } from '@/components/ui/form-screen';
 import { useQashyTheme } from '@/theme/theme';
+import { radius } from '@/theme/tokens';
+import { errorMessage, showError } from '@/utils/confirm';
 import { parseCsvTable } from '@/utils/csv';
 import { todayLocal } from '@/utils/date';
 
@@ -102,9 +105,9 @@ export function CsvScreen() {
     try {
       const result = await repository.importCsv(rows, true);
       setPreview(result);
-      Alert.alert('Import complete', `${result.committedIds.length} transactions imported.`);
+      showError('Import complete', `${result.committedIds.length} transactions imported.`);
     } catch (reason) {
-      Alert.alert('Couldn’t import CSV', reason instanceof Error ? reason.message : 'No rows were imported.');
+      showError('Couldn’t import CSV', errorMessage(reason, 'No rows were imported.'));
     } finally {
       setBusy(false);
     }
@@ -130,7 +133,7 @@ export function CsvScreen() {
   };
 
   return (
-    <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }} contentContainerStyle={{ padding: 18, paddingBottom: 40, gap: 16, width: '100%', maxWidth: 760, alignSelf: 'center' }}>
+    <FormScreen maxWidth={760} contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 14 }}>
         <AppText variant="headline">Export transactions</AppText>
         <AppText muted>Creates a UTF-8 CSV with dates, statuses, amounts, currencies, source and destination accounts, categories, tags, notes, exchange-rate snapshots, and transfer linkage.</AppText>
@@ -158,16 +161,16 @@ export function CsvScreen() {
             <AppText variant="label">Default account</AppText>
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               {state.accounts.filter((item) => !item.archived).map((account) => (
-                <Pressable key={account.id} accessibilityRole="radio" accessibilityState={{ selected: defaultAccountId === account.id }} onPress={() => { setDefaultAccountId(account.id); setPreview(null); }} style={{ padding: 10, borderRadius: 14, backgroundColor: defaultAccountId === account.id ? theme.accentContainer : theme.surfaceMuted }}>
+                <Pressable key={account.id} accessibilityRole="radio" accessibilityState={{ selected: defaultAccountId === account.id }} onPress={() => { setDefaultAccountId(account.id); setPreview(null); }} style={{ padding: 10, borderRadius: radius.control, backgroundColor: defaultAccountId === account.id ? theme.accentContainer : theme.surfaceMuted }}>
                   <AppText variant="label" style={{ color: defaultAccountId === account.id ? theme.accent : theme.text }}>{account.name}</AppText>
                 </Pressable>
               ))}
             </View>
             <AppText variant="label">Default category</AppText>
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              <Pressable onPress={() => { setDefaultCategoryId(''); setPreview(null); }} style={{ padding: 10, borderRadius: 14, backgroundColor: !defaultCategoryId ? theme.accentContainer : theme.surfaceMuted }}><AppText variant="label">None</AppText></Pressable>
+              <Pressable onPress={() => { setDefaultCategoryId(''); setPreview(null); }} style={{ padding: 10, borderRadius: radius.control, backgroundColor: !defaultCategoryId ? theme.accentContainer : theme.surfaceMuted }}><AppText variant="label">None</AppText></Pressable>
               {state.categories.filter((item) => !item.archived).map((category) => (
-                <Pressable key={category.id} onPress={() => { setDefaultCategoryId(category.id); setPreview(null); }} style={{ padding: 10, borderRadius: 14, backgroundColor: defaultCategoryId === category.id ? theme.accentContainer : theme.surfaceMuted }}><AppText variant="label">{category.name}</AppText></Pressable>
+                <Pressable key={category.id} onPress={() => { setDefaultCategoryId(category.id); setPreview(null); }} style={{ padding: 10, borderRadius: radius.control, backgroundColor: defaultCategoryId === category.id ? theme.accentContainer : theme.surfaceMuted }}><AppText variant="label">{category.name}</AppText></Pressable>
               ))}
             </View>
             <ActionButton title="Preview import" icon="checkmark" onPress={previewImport} />
@@ -176,9 +179,9 @@ export function CsvScreen() {
         {preview ? (
           <View style={{ gap: 10, paddingTop: 6 }}>
             <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
-              <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: 16, backgroundColor: theme.accentContainer }}><AppText variant="headline" style={{ color: theme.accent }}>{preview.validRows.length}</AppText><AppText variant="caption" muted>Ready</AppText></View>
-              <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: 16, backgroundColor: theme.surfaceMuted }}><AppText variant="headline">{preview.duplicateRows.length}</AppText><AppText variant="caption" muted>Duplicates</AppText></View>
-              <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: 16, backgroundColor: theme.surfaceMuted }}><AppText variant="headline" style={{ color: preview.rejectedRows.length ? theme.negative : theme.text }}>{preview.rejectedRows.length}</AppText><AppText variant="caption" muted>Rejected</AppText></View>
+              <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: radius.card, backgroundColor: theme.accentContainer }}><AppText variant="headline" style={{ color: theme.accent }}>{preview.validRows.length}</AppText><AppText variant="caption" muted>Ready</AppText></View>
+              <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: radius.card, backgroundColor: theme.surfaceMuted }}><AppText variant="headline">{preview.duplicateRows.length}</AppText><AppText variant="caption" muted>Duplicates</AppText></View>
+              <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: radius.card, backgroundColor: theme.surfaceMuted }}><AppText variant="headline" style={{ color: preview.rejectedRows.length ? theme.negative : theme.text }}>{preview.rejectedRows.length}</AppText><AppText variant="caption" muted>Rejected</AppText></View>
             </View>
             {preview.rejectedRows.slice(0, 4).map((row) => <AppText key={row.rowNumber} variant="caption" style={{ color: theme.negative }}>Row {row.rowNumber}: {row.reason}</AppText>)}
             {preview.validRows.length && !preview.committedIds.length ? <ActionButton title={busy ? 'Importing…' : `Import ${preview.validRows.length} transactions`} icon="checkmark" onPress={commit} disabled={busy} /> : null}
@@ -186,6 +189,6 @@ export function CsvScreen() {
         ) : null}
       </Card>
       <Card><AppText variant="caption" muted>CSV is transaction portability, not a complete backup. Budgets, goals, schedules, and appearance settings are not included.</AppText></Card>
-    </ScrollView>
+    </FormScreen>
   );
 }

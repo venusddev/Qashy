@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { ScrollView, View, useWindowDimensions } from 'react-native';
 
 import { AppText } from '@/components/ui/app-text';
@@ -9,6 +9,7 @@ import { SectionHeader } from '@/components/ui/section-header';
 import { SettingsRow } from '@/components/ui/settings-row';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { errorMessage, showError } from '@/utils/confirm';
 import { endOfMonth, startOfMonth } from '@/utils/date';
 import { formatMoney } from '@/utils/money';
 
@@ -29,7 +30,28 @@ export function MoreScreen() {
     return repository.getDashboard(startOfMonth(), endOfMonth());
   }, [repository, state.accounts, state.budgetPeriods, state.budgets, state.categories, state.exchangeRates, state.settings, state.transactions]);
   const activeAccounts = state.accounts.filter((item) => !item.archived);
+  const archivedAccounts = state.accounts.filter((item) => item.archived);
+  const archivedCategories = state.categories.filter((item) => item.archived);
   const recurring = state.recurringRules.filter((item) => item.active);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+
+  const restore = async (entity: 'account' | 'category', id: string) => {
+    if (restoringId) return;
+    setRestoringId(id);
+    try {
+      if (entity === 'account') {
+        const account = state.accounts.find((item) => item.id === id);
+        if (account) await repository.saveAccount({ ...account, archived: false }, account.id);
+      } else {
+        const category = state.categories.find((item) => item.id === id);
+        if (category) await repository.saveCategory({ ...category, archived: false }, category.id);
+      }
+    } catch (reason) {
+      showError('Couldn’t restore', errorMessage(reason, 'Rename the active entry using this name first.'));
+    } finally {
+      setRestoringId(null);
+    }
+  };
 
   return (
     <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }}>
@@ -60,6 +82,16 @@ export function MoreScreen() {
             <Card style={{ paddingVertical: 8 }}>
               {state.exchangeRates.length ? state.exchangeRates.map((rate) => <SettingsRow key={rate.id} title={`${rate.fromCurrency} → ${rate.toCurrency}`} subtitle={`Effective ${rate.effectiveDate}`} value={rate.rate} icon="arrow.left.arrow.right" onPress={() => router.push({ pathname: '/exchange-rate', params: { id: rate.id } })} />) : <View style={{ padding: 16 }}><AppText muted>Add a manual rate when you create an account in another currency.</AppText></View>}
             </Card>
+
+            {archivedAccounts.length || archivedCategories.length ? (
+              <>
+                <SectionHeader title="Archived" />
+                <Card style={{ paddingVertical: 8 }}>
+                  {archivedAccounts.map((account) => <SettingsRow key={account.id} title={account.name} subtitle={`Archived account · ${account.currency}`} value={restoringId === account.id ? 'Restoring…' : 'Restore'} icon="wallet" color={account.color} onPress={() => restore('account', account.id)} />)}
+                  {archivedCategories.map((category) => <SettingsRow key={category.id} title={category.name} subtitle={`Archived ${category.kind} category`} value={restoringId === category.id ? 'Restoring…' : 'Restore'} icon={category.kind === 'income' ? 'arrow.down' : 'arrow.up'} color={category.color} onPress={() => restore('category', category.id)} />)}
+                </Card>
+              </>
+            ) : null}
 
             <SectionHeader title="Qashy" />
             <Card style={{ paddingVertical: 8 }}>

@@ -3,7 +3,6 @@ import { Pressable, View, useWindowDimensions } from 'react-native';
 
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
-import { GlassSurface } from '@/components/ui/glass-surface';
 import { useQashyTheme } from '@/theme/theme';
 
 const NAV_ITEMS = [
@@ -21,28 +20,30 @@ export default function WebTabsLayout() {
   const mobile = width < 768;
 
   const navigation = NAV_ITEMS.map((item) => {
-    const active = pathname.includes(item.match) || (item.match === '/overview' && pathname === '/');
+    const active = pathname === item.match || pathname.startsWith(`${item.match}/`) || (item.match === '/overview' && pathname === '/');
     return (
       <Link key={item.label} href={item.href} asChild>
+        {/* Link asChild drops function-form styles on web, so this must stay a
+            plain style object. */}
         <Pressable
           accessibilityRole="link"
-          style={({ pressed }) => ({
+          style={{
             minHeight: 48,
             minWidth: mobile ? 64 : compact ? 52 : undefined,
             flex: mobile ? 1 : undefined,
-            paddingHorizontal: compact ? 12 : 16,
+            paddingHorizontal: mobile ? 4 : compact ? 12 : 16,
             borderRadius: 16,
             borderCurve: 'continuous',
-            flexDirection: mobile || !compact ? 'row' : 'column',
+            // Mobile bottom nav stacks icon over label, the conventional layout.
+            flexDirection: mobile ? 'column' : !compact ? 'row' : 'column',
             alignItems: 'center',
             justifyContent: mobile ? 'center' : 'flex-start',
-            gap: 10,
+            gap: mobile ? 3 : 10,
             backgroundColor: active ? theme.accentContainer : 'transparent',
-            opacity: pressed ? 0.7 : 1,
-          })}>
-          <AppIcon name={item.icon} color={active ? theme.accent : theme.textMuted} size={20} />
+          }}>
+          <AppIcon name={item.icon} color={active ? theme.accent : theme.textMuted} size={mobile ? 22 : 20} />
           {mobile || !compact ? (
-            <AppText selectable={false} variant="label" style={{ color: active ? theme.accent : theme.textMuted, fontSize: mobile ? 12 : 15 }}>
+            <AppText selectable={false} variant="label" numberOfLines={1} style={{ color: active ? theme.accent : theme.textMuted, fontSize: mobile ? 11 : 15 }}>
               {item.label}
             </AppText>
           ) : null}
@@ -55,23 +56,24 @@ export default function WebTabsLayout() {
     return (
       <View style={{ flex: 1, backgroundColor: theme.background }}>
         <Slot />
-        <GlassSurface
+        <View
           style={{
             position: 'absolute',
-            left: 12,
-            right: 12,
-            bottom: 12,
-            minHeight: 66,
-            borderRadius: 24,
-            borderCurve: 'continuous',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            minHeight: 64,
+            backgroundColor: theme.surfaceElevated,
             flexDirection: 'row',
             alignItems: 'center',
-            padding: 6,
-            borderWidth: 1,
-            borderColor: theme.border,
+            paddingHorizontal: 8,
+            paddingVertical: 6,
+            borderTopWidth: 1,
+            borderTopColor: theme.border,
+            boxShadow: '0 -2px 12px rgba(25,27,32,0.06)',
           }}>
           {navigation}
-        </GlassSurface>
+        </View>
       </View>
     );
   }

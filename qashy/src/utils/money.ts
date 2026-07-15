@@ -77,7 +77,8 @@ export function formatMoney(
   options?: { compact?: boolean; sign?: boolean },
 ) {
   const digits = currencyDigits(currency, locale);
-  const value = minor / 10 ** digits;
+  // Scale through Decimal so large minor amounts stay exact; Intl still needs a number.
+  const value = Number(minorToDecimalString(minor, currency, locale));
   return new Intl.NumberFormat(locale, {
     style: 'currency',
     currency,

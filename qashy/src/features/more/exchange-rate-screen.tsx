@@ -1,44 +1,57 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Alert, ScrollView } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { Card } from '@/components/ui/card';
 import { FormField } from '@/components/ui/form-field';
+import { FormScreen } from '@/components/ui/form-screen';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
-import { useQashyTheme } from '@/theme/theme';
+import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
 
 export function ExchangeRateScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const repository = useFinanceRepository();
   const state = useFinanceState();
-  const theme = useQashyTheme();
   const existing = id ? state.exchangeRates.find((item) => item.id === id) : undefined;
   const [fromCurrency, setFromCurrency] = useState(existing?.fromCurrency ?? 'EUR');
   const [rate, setRate] = useState(existing?.rate ?? '1');
   const [effectiveDate, setEffectiveDate] = useState(existing?.effectiveDate ?? todayLocal());
   const [saving, setSaving] = useState(false);
   const save = async () => {
+    if (saving) return;
     setSaving(true);
     try {
       await repository.saveExchangeRate({ fromCurrency: fromCurrency.toUpperCase(), toCurrency: state.settings.baseCurrency, rate, effectiveDate }, existing?.id);
-      router.replace('/more');
+      router.dismissTo('/more');
     } catch (reason) {
-      Alert.alert('Couldn’t save rate', reason instanceof Error ? reason.message : 'Check the form and try again.');
+      showError('Couldn’t save rate', errorMessage(reason, 'Check the form and try again.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const remove = async () => {
+    if (!existing || saving) return;
+    if (!(await confirmDestructive({ title: `Delete the ${existing.fromCurrency} rate?`, message: 'Transactions that need this rate will report it as missing.' }))) return;
+    setSaving(true);
+    try {
+      await repository.deleteEntities('exchangeRates', [existing.id]);
+      router.dismissTo('/more');
+    } catch (reason) {
+      showError('Couldn’t delete rate', errorMessage(reason, 'Try again.'));
     } finally {
       setSaving(false);
     }
   };
   return (
-    <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }} contentContainerStyle={{ padding: 18, gap: 16, width: '100%', maxWidth: 620, alignSelf: 'center' }}>
+    <FormScreen maxWidth={620} contentContainerStyle={{ gap: 16 }}>
       <Card style={{ gap: 16 }}>
         <FormField label="From currency" value={fromCurrency} onChangeText={setFromCurrency} autoCapitalize="characters" maxLength={3} />
         <FormField label={`1 ${fromCurrency.toUpperCase()} equals how many ${state.settings.baseCurrency}?`} value={rate} onChangeText={setRate} keyboardType="decimal-pad" />
         <FormField label="Effective date" value={effectiveDate} onChangeText={setEffectiveDate} placeholder="YYYY-MM-DD" />
       </Card>
       <ActionButton title={saving ? 'Saving…' : 'Save rate'} icon="checkmark" onPress={save} disabled={saving} />
-      {existing ? <ActionButton title="Delete rate" variant="danger" onPress={async () => { await repository.deleteEntities('exchangeRates', [existing.id]); router.replace('/more'); }} /> : null}
-    </ScrollView>
+      {existing ? <ActionButton title="Delete rate" variant="danger" onPress={remove} disabled={saving} /> : null}
+    </FormScreen>
   );
 }

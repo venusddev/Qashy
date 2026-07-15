@@ -1,17 +1,19 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Alert, ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
 import { ChoiceChip } from '@/components/ui/choice-chip';
 import { FormField } from '@/components/ui/form-field';
+import { FormScreen } from '@/components/ui/form-screen';
 import type { GoalKind } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
-import { currencyDigits, parseMoney } from '@/utils/money';
+import { minorToDecimalString, parseMoney } from '@/utils/money';
 
 export function GoalFormScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -19,11 +21,11 @@ export function GoalFormScreen() {
   const state = useFinanceState();
   const theme = useQashyTheme();
   const existing = id ? state.goals.find((item) => item.id === id) : undefined;
-  const scale = 10 ** currencyDigits(state.settings.baseCurrency, state.settings.locale);
+  const toMoneyText = (minor: number) => minorToDecimalString(minor, state.settings.baseCurrency, state.settings.locale);
   const [name, setName] = useState(existing?.name ?? 'Rainy day fund');
   const [kind, setKind] = useState<GoalKind>(existing?.kind ?? 'saving');
-  const [target, setTarget] = useState(existing ? String(existing.targetMinor / scale) : '5000');
-  const [initial, setInitial] = useState(existing ? String(existing.initialMinor / scale) : '0');
+  const [target, setTarget] = useState(existing ? toMoneyText(existing.targetMinor) : '5000');
+  const [initial, setInitial] = useState(existing ? toMoneyText(existing.initialMinor) : '0');
   const [targetDate, setTargetDate] = useState(existing?.targetDate ?? '');
   const [linkedAccountId, setLinkedAccountId] = useState(existing?.linkedAccountId ?? '');
   const [linkedCategoryId, setLinkedCategoryId] = useState(existing?.linkedCategoryId ?? '');
@@ -48,16 +50,30 @@ export function GoalFormScreen() {
       if (contribution.trim()) {
         await repository.saveContribution({ goalId: goal.id, amountMinor: parseMoney(contribution, state.settings.baseCurrency, state.settings.locale), localDate: todayLocal(), transactionId: null, note: 'Manual contribution' });
       }
-      router.replace('/plan');
+      router.dismissTo('/plan');
     } catch (reason) {
-      Alert.alert('Couldn’t save goal', reason instanceof Error ? reason.message : 'Try again.');
+      showError('Couldn’t save goal', errorMessage(reason, 'Try again.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!existing || saving) return;
+    if (!(await confirmDestructive({ title: `Delete ${existing.name}?`, message: 'Manual contributions are removed with it.' }))) return;
+    setSaving(true);
+    try {
+      await repository.deleteEntities('goals', [existing.id]);
+      router.dismissTo('/plan');
+    } catch (reason) {
+      showError('Couldn’t delete goal', errorMessage(reason, 'Try again.'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }} contentContainerStyle={{ padding: 18, paddingBottom: 40, gap: 16, width: '100%', maxWidth: 680, alignSelf: 'center' }}>
+    <FormScreen contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 16 }}>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           {(['saving', 'spending'] as GoalKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item === 'saving' ? 'Savings goal' : 'Planned purchase'} selected={kind === item} onPress={() => setKind(item)} /></View>)}
@@ -79,7 +95,7 @@ export function GoalFormScreen() {
 
       {existing ? <Card><FormField label="Add a manual contribution" value={contribution} onChangeText={setContribution} keyboardType="decimal-pad" placeholder="0" /></Card> : null}
       <ActionButton title={saving ? 'Saving…' : existing ? 'Save goal' : 'Create goal'} icon="checkmark" onPress={save} disabled={saving} />
-      {existing ? <ActionButton title="Delete goal" variant="danger" onPress={async () => { await repository.deleteEntities('goals', [existing.id]); router.replace('/plan'); }} /> : null}
-    </ScrollView>
+      {existing ? <ActionButton title="Delete goal" variant="danger" onPress={remove} disabled={saving} /> : null}
+    </FormScreen>
   );
 }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
@@ -9,8 +9,8 @@ import { FormField } from '@/components/ui/form-field';
 import type { AccentSource, ThemeMode } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
-
-const ACCENTS = ['#5966E9', '#007AFF', '#00A58E', '#36A852', '#E7892C', '#E0516B', '#A95BCD', '#6D7885'];
+import { ACCENT_PRESETS, mixHex, readableTextColor } from '@/theme/tokens';
+import { errorMessage, showError } from '@/utils/confirm';
 
 export function AppearanceScreen() {
   const repository = useFinanceRepository();
@@ -19,10 +19,24 @@ export function AppearanceScreen() {
   const [mode, setMode] = useState<ThemeMode>(settings.themeMode);
   const [source, setSource] = useState<AccentSource>(settings.accentSource);
   const [hex, setHex] = useState(settings.accentHex);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const validHex = /^#[0-9A-Fa-f]{6}$/.test(hex);
+  const previewHex = validHex ? hex : theme.staticAccent;
+  const previewText = readableTextColor(previewHex);
+  const previewMuted = mixHex(previewText, previewHex, 0.25);
   const save = async () => {
-    if (!validHex) return Alert.alert('Invalid color', 'Use a six-digit hex color such as #5966E9.');
-    await repository.updateSettings({ themeMode: mode, accentSource: source, accentHex: hex.toUpperCase() });
+    if (!validHex) return showError('Invalid color', 'Use a six-digit hex color such as #5966E9.');
+    setSaving(true);
+    setSaved(false);
+    try {
+      await repository.updateSettings({ themeMode: mode, accentSource: source, accentHex: hex.toUpperCase() });
+      setSaved(true);
+    } catch (reason) {
+      showError('Couldn’t save appearance', errorMessage(reason, 'Try again.'));
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -33,20 +47,20 @@ export function AppearanceScreen() {
       </Card>
       <Card style={{ gap: 16 }}>
         <AppText variant="headline">Accent source</AppText>
-        <ChoiceChip label={process.env.EXPO_OS === 'android' ? 'Material You wallpaper' : 'System accent'} selected={source === 'system'} onPress={() => setSource('system')} icon="paintbrush" />
-        <AppText muted>{process.env.EXPO_OS === 'android' ? 'Android 12 and later derive this from your wallpaper. Older versions use Qashy’s default palette.' : 'Uses native semantic surfaces and the platform accent.'}</AppText>
+        <ChoiceChip label={process.env.EXPO_OS === 'android' ? 'Material You wallpaper' : 'Qashy default'} selected={source === 'system'} onPress={() => setSource('system')} icon="paintbrush" />
+        <AppText muted>{process.env.EXPO_OS === 'android' ? 'Android 12 and later derive this from your wallpaper. Older versions use Qashy’s default palette.' : 'Uses Qashy’s indigo accent on neutral surfaces.'}</AppText>
         <AppText variant="label">Curated accents</AppText>
         <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
-          {ACCENTS.map((color) => <Pressable key={color} accessibilityRole="button" accessibilityLabel={`Use ${color} accent`} onPress={() => { setSource('preset'); setHex(color); }} style={{ width: 44, height: 44, borderRadius: 99, backgroundColor: color, borderWidth: source !== 'system' && hex.toUpperCase() === color ? 3 : 0, borderColor: theme.text }} />)}
+          {ACCENT_PRESETS.map((color) => <Pressable key={color} accessibilityRole="button" accessibilityLabel={`Use ${color} accent`} onPress={() => { setSource('preset'); setHex(color); }} style={{ width: 44, height: 44, borderRadius: 99, backgroundColor: color, borderWidth: source !== 'system' && hex.toUpperCase() === color ? 3 : 0, borderColor: theme.text }} />)}
         </View>
         <FormField label="Custom accent" value={hex} onChangeText={(value) => { setSource('custom'); setHex(value); }} autoCapitalize="characters" maxLength={7} hint="Only the accent changes; semantic surfaces retain accessible contrast." />
       </Card>
-      <Card style={{ backgroundColor: validHex ? hex : theme.accent, gap: 6 }}>
-        <AppText variant="caption" style={{ color: '#FFFFFFB8' }}>PREVIEW</AppText>
-        <AppText variant="headline" style={{ color: '#FFFFFF' }}>Glass, color, and clarity</AppText>
-        <AppText style={{ color: '#FFFFFFD9' }}>Qashy adapts the same hierarchy across iOS, Android, and desktop.</AppText>
+      <Card style={{ backgroundColor: previewHex, gap: 6 }}>
+        <AppText variant="caption" style={{ color: previewMuted }}>PREVIEW</AppText>
+        <AppText variant="headline" style={{ color: previewText }}>Color, contrast, and clarity</AppText>
+        <AppText style={{ color: previewMuted }}>Qashy adapts the same hierarchy across iOS, Android, and desktop.</AppText>
       </Card>
-      <ActionButton title="Save appearance" icon="checkmark" onPress={save} />
+      <ActionButton title={saving ? 'Saving…' : saved ? 'Saved' : 'Save appearance'} icon="checkmark" disabled={saving} onPress={save} />
     </ScrollView>
   );
 }

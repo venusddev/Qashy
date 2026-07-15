@@ -6,6 +6,7 @@ import { AppText } from '@/components/ui/app-text';
 import type { TransactionRecord } from '@/domain/models';
 import { useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { radius, readableTextColor } from '@/theme/tokens';
 import { formatMoney } from '@/utils/money';
 
 export function TransactionRow({
@@ -39,8 +40,8 @@ export function TransactionRow({
       onPress={onPress ?? (() => router.push({ pathname: '/transaction', params: { id: transaction.id, returnTo } }))}
       onLongPress={onLongPress}
       style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: compact ? 54 : 64, opacity: pressed ? 0.65 : 1 })}>
-      <View style={{ width: compact ? 38 : 44, height: compact ? 38 : 44, borderRadius: 15, backgroundColor: category?.color ?? theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}>
-        <AppIcon name={isTransfer ? 'arrow.left.arrow.right' : isIncome ? 'arrow.down' : 'arrow.up'} color={category ? '#FFFFFF' : theme.accent} size={18} />
+      <View style={{ width: compact ? 38 : 44, height: compact ? 38 : 44, borderRadius: radius.control, backgroundColor: category?.color ?? theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}>
+        <AppIcon name={isTransfer ? 'arrow.left.arrow.right' : isIncome ? 'arrow.down' : 'arrow.up'} color={category ? readableTextColor(category.color) : theme.accent} size={18} />
       </View>
       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
         <View style={{ flexDirection: 'row', gap: 7, alignItems: 'center' }}>
@@ -54,7 +55,7 @@ export function TransactionRow({
         <AppText variant="caption" muted numberOfLines={1}>{category?.name ?? (isTransfer ? 'Transfer' : 'Uncategorized')} · {account?.name ?? 'Unknown account'}</AppText>
       </View>
       <View style={{ alignItems: 'flex-end', gap: 2 }}>
-        {selected ? <AppText selectable={false} variant="label" style={{ color: theme.accent }}>✓</AppText> : <AppText variant="label" style={{ color, fontVariant: ['tabular-nums'] }}>
+        {selected ? <AppIcon name="checkmark" color={theme.accent} size={18} /> : <AppText variant="label" style={{ color, fontVariant: ['tabular-nums'] }}>
           {isIncome ? '+' : isTransfer ? '' : '-'}{formatMoney(transaction.amountMinor, transaction.currency, settings.locale)}
         </AppText>}
         {!compact ? <AppText variant="caption" muted>{transaction.localDate}</AppText> : null}

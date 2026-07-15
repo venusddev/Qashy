@@ -1,17 +1,19 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
 import { ChoiceChip } from '@/components/ui/choice-chip';
 import { FormField } from '@/components/ui/form-field';
+import { FormScreen } from '@/components/ui/form-screen';
 import type { TransactionKind } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
-import { todayLocal } from '@/utils/date';
-import { currencyDigits, parseMoney } from '@/utils/money';
+import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
+import { isLocalDate, todayLocal } from '@/utils/date';
+import { minorToDecimalString, parseMoney } from '@/utils/money';
 
 export function TransactionFormScreen() {
   const { id, returnTo } = useLocalSearchParams<{ id?: string; returnTo?: string }>();
@@ -22,7 +24,7 @@ export function TransactionFormScreen() {
   const defaultAccount = state.accounts.find((item) => !item.archived);
   const [kind, setKind] = useState<TransactionKind>(existing?.kind ?? 'expense');
   const [title, setTitle] = useState(existing?.title ?? '');
-  const [amount, setAmount] = useState(() => existing ? String(existing.amountMinor / 10 ** currencyDigits(existing.currency, state.settings.locale)) : '');
+  const [amount, setAmount] = useState(() => existing ? minorToDecimalString(existing.amountMinor, existing.currency, state.settings.locale) : '');
   const [date, setDate] = useState(existing?.localDate ?? todayLocal());
   const [accountId, setAccountId] = useState(existing?.accountId ?? defaultAccount?.id ?? '');
   const [destinationAccountId, setDestinationAccountId] = useState(existing?.destinationAccountId ?? '');
@@ -32,18 +34,37 @@ export function TransactionFormScreen() {
   const existingDestination = state.accounts.find((item) => item.id === existing?.destinationAccountId);
   const [destinationAmount, setDestinationAmount] = useState(() =>
     existing && existing.destinationAmountMinor !== null && existingDestination
-      ? String(existing.destinationAmountMinor / 10 ** currencyDigits(existingDestination.currency, state.settings.locale))
+      ? minorToDecimalString(existing.destinationAmountMinor, existingDestination.currency, state.settings.locale)
       : '',
   );
-  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(false);
   const account = state.accounts.find((item) => item.id === accountId) ?? defaultAccount;
   const destinationAccount = state.accounts.find((item) => item.id === destinationAccountId);
   const categories = useMemo(() => state.categories.filter((item) => !item.archived && item.kind === (kind === 'income' ? 'income' : 'expense')), [state.categories, kind]);
   const needsRate = account && account.currency !== state.settings.baseCurrency;
+  // A saved transaction may reference an account that was archived later;
+  // keep it visible (disabled) so the selection isn't silently blank.
+  const accountChoices = useMemo(() => {
+    const active = state.accounts.filter((item) => !item.archived);
+    const current = state.accounts.find((item) => item.id === accountId);
+    return current && current.archived ? [current, ...active] : active;
+  }, [state.accounts, accountId]);
+
+  const amountValid = useMemo(() => {
+    if (!account) return false;
+    try {
+      parseMoney(amount, account.currency, state.settings.locale);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [amount, account, state.settings.locale]);
+  const dateValid = isLocalDate(date);
+  const canSave = Boolean(account) && amountValid && dateValid && (kind !== 'transfer' || Boolean(destinationAccountId));
 
   const save = async () => {
-    if (!account) return;
-    setSaving(true);
+    if (!account || busy) return;
+    setBusy(true);
     try {
       await repository.saveTransaction({
         kind,
@@ -60,22 +81,30 @@ export function TransactionFormScreen() {
         exchangeRate: needsRate && exchangeRate.trim() ? exchangeRate.trim() : undefined,
         status: existing?.status ?? 'posted',
       }, existing?.id);
-      router.replace(returnTo === '/overview' ? '/overview' : '/transactions');
+      router.dismissTo(returnTo === '/overview' ? '/overview' : '/transactions');
     } catch (reason) {
-      Alert.alert('Couldn’t save transaction', reason instanceof Error ? reason.message : 'Check the form and try again.');
+      showError('Couldn’t save transaction', errorMessage(reason, 'Check the form and try again.'));
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   };
 
   const remove = async () => {
-    if (!existing) return;
-    await repository.deleteEntities('transactions', [existing.id]);
-    router.replace(returnTo === '/overview' ? '/overview' : '/transactions');
+    if (!existing || busy) return;
+    if (!(await confirmDestructive({ title: 'Delete this transaction?', message: `“${existing.title}” will be removed from your ledger.` }))) return;
+    setBusy(true);
+    try {
+      await repository.deleteEntities('transactions', [existing.id]);
+      router.dismissTo(returnTo === '/overview' ? '/overview' : '/transactions');
+    } catch (reason) {
+      showError('Couldn’t delete transaction', errorMessage(reason, 'Try again.'));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
-    <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }} contentContainerStyle={{ padding: 18, paddingBottom: 44, gap: 18, width: '100%', maxWidth: 680, alignSelf: 'center' }}>
+    <FormScreen>
       <View style={{ flexDirection: 'row', gap: 8 }}>
         {(['expense', 'income', 'transfer'] as TransactionKind[]).map((item) => (
           <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => { setKind(item); setCategoryId(''); }} /></View>
@@ -83,15 +112,24 @@ export function TransactionFormScreen() {
       </View>
 
       <Card style={{ gap: 16 }}>
-        <FormField label={`Amount (${account?.currency ?? state.settings.baseCurrency})`} value={amount} onChangeText={setAmount} placeholder="0.00" keyboardType="decimal-pad" autoFocus={!existing} style={{ fontSize: 30, fontWeight: '700', minHeight: 68, fontVariant: ['tabular-nums'] }} />
+        <FormField
+          label={`Amount (${account?.currency ?? state.settings.baseCurrency})`}
+          value={amount}
+          onChangeText={setAmount}
+          placeholder="0.00"
+          keyboardType="decimal-pad"
+          autoFocus={!existing}
+          hint={amount.trim() && !amountValid ? 'Enter a valid amount greater than zero.' : undefined}
+          style={{ fontSize: 30, fontWeight: '700', minHeight: 68, fontVariant: ['tabular-nums'] }}
+        />
         <FormField label="Title" value={title} onChangeText={setTitle} placeholder={kind === 'transfer' ? 'Transfer' : 'What was it?'} />
-        <FormField label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" autoCapitalize="none" />
+        <FormField label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" autoCapitalize="none" hint={date.trim() && !dateValid ? 'Use a real date in YYYY-MM-DD format.' : undefined} />
       </Card>
 
       <Card style={{ gap: 14 }}>
         <AppText variant="label">From account</AppText>
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-          {state.accounts.filter((item) => !item.archived).map((item) => <ChoiceChip key={item.id} label={`${item.name} · ${item.currency}`} selected={accountId === item.id} onPress={() => { setAccountId(item.id); setExchangeRate(''); setDestinationAmount(''); if (destinationAccountId === item.id) setDestinationAccountId(''); }} />)}
+          {accountChoices.map((item) => <ChoiceChip key={item.id} label={`${item.name} · ${item.currency}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={accountId === item.id} onPress={() => { setAccountId(item.id); setExchangeRate(''); setDestinationAmount(''); if (destinationAccountId === item.id) setDestinationAccountId(''); }} />)}
         </View>
         {kind === 'transfer' ? (
           <>
@@ -133,8 +171,8 @@ export function TransactionFormScreen() {
         ) : null}
       </Card>
 
-      <ActionButton title={saving ? 'Saving…' : existing ? 'Save changes' : 'Add transaction'} icon="checkmark" onPress={save} disabled={saving} />
-      {existing ? <ActionButton title="Delete transaction" variant="danger" onPress={remove} /> : null}
-    </ScrollView>
+      <ActionButton title={busy ? 'Saving…' : existing ? 'Save changes' : 'Add transaction'} icon="checkmark" onPress={save} disabled={busy || !canSave} />
+      {existing ? <ActionButton title="Delete transaction" variant="danger" onPress={remove} disabled={busy} /> : null}
+    </FormScreen>
   );
 }

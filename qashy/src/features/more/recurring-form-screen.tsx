@@ -1,17 +1,19 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Alert, ScrollView, Switch, View } from 'react-native';
+import { Switch, View } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
 import { ChoiceChip } from '@/components/ui/choice-chip';
 import { FormField } from '@/components/ui/form-field';
+import { FormScreen } from '@/components/ui/form-screen';
 import type { CategoryKind, RecurrenceUnit } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
-import { currencyDigits, parseMoney } from '@/utils/money';
+import { minorToDecimalString, parseMoney } from '@/utils/money';
 
 export function RecurringFormScreen() {
   const params = useLocalSearchParams<{ id?: string; kind?: CategoryKind; title?: string; amount?: string; accountId?: string; categoryId?: string }>();
@@ -23,7 +25,7 @@ export function RecurringFormScreen() {
     ?? state.accounts.find((item) => !item.archived);
   const [kind, setKind] = useState<CategoryKind>(existing?.template.kind ?? params.kind ?? 'expense');
   const [title, setTitle] = useState(existing?.template.title ?? params.title ?? '');
-  const [amount, setAmount] = useState(existing ? String(existing.template.amountMinor / 10 ** currencyDigits(existing.template.currency, state.settings.locale)) : params.amount ?? '');
+  const [amount, setAmount] = useState(existing ? minorToDecimalString(existing.template.amountMinor, existing.template.currency, state.settings.locale) : params.amount ?? '');
   const [accountId, setAccountId] = useState(initialAccount?.id ?? '');
   const [categoryId, setCategoryId] = useState(existing?.template.categoryId ?? params.categoryId ?? '');
   const [unit, setUnit] = useState<RecurrenceUnit>(existing?.unit ?? 'month');
@@ -31,11 +33,13 @@ export function RecurringFormScreen() {
   const [startDate, setStartDate] = useState(existing?.startDate ?? todayLocal());
   const [endDate, setEndDate] = useState(existing?.endDate ?? '');
   const [autoPost, setAutoPost] = useState(existing?.autoPost ?? false);
+  const [busy, setBusy] = useState(false);
   const account = state.accounts.find((item) => item.id === accountId) ?? initialAccount;
   const categories = state.categories.filter((item) => item.kind === kind && !item.archived);
 
   const save = async () => {
-    if (!account) return;
+    if (!account || busy) return;
+    setBusy(true);
     try {
       const normalizedInterval = Math.max(1, Math.floor(Number(interval) || 1));
       const normalizedEndDate = endDate || null;
@@ -56,14 +60,30 @@ export function RecurringFormScreen() {
         active: true,
       }, existing?.id);
       await repository.generateRecurring();
-      router.replace('/more');
+      router.dismissTo('/more');
     } catch (reason) {
-      Alert.alert('Couldn’t save schedule', reason instanceof Error ? reason.message : 'Try again.');
+      showError('Couldn’t save schedule', errorMessage(reason, 'Try again.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!existing || busy) return;
+    if (!(await confirmDestructive({ title: 'Delete this schedule?', message: 'Already generated transactions stay in your ledger.' }))) return;
+    setBusy(true);
+    try {
+      await repository.deleteEntities('recurringRules', [existing.id]);
+      router.dismissTo('/more');
+    } catch (reason) {
+      showError('Couldn’t delete schedule', errorMessage(reason, 'Try again.'));
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
-    <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }} contentContainerStyle={{ padding: 18, paddingBottom: 40, gap: 16, width: '100%', maxWidth: 680, alignSelf: 'center' }}>
+    <FormScreen contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 16 }}>
         <View style={{ flexDirection: 'row', gap: 8 }}>{(['expense', 'income'] as CategoryKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => { setKind(item); setCategoryId(''); }} /></View>)}</View>
         <FormField label="Title" value={title} onChangeText={setTitle} placeholder="Rent, salary, subscription…" />
@@ -86,8 +106,8 @@ export function RecurringFormScreen() {
         </View>
       </Card>
 
-      <ActionButton title={existing ? 'Save schedule' : 'Create schedule'} icon="checkmark" onPress={save} />
-      {existing ? <ActionButton title="Delete schedule" variant="danger" onPress={async () => { await repository.deleteEntities('recurringRules', [existing.id]); router.replace('/more'); }} /> : null}
-    </ScrollView>
+      <ActionButton title={busy ? 'Saving…' : existing ? 'Save schedule' : 'Create schedule'} icon="checkmark" onPress={save} disabled={busy} />
+      {existing ? <ActionButton title="Delete schedule" variant="danger" onPress={remove} disabled={busy} /> : null}
+    </FormScreen>
   );
 }

@@ -1,8 +1,9 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
+import { Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
+import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
 import { ChoiceChip } from '@/components/ui/choice-chip';
@@ -11,9 +12,19 @@ import { QASHY_ACCENT } from '@/domain/defaults';
 import type { AccountType, AccentSource, ThemeMode } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { ACCENT_PRESETS, radius } from '@/theme/tokens';
+import { errorMessage, showError } from '@/utils/confirm';
 import { parseMoney } from '@/utils/money';
 
-const ACCENTS = ['#5966E9', '#007AFF', '#00A58E', '#36A852', '#E7892C', '#E0516B', '#A95BCD', '#6D7885'];
+function isValidLocale(value: string) {
+  try {
+    new Intl.Locale(value);
+    new Intl.NumberFormat(value).format(1);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function OnboardingScreen() {
   const repository = useFinanceRepository();
@@ -30,6 +41,11 @@ export function OnboardingScreen() {
   const [accentSource, setAccentSource] = useState<AccentSource>('system');
   const [accentHex, setAccentHex] = useState(QASHY_ACCENT);
   const [saving, setSaving] = useState(false);
+  const localeValid = isValidLocale(locale);
+  const currencyValid = /^[A-Za-z]{3}$/.test(currency.trim());
+  // Step 1 gates Continue so a bad locale or currency surfaces immediately
+  // instead of failing the whole flow at the final step.
+  const stepValid = step !== 1 || (localeValid && currencyValid);
 
   const finish = async () => {
     setSaving(true);
@@ -49,7 +65,7 @@ export function OnboardingScreen() {
       }
       router.replace('/overview');
     } catch (reason) {
-      Alert.alert('Couldn’t finish setup', reason instanceof Error ? reason.message : 'Check the form and try again.');
+      showError('Couldn’t finish setup', errorMessage(reason, 'Check the form and try again.'));
     } finally {
       setSaving(false);
     }
@@ -62,7 +78,7 @@ export function OnboardingScreen() {
       contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <View style={{ width: '100%', maxWidth: 720, gap: 22 }}>
         <View style={{ alignItems: 'center', gap: 12 }}>
-          <View style={{ width: 64, height: 64, borderRadius: 22, backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center', boxShadow: '0 18px 40px rgba(89,102,233,0.25)' }}>
+          <View style={{ width: 64, height: 64, borderRadius: radius.card, backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(25,27,32,0.18)' }}>
             <AppText selectable={false} variant="title" style={{ color: theme.onAccent }}>Q</AppText>
           </View>
           <AppText variant="title">{step === 0 ? 'Money, made calmer.' : ['Your home currency', 'Create your first account', 'Make it yours'][step - 1]}</AppText>
@@ -88,8 +104,8 @@ export function OnboardingScreen() {
                 ['Ready everywhere', 'A native-feeling phone app and a responsive desktop PWA.'],
               ].map(([title, description]) => (
                 <View key={title} style={{ flexDirection: 'row', gap: 14, alignItems: 'flex-start' }}>
-                  <View style={{ width: 34, height: 34, borderRadius: 12, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}>
-                    <AppText selectable={false} style={{ color: theme.accent }}>✓</AppText>
+                  <View style={{ width: 34, height: 34, borderRadius: radius.control, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}>
+                    <AppIcon name="checkmark" color={theme.accent} size={18} />
                   </View>
                   <View style={{ flex: 1, gap: 2 }}><AppText variant="label">{title}</AppText><AppText muted>{description}</AppText></View>
                 </View>
@@ -99,8 +115,8 @@ export function OnboardingScreen() {
 
           {step === 1 ? (
             <View style={{ gap: 16 }}>
-              <FormField label="Locale" value={locale} onChangeText={setLocale} placeholder="en-US" autoCapitalize="none" />
-              <FormField label="Base currency" value={currency} onChangeText={setCurrency} placeholder="USD" autoCapitalize="characters" maxLength={3} hint="Budgets, goals, and reports use this currency." />
+              <FormField label="Locale" value={locale} onChangeText={setLocale} placeholder="en-US" autoCapitalize="none" hint={locale.trim() && !localeValid ? 'Use a valid locale such as en-US.' : undefined} />
+              <FormField label="Base currency" value={currency} onChangeText={setCurrency} placeholder="USD" autoCapitalize="characters" maxLength={3} hint={currency.trim() && !currencyValid ? 'Use a three-letter currency code such as USD.' : 'Budgets, goals, and reports use this currency.'} />
               <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                 {['USD', 'EUR', 'GBP', 'ILS', 'JPY'].map((item) => <ChoiceChip key={item} label={item} selected={currency === item} onPress={() => setCurrency(item)} />)}
               </View>
@@ -129,7 +145,7 @@ export function OnboardingScreen() {
               <AppText variant="label">Accent</AppText>
               <ChoiceChip label="System accent" selected={accentSource === 'system'} onPress={() => setAccentSource('system')} icon="paintbrush" />
               <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
-                {ACCENTS.map((color) => (
+                {ACCENT_PRESETS.map((color) => (
                   <View key={color} style={{ borderRadius: 99, borderWidth: accentSource !== 'system' && accentHex === color ? 3 : 0, borderColor: theme.text, padding: 3 }}>
                     <Pressable
                       accessibilityRole="button"
@@ -148,7 +164,7 @@ export function OnboardingScreen() {
             <ActionButton
               title={step === 3 ? (saving ? 'Setting up…' : 'Start using Qashy') : 'Continue'}
               icon={step === 3 ? 'checkmark' : 'chevron.right'}
-              disabled={saving}
+              disabled={saving || !stepValid}
               onPress={() => step === 3 ? finish() : setStep((value) => value + 1)}
             />
           </View>

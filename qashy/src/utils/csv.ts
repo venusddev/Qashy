@@ -32,10 +32,27 @@ export function parseCsvText(input: string) {
 }
 
 export function parseCsvTable(input: string) {
-  const rows: string[][] = [];
-  let row: string[] = [];
+  const rows: { cells: string[]; quotedCells: boolean[]; lineNumber: number }[] = [];
+  let cells: string[] = [];
+  let quotedCells: boolean[] = [];
   let field = '';
+  let fieldQuoted = false;
   let quoted = false;
+  let line = 1;
+  let rowLine = 1;
+
+  const endField = () => {
+    cells.push(field);
+    quotedCells.push(fieldQuoted);
+    field = '';
+    fieldQuoted = false;
+  };
+  const endRow = () => {
+    endField();
+    if (cells.some((cell) => cell.trim())) rows.push({ cells, quotedCells, lineNumber: rowLine });
+    cells = [];
+    quotedCells = [];
+  };
 
   for (let index = 0; index < input.length; index += 1) {
     const character = input[index];
@@ -44,29 +61,31 @@ export function parseCsvTable(input: string) {
       index += 1;
     } else if (character === '"') {
       quoted = !quoted;
+      fieldQuoted = true;
     } else if (character === ',' && !quoted) {
-      row.push(field);
-      field = '';
+      endField();
     } else if ((character === '\n' || character === '\r') && !quoted) {
       if (character === '\r' && input[index + 1] === '\n') index += 1;
-      row.push(field);
-      if (row.some((cell) => cell.trim())) rows.push(row);
-      row = [];
-      field = '';
+      endRow();
+      line += 1;
+      rowLine = line;
     } else {
+      if (character === '\n') line += 1;
       field += character;
     }
   }
-  row.push(field);
-  if (row.some((cell) => cell.trim())) rows.push(row);
+  endRow();
 
   if (!rows.length) return { headers: [], rows: [] as Record<string, string | number>[] };
-  const headers = rows[0].map((header) => header.trim().toLowerCase().replace(/[\s-]+/g, '_'));
+  const headers = rows[0].cells.map((header) => header.trim().toLowerCase().replace(/[\s-]+/g, '_'));
 
-  const records = rows.slice(1).map((cells, index) => {
-    const record: Record<string, string | number> = { rowNumber: index + 2 };
+  const records = rows.slice(1).map((source) => {
+    // rowNumber is the physical line in the source file, so error messages
+    // stay accurate even when blank lines are skipped.
+    const record: Record<string, string | number> = { rowNumber: source.lineNumber };
     headers.forEach((header, column) => {
-      record[header] = cells[column]?.trim() ?? '';
+      const raw = source.cells[column] ?? '';
+      record[header] = source.quotedCells[column] ? raw : raw.trim();
     });
     return record;
   });
@@ -74,7 +93,9 @@ export function parseCsvTable(input: string) {
 }
 
 export function escapeCsv(value: unknown) {
-  const text = String(value ?? '');
+  let text = String(value ?? '');
+  // Neutralize spreadsheet formula injection; plain numbers stay untouched.
+  if (/^[=+@\t\r-]/.test(text) && !/^-?\d+(\.\d+)?$/.test(text)) text = `'${text}`;
   if (!/[",\r\n]/.test(text)) return text;
   return `"${text.replace(/"/g, '""')}"`;
 }

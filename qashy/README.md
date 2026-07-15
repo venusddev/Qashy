@@ -29,7 +29,7 @@ npm run test:web
 - `src/data/local-finance-repository.ts` is the shared repository contract implementation for atomic transfers, derived balances, budgets, recurring occurrences, dashboard aggregation, soft deletion, and CSV portability.
 - `src/data/storage.native.ts` persists records through Expo SQLite with versioned migrations and WAL mode.
 - `src/data/storage.web.ts` persists the same records in IndexedDB through Dexie. The service worker caches only the app shell; it never caches finance records.
-- `src/theme` centralizes semantic light/dark tokens, curated and custom accents, Android dynamic colors, and web tonal palettes.
+- `src/theme` centralizes hand-tuned semantic light/dark tokens, curated and custom accents, and opt-in Android dynamic colors.
 - `src/app` uses Expo Router with four mobile tabs and responsive web navigation: bottom bar, compact rail, then full sidebar.
 
 ## Privacy and portability

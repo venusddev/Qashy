@@ -10,6 +10,7 @@ import { ScreenContainer } from '@/components/ui/screen-container';
 import { SectionHeader } from '@/components/ui/section-header';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { radius, readableTextColor } from '@/theme/tokens';
 import { todayLocal } from '@/utils/date';
 import { formatMoney } from '@/utils/money';
 
@@ -33,7 +34,7 @@ export function PlanScreen() {
               return (
                 <Card key={budget.id} style={{ gap: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                    <View style={{ width: 44, height: 44, borderRadius: 15, backgroundColor: budget.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="chart" color="#FFFFFF" size={20} /></View>
+                    <View style={{ width: 44, height: 44, borderRadius: radius.control, backgroundColor: budget.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="chart" color={readableTextColor(budget.color)} size={20} /></View>
                     <View style={{ flex: 1, gap: 2 }}><AppText variant="headline">{budget.name}</AppText><AppText variant="caption" muted>{budget.period.unit} · {snapshot.periodStart} to {snapshot.periodEnd}{budget.rollover ? ` · rollover ${formatMoney(snapshot.rolloverMinor, state.settings.baseCurrency, state.settings.locale, { sign: true })}` : ''}</AppText></View>
                     <ActionButton title="Edit" variant="secondary" onPress={() => router.push({ pathname: '/budget', params: { id: budget.id } })} />
                   </View>
@@ -54,7 +55,7 @@ export function PlanScreen() {
               );
             }) : (
               <Card style={{ alignItems: 'center', gap: 12, paddingVertical: 34 }}>
-                <View style={{ width: 54, height: 54, borderRadius: 19, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="chart" color={theme.accent} size={24} /></View>
+                <View style={{ width: 54, height: 54, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="chart" color={theme.accent} size={24} /></View>
                 <AppText variant="headline">Give spending a gentle boundary</AppText>
                 <AppText muted style={{ textAlign: 'center' }}>Create a monthly, weekly, yearly, or one-off budget. Nothing is forced into envelopes.</AppText>
                 <ActionButton title="Create a budget" icon="plus" onPress={() => router.push('/budget')} />
@@ -69,7 +70,7 @@ export function PlanScreen() {
               return (
                 <Card key={goal.id} style={{ gap: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                    <View style={{ width: 44, height: 44, borderRadius: 15, backgroundColor: goal.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="target" color="#FFFFFF" size={21} /></View>
+                    <View style={{ width: 44, height: 44, borderRadius: radius.control, backgroundColor: goal.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="target" color={readableTextColor(goal.color)} size={21} /></View>
                     <View style={{ flex: 1, gap: 2 }}><AppText variant="headline">{goal.name}</AppText><AppText variant="caption" muted>{goal.kind} goal{goal.targetDate ? ` · by ${goal.targetDate}` : ''}</AppText></View>
                     <ActionButton title="Open" variant="secondary" onPress={() => router.push({ pathname: '/goal', params: { id: goal.id } })} />
                   </View>
@@ -80,7 +81,7 @@ export function PlanScreen() {
               );
             }) : (
               <Card style={{ alignItems: 'center', gap: 12, paddingVertical: 34 }}>
-                <View style={{ width: 54, height: 54, borderRadius: 19, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="target" color={theme.accent} size={24} /></View>
+                <View style={{ width: 54, height: 54, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="target" color={theme.accent} size={24} /></View>
                 <AppText variant="headline">Save toward something real</AppText>
                 <AppText muted style={{ textAlign: 'center' }}>Track a savings target or a planned purchase with manual or linked progress.</AppText>
                 <ActionButton title="Create a goal" icon="plus" onPress={() => router.push('/goal')} />

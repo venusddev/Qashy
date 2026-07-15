@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, SectionList, TextInput, View } from 'react-native';
+import { Pressable, SectionList, TextInput, View, useWindowDimensions } from 'react-native';
 
 import { TransactionRow } from '@/components/finance/transaction-row';
 import { ActionButton } from '@/components/ui/action-button';
@@ -8,9 +8,11 @@ import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
 import { ChoiceChip } from '@/components/ui/choice-chip';
-import { GlassSurface } from '@/components/ui/glass-surface';
+import { screenContentMetrics } from '@/components/ui/screen-container';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { radius } from '@/theme/tokens';
+import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { shortDate } from '@/utils/date';
 
 type KindFilter = 'all' | 'expense' | 'income' | 'transfer' | 'upcoming';
@@ -19,17 +21,27 @@ export function TransactionsScreen() {
   const repository = useFinanceRepository();
   const state = useFinanceState();
   const theme = useQashyTheme();
+  const { width } = useWindowDimensions();
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // Optimistic overlays for batch mutations: context updates from the
+  // repository don't always reach an already-mounted screen on web, so the
+  // list applies the change locally, then drops the overlay as soon as a
+  // fresh transactions snapshot arrives (keeping it from masking later edits).
   const [categoryOverrides, setCategoryOverrides] = useState<Record<string, string | null>>({});
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
+  const [seenTransactions, setSeenTransactions] = useState(state.transactions);
+  if (seenTransactions !== state.transactions) {
+    setSeenTransactions(state.transactions);
+    if (Object.keys(categoryOverrides).length) setCategoryOverrides({});
+    if (hiddenIds.length) setHiddenIds([]);
+  }
   const selectedKinds = [...new Set(state.transactions
     .filter((item) => selectedIds.includes(item.id) && item.kind !== 'transfer')
     .map((item) => item.kind))];
   const compatibleCategoryKind = selectedKinds.length === 1 ? selectedKinds[0] : null;
   const transactions = useMemo(() => {
-    void selectedIds;
     void state.transactions;
     return repository.queryTransactions({
       search,
@@ -38,7 +50,7 @@ export function TransactionsScreen() {
     })
       .filter((item) => !hiddenIds.includes(item.id))
       .map((item) => Object.hasOwn(categoryOverrides, item.id) ? { ...item, categoryId: categoryOverrides[item.id] } : item);
-  }, [repository, state.transactions, selectedIds, categoryOverrides, hiddenIds, search, kind]);
+  }, [repository, state.transactions, categoryOverrides, hiddenIds, search, kind]);
   const sections = useMemo(() => {
     const groups = new Map<string, typeof transactions>();
     transactions.forEach((transaction) => {
@@ -63,15 +75,20 @@ export function TransactionsScreen() {
       }));
       setSelectedIds([]);
     } catch (reason) {
-      Alert.alert('Couldn’t change category', reason instanceof Error ? reason.message : 'Try a compatible category.');
+      showError('Couldn’t change category', errorMessage(reason, 'Try a compatible category.'));
     }
   };
 
   const deleteSelected = async () => {
     const ids = [...selectedIds];
-    await repository.deleteEntities('transactions', ids);
-    setHiddenIds((current) => [...new Set([...current, ...ids])]);
-    setSelectedIds([]);
+    if (!(await confirmDestructive({ title: ids.length === 1 ? 'Delete 1 transaction?' : `Delete ${ids.length} transactions?`, message: 'They will be removed from your ledger.' }))) return;
+    try {
+      await repository.deleteEntities('transactions', ids);
+      setHiddenIds((current) => [...new Set([...current, ...ids])]);
+      setSelectedIds([]);
+    } catch (reason) {
+      showError('Couldn’t delete transactions', errorMessage(reason, 'Try again.'));
+    }
   };
 
   return (
@@ -79,14 +96,14 @@ export function TransactionsScreen() {
       <SectionList
       contentInsetAdjustmentBehavior="automatic"
       style={{ flex: 1, backgroundColor: theme.background }}
-      contentContainerStyle={{ width: '100%', maxWidth: 920, alignSelf: 'center', paddingHorizontal: 16, paddingTop: process.env.EXPO_OS === 'web' ? 92 : 12, paddingBottom: process.env.EXPO_OS === 'web' ? 112 : 32, gap: 8 }}
+      contentContainerStyle={[screenContentMetrics(width), { gap: 8 }]}
       sections={sections}
       extraData={`${selectedIds.join(',')}|${JSON.stringify(categoryOverrides)}|${hiddenIds.join(',')}|${repository.getSnapshot().transactions.map((item) => `${item.id}:${item.revision}`).join(',')}`}
       keyExtractor={(item) => `${item.id}:${item.revision}`}
       stickySectionHeadersEnabled={false}
       ListHeaderComponent={
         <View style={{ gap: 14, paddingBottom: 16 }}>
-          <View style={{ minHeight: 50, borderRadius: 18, borderCurve: 'continuous', backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 10 }}>
+          <View style={{ minHeight: 50, borderRadius: radius.control, borderCurve: 'continuous', backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 10 }}>
             <AppIcon name="magnifyingglass" color={theme.textMuted} size={19} />
             <TextInput
               accessibilityLabel="Search transactions"
@@ -132,24 +149,25 @@ export function TransactionsScreen() {
         </View>
       )}
       renderItem={({ item, index, section }) => (
-        <Card style={{ paddingVertical: 0, paddingHorizontal: 14, borderRadius: index === 0 && section.data.length === 1 ? 22 : 18, marginBottom: 4, backgroundColor: selectedIds.includes(item.id) ? theme.accentContainer : theme.surface }}>
+        <Card style={{ paddingVertical: 0, paddingHorizontal: 14, marginBottom: 4, backgroundColor: selectedIds.includes(item.id) ? theme.accentContainer : theme.surface }}>
           <TransactionRow transaction={item} selected={selectedIds.includes(item.id)} onLongPress={() => toggleSelected(item.id)} onPress={selectedIds.length ? () => toggleSelected(item.id) : undefined} />
         </Card>
       )}
       ListEmptyComponent={
         <View style={{ alignItems: 'center', gap: 12, paddingVertical: 72 }}>
-          <View style={{ width: 58, height: 58, borderRadius: 20, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="magnifyingglass" color={theme.accent} size={24} /></View>
+          <View style={{ width: 58, height: 58, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="magnifyingglass" color={theme.accent} size={24} /></View>
           <AppText variant="headline">{search || kind !== 'all' ? 'Nothing matches' : 'No transactions yet'}</AppText>
           <AppText muted style={{ textAlign: 'center' }}>{search || kind !== 'all' ? 'Try another search or filter.' : 'Add your first income, expense, or transfer.'}</AppText>
         </View>
       }
       ListFooterComponent={<View style={{ height: 72 }} />}
       />
-      <GlassSurface interactive style={{ position: 'absolute', right: 24, bottom: process.env.EXPO_OS === 'web' ? 88 : 24, borderRadius: 999, overflow: 'hidden' }}>
-        <Pressable accessibilityLabel="Add transaction" onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/transactions' } })} style={{ width: 58, height: 58, alignItems: 'center', justifyContent: 'center' }}>
-          <AppIcon name="plus" color={theme.accent} size={25} />
-        </Pressable>
-      </GlassSurface>
+      <Pressable
+        accessibilityLabel="Add transaction"
+        onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/transactions' } })}
+        style={({ pressed }) => ({ position: 'absolute', right: 24, bottom: process.env.EXPO_OS === 'web' && width < 768 ? 92 : 24, width: 58, height: 58, borderRadius: 999, backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 14px rgba(25,27,32,0.28)', opacity: pressed ? 0.85 : 1 })}>
+        <AppIcon name="plus" color={theme.onAccent} size={25} />
+      </Pressable>
     </View>
   );
 }

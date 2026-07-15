@@ -1,5 +1,4 @@
 import { Host } from '@expo/ui';
-import { argbFromHex, hexFromArgb, themeFromSourceColor } from '@material/material-color-utilities';
 import { Color, DarkTheme, DefaultTheme, ThemeProvider as NavigationThemeProvider } from 'expo-router';
 import { createContext, use, useEffect, useMemo, type ReactNode } from 'react';
 import {
@@ -11,6 +10,7 @@ import {
 
 import { QASHY_ACCENT } from '@/domain/defaults';
 import { useFinanceState } from '@/providers/finance-provider';
+import { darkTokens, lightTokens, mixHex, readableTextColor } from '@/theme/tokens';
 
 export interface ThemeTokens {
   mode: 'light' | 'dark';
@@ -34,91 +34,50 @@ export interface ThemeTokens {
 
 const ThemeContext = createContext<ThemeTokens | null>(null);
 
-function generatedTokens(seed: string, dark: boolean): ThemeTokens {
-  const scheme = dark
-    ? themeFromSourceColor(argbFromHex(seed)).schemes.dark
-    : themeFromSourceColor(argbFromHex(seed)).schemes.light;
+// Hand-tuned neutral surfaces with a single accent family. The user's accent
+// only drives accent/accentContainer colors; surfaces stay neutral so the app
+// keeps a conventional, high-contrast look in both modes.
+function accentTokens(seed: string, dark: boolean): ThemeTokens {
+  const base = dark ? darkTokens : lightTokens;
   return {
     mode: dark ? 'dark' : 'light',
-    accent: hexFromArgb(scheme.primary),
-    onAccent: hexFromArgb(scheme.onPrimary),
-    accentContainer: hexFromArgb(scheme.primaryContainer),
-    onAccentContainer: hexFromArgb(scheme.onPrimaryContainer),
-    background: hexFromArgb(scheme.background),
-    surface: hexFromArgb(scheme.surface),
-    surfaceElevated: hexFromArgb(scheme.surface),
-    surfaceMuted: hexFromArgb(scheme.surfaceVariant),
-    text: hexFromArgb(scheme.onSurface),
-    textMuted: hexFromArgb(scheme.onSurfaceVariant),
-    border: hexFromArgb(scheme.outlineVariant),
-    positive: dark ? '#65D99A' : '#208653',
-    negative: dark ? '#FF8F96' : '#C43D4A',
-    warning: dark ? '#F0C36A' : '#9A6700',
+    accent: seed,
+    onAccent: readableTextColor(seed),
+    accentContainer: mixHex(seed, base.surface, dark ? 0.82 : 0.88),
+    onAccentContainer: mixHex(seed, base.text, dark ? 0.55 : 0.45),
+    background: base.background,
+    surface: base.surface,
+    surfaceElevated: base.surfaceElevated,
+    surfaceMuted: base.surfaceMuted,
+    text: base.text,
+    textMuted: base.textMuted,
+    border: base.border,
+    positive: base.positive,
+    negative: base.negative,
+    warning: base.warning,
     glassTint: dark ? 'dark' : 'light',
-    staticAccent: hexFromArgb(scheme.primary),
+    staticAccent: seed,
   };
 }
 
+// Material You stays available as an explicit opt-in on Android only; every
+// other platform uses the default indigo on the hand-tuned neutral surfaces.
 function systemTokens(dark: boolean): ThemeTokens {
-  const fallback = generatedTokens(QASHY_ACCENT, dark);
-  if (process.env.EXPO_OS === 'web') return fallback;
+  const fallback = accentTokens(QASHY_ACCENT, dark);
+  if (Platform.OS !== 'android') return fallback;
   return {
     ...fallback,
-    accent: Platform.select({
-      ios: Color.ios.systemIndigo,
-      android: Color.android.dynamic.primary,
-      default: fallback.accent,
-    })!,
-    onAccent: Platform.select({
-      ios: Color.ios.white,
-      android: Color.android.dynamic.onPrimary,
-      default: fallback.onAccent,
-    })!,
-    accentContainer: Platform.select({
-      ios: Color.ios.tertiarySystemFill,
-      android: Color.android.dynamic.primaryContainer,
-      default: fallback.accentContainer,
-    })!,
-    onAccentContainer: Platform.select({
-      ios: Color.ios.label,
-      android: Color.android.dynamic.onPrimaryContainer,
-      default: fallback.onAccentContainer,
-    })!,
-    background: Platform.select({
-      ios: Color.ios.systemGroupedBackground,
-      android: Color.android.dynamic.surface,
-      default: fallback.background,
-    })!,
-    surface: Platform.select({
-      ios: Color.ios.secondarySystemGroupedBackground,
-      android: Color.android.dynamic.surfaceContainerLow,
-      default: fallback.surface,
-    })!,
-    surfaceElevated: Platform.select({
-      ios: Color.ios.systemBackground,
-      android: Color.android.dynamic.surfaceContainer,
-      default: fallback.surfaceElevated,
-    })!,
-    surfaceMuted: Platform.select({
-      ios: Color.ios.tertiarySystemGroupedBackground,
-      android: Color.android.dynamic.surfaceContainerHigh,
-      default: fallback.surfaceMuted,
-    })!,
-    text: Platform.select({
-      ios: Color.ios.label,
-      android: Color.android.dynamic.onSurface,
-      default: fallback.text,
-    })!,
-    textMuted: Platform.select({
-      ios: Color.ios.secondaryLabel,
-      android: Color.android.dynamic.onSurfaceVariant,
-      default: fallback.textMuted,
-    })!,
-    border: Platform.select({
-      ios: Color.ios.separator,
-      android: Color.android.dynamic.outlineVariant,
-      default: fallback.border,
-    })!,
+    accent: Color.android.dynamic.primary,
+    onAccent: Color.android.dynamic.onPrimary,
+    accentContainer: Color.android.dynamic.primaryContainer,
+    onAccentContainer: Color.android.dynamic.onPrimaryContainer,
+    background: Color.android.dynamic.surface,
+    surface: Color.android.dynamic.surfaceContainerLow,
+    surfaceElevated: Color.android.dynamic.surfaceContainer,
+    surfaceMuted: Color.android.dynamic.surfaceContainerHigh,
+    text: Color.android.dynamic.onSurface,
+    textMuted: Color.android.dynamic.onSurfaceVariant,
+    border: Color.android.dynamic.outlineVariant,
   };
 }
 
@@ -129,7 +88,7 @@ export function QashyThemeProvider({ children }: { children: ReactNode }) {
   const usesSystemAccent = settings.accentSource === 'system';
   const seed = usesSystemAccent ? QASHY_ACCENT : settings.accentHex;
   const tokens = useMemo(
-    () => (usesSystemAccent ? systemTokens(mode === 'dark') : generatedTokens(seed, mode === 'dark')),
+    () => (usesSystemAccent ? systemTokens(mode === 'dark') : accentTokens(seed, mode === 'dark')),
     [mode, seed, usesSystemAccent],
   );
 
