@@ -439,9 +439,11 @@ export class LocalFinanceRepository implements FinanceRepository {
       .flatMap((budget) => {
         const bounds = resolvePeriod(budget.period, onDate);
         if (budget.period.unit === 'custom' && (onDate < bounds.start || onDate > bounds.end)) return [];
+        // Fall back to a transient snapshot when the period rolled over while
+        // the app stayed open; the next generateRecurring run persists it.
         const snapshot = this.state.budgetPeriods.find((item) =>
           item.budgetId === budget.id && item.periodStart === bounds.start,
-        );
+        ) ?? this.buildBudgetSnapshots(budget, false).find((item) => item.periodStart === bounds.start);
         if (!snapshot) return [];
         const spentMinor = this.budgetSpend(snapshot.filters, snapshot.periodStart, snapshot.periodEnd);
         const categorySpend = snapshot.categoryLimits.map((limit) => ({
@@ -486,10 +488,30 @@ export class LocalFinanceRepository implements FinanceRepository {
         if (item.kind === 'income' && item.accountId === goal.linkedAccountId) return sum + item.baseAmountMinor;
         if (item.kind === 'expense' && item.accountId === goal.linkedAccountId) return sum - item.baseAmountMinor;
         if (item.kind === 'transfer' && item.accountId === goal.linkedAccountId) return sum - item.baseAmountMinor;
-        if (item.kind === 'transfer' && item.destinationAccountId === goal.linkedAccountId) return sum + item.baseAmountMinor;
+        if (item.kind === 'transfer' && item.destinationAccountId === goal.linkedAccountId) {
+          return sum + this.transferInflowBaseMinor(item);
+        }
         return sum;
       }, 0);
     return goal.initialMinor + manual + linked;
+  }
+
+  // The base value credited by a transfer's destination leg. baseAmountMinor
+  // snapshots the source leg, which diverges from the destination whenever the
+  // manual destination amount disagrees with the source-leg conversion.
+  private transferInflowBaseMinor(item: TransactionRecord) {
+    const base = this.state.settings.baseCurrency;
+    const destination = this.state.accounts.find((account) => account.id === item.destinationAccountId);
+    const destinationAmount = item.destinationAmountMinor;
+    if (!destination || destinationAmount === null) return item.baseAmountMinor;
+    if (destination.currency === base) return destinationAmount;
+    try {
+      const rate = this.resolveRate(destination.currency, base, item.localDate);
+      if (!rate) return item.baseAmountMinor;
+      return convertMinor(destinationAmount, destination.currency, base, rate, this.state.settings.locale);
+    } catch {
+      return item.baseAmountMinor;
+    }
   }
 
   generateRecurring(horizonDate = addRecurrence(todayLocal(), 'month', 1)) {
@@ -506,42 +528,49 @@ export class LocalFinanceRepository implements FinanceRepository {
     const transactionChanges: TransactionRecord[] = [];
     const ruleChanges: RecurringRule[] = [];
     for (const rule of this.active(this.state.recurringRules).filter((item) => item.active)) {
-      if (rule.autoPost) {
-        transactions.forEach((transaction, index) => {
-          if (
-            transaction.recurringRuleId === rule.id &&
-            transaction.status === 'upcoming' &&
-            transaction.localDate <= today
-          ) {
-            const updated = updateEntity(transaction, { status: 'posted' });
-            transactions[index] = updated;
-            transactionChanges.push(updated);
-          }
-        });
-      }
-      let due = rule.nextDueDate;
-      let guard = 0;
-      while (due <= horizonDate && guard < 366) {
-        guard += 1;
-        if (rule.endDate && due > rule.endDate) break;
-        const occurrenceKey = `${rule.id}:${due}`;
-        if (!transactions.some((item) => item.occurrenceKey === occurrenceKey)) {
-          const transaction = this.buildTransaction({
-            ...rule.template,
-            localDate: due,
-            status: rule.autoPost && due <= today ? 'posted' : 'upcoming',
-            recurringRuleId: rule.id,
-            occurrenceKey,
+      // A rule that can no longer build its transaction (dangling reference,
+      // missing exchange rate) is skipped so one bad rule never blocks the
+      // other rules or app startup, which awaits this generation.
+      try {
+        if (rule.autoPost) {
+          transactions.forEach((transaction, index) => {
+            if (
+              transaction.recurringRuleId === rule.id &&
+              transaction.status === 'upcoming' &&
+              transaction.localDate <= today
+            ) {
+              const updated = updateEntity(transaction, { status: 'posted' });
+              transactions[index] = updated;
+              transactionChanges.push(updated);
+            }
           });
-          transactions.push(transaction);
-          transactionChanges.push(transaction);
-          generated += 1;
         }
-        due = addRecurrence(due, rule.unit, Math.max(1, rule.interval), rule.startDate);
-      }
-      const active = !rule.endDate || due <= rule.endDate;
-      if (due !== rule.nextDueDate || active !== rule.active) {
-        ruleChanges.push(updateEntity(rule, { nextDueDate: due, active }));
+        let due = rule.nextDueDate;
+        let guard = 0;
+        while (due <= horizonDate && guard < 366) {
+          guard += 1;
+          if (rule.endDate && due > rule.endDate) break;
+          const occurrenceKey = `${rule.id}:${due}`;
+          if (!transactions.some((item) => item.occurrenceKey === occurrenceKey)) {
+            const transaction = this.buildTransaction({
+              ...rule.template,
+              localDate: due,
+              status: rule.autoPost && due <= today ? 'posted' : 'upcoming',
+              recurringRuleId: rule.id,
+              occurrenceKey,
+            });
+            transactions.push(transaction);
+            transactionChanges.push(transaction);
+            generated += 1;
+          }
+          due = addRecurrence(due, rule.unit, Math.max(1, rule.interval), rule.startDate);
+        }
+        const active = !rule.endDate || due <= rule.endDate;
+        if (due !== rule.nextDueDate || active !== rule.active) {
+          ruleChanges.push(updateEntity(rule, { nextDueDate: due, active }));
+        }
+      } catch {
+        continue;
       }
     }
     const recurringChanged = transactionChanges.length > 0 || ruleChanges.length > 0;
@@ -550,10 +579,18 @@ export class LocalFinanceRepository implements FinanceRepository {
         ...transactionChanges.map((entity) => ({ type: 'transactions' as const, entity })),
         ...ruleChanges.map((entity) => ({ type: 'recurringRules' as const, entity })),
       ]);
+      // Merge into the current state rather than replacing it with the
+      // pre-await snapshot, so transactions saved while putMany was in
+      // flight are not dropped.
+      const changedTransactions = new Map(transactionChanges.map((item) => [item.id, item]));
       const changedRules = new Map(ruleChanges.map((rule) => [rule.id, rule]));
+      const currentIds = new Set(this.state.transactions.map((item) => item.id));
       this.state = {
         ...this.state,
-        transactions,
+        transactions: [
+          ...this.state.transactions.map((item) => changedTransactions.get(item.id) ?? item),
+          ...transactionChanges.filter((item) => !currentIds.has(item.id)),
+        ],
         recurringRules: this.state.recurringRules.map((rule) => changedRules.get(rule.id) ?? rule),
       };
     }
@@ -604,8 +641,23 @@ export class LocalFinanceRepository implements FinanceRepository {
     if (type === 'ready' || type === 'settings') return;
     const list = this.state[type] as FinanceEntity[];
     const deleted = list.filter((entity) => ids.includes(entity.id)).map((entity) => updateEntity(entity, { deletedAt: nowIso() }));
-    await this.persist(type as EntityType, deleted);
+    // Deactivate recurring rules that reference a deleted account or category,
+    // mirroring the archive paths in saveAccount/saveCategory, so recurring
+    // generation never trips over a dangling reference.
+    const deletedIds = new Set(ids);
+    const rules = type === 'accounts' || type === 'categories'
+      ? this.state.recurringRules
+        .filter((rule) => rule.active && !rule.deletedAt && deletedIds.has(
+          (type === 'accounts' ? rule.template.accountId : rule.template.categoryId) ?? '',
+        ))
+        .map((rule) => updateEntity(rule, { active: false }))
+      : [];
+    await this.storage.putMany([
+      ...deleted.map((entity) => ({ type: type as EntityType, entity })),
+      ...rules.map((entity) => ({ type: 'recurringRules' as const, entity })),
+    ]);
     this.state = { ...this.state, [type]: list.filter((entity) => !ids.includes(entity.id)) };
+    rules.forEach((rule) => this.replaceInList('recurringRules', rule));
     this.emit();
   }
 
@@ -699,9 +751,11 @@ export class LocalFinanceRepository implements FinanceRepository {
         ...newTags.map((entity) => ({ type: 'tags' as const, entity })),
         ...transactions.map((entity) => ({ type: 'transactions' as const, entity })),
       ]);
+      // Append only the new tags onto current state; the pre-await `tags`
+      // snapshot may be missing tags saved while putMany was in flight.
       this.state = {
         ...this.state,
-        tags,
+        tags: [...this.state.tags, ...newTags],
         transactions: [...this.state.transactions, ...transactions],
       };
       result.committedIds = transactions.map((item) => item.id);
@@ -1065,8 +1119,12 @@ export class LocalFinanceRepository implements FinanceRepository {
   }
 
   private assertUniqueName(type: 'accounts' | 'categories' | 'tags', name: string, id?: string) {
+    // Archived entities are hidden everywhere, so their names are free to
+    // reuse; restoring one re-checks against the active set.
     const duplicate = (this.state[type] as (Account | Category | Tag)[]).some((item) =>
-      item.id !== id && item.name.trim().toLocaleLowerCase() === name.trim().toLocaleLowerCase(),
+      item.id !== id &&
+      !('archived' in item && item.archived) &&
+      item.name.trim().toLocaleLowerCase() === name.trim().toLocaleLowerCase(),
     );
     if (duplicate) throw new Error(`${name} is already in use.`);
   }
