@@ -5,6 +5,7 @@ import { ActionButton } from '@/components/ui/action-button';
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
+import { PageHeading } from '@/components/ui/page-heading';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { ScreenContainer } from '@/components/ui/screen-container';
 import { SectionHeader } from '@/components/ui/section-header';
@@ -26,6 +27,7 @@ export function PlanScreen() {
   return (
     <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }}>
       <ScreenContainer>
+        <PageHeading title="Plan" subtitle="Set flexible limits and track progress toward meaningful goals." />
         <View style={{ flexDirection: wide ? 'row' : 'column', gap: 18, alignItems: 'flex-start' }}>
           <View style={{ flex: 1, width: '100%', gap: 14 }}>
             <SectionHeader title="Budgets" action="New budget" onAction={() => router.push('/budget')} />
@@ -55,7 +57,7 @@ export function PlanScreen() {
               );
             }) : (
               <Card style={{ alignItems: 'center', gap: 12, paddingVertical: 34 }}>
-                <View style={{ width: 54, height: 54, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="chart" color={theme.accent} size={24} /></View>
+                <View style={{ width: 54, height: 54, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="chart" color={theme.onAccentContainer} size={24} /></View>
                 <AppText variant="headline">Give spending a gentle boundary</AppText>
                 <AppText muted style={{ textAlign: 'center' }}>Create a monthly, weekly, yearly, or one-off budget. Nothing is forced into envelopes.</AppText>
                 <ActionButton title="Create a budget" icon="plus" onPress={() => router.push('/budget')} />
@@ -81,7 +83,7 @@ export function PlanScreen() {
               );
             }) : (
               <Card style={{ alignItems: 'center', gap: 12, paddingVertical: 34 }}>
-                <View style={{ width: 54, height: 54, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="target" color={theme.accent} size={24} /></View>
+                <View style={{ width: 54, height: 54, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="target" color={theme.onAccentContainer} size={24} /></View>
                 <AppText variant="headline">Save toward something real</AppText>
                 <AppText muted style={{ textAlign: 'center' }}>Track a savings target or a planned purchase with manual or linked progress.</AppText>
                 <ActionButton title="Create a goal" icon="plus" onPress={() => router.push('/goal')} />

@@ -13,6 +13,7 @@ import { useFinanceRepository, useFinanceState } from '@/providers/finance-provi
 import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
+import { validateDateInput, validateMoneyInput } from '@/utils/form-validation';
 import { minorToDecimalString, parseMoney } from '@/utils/money';
 
 export function GoalFormScreen() {
@@ -31,8 +32,24 @@ export function GoalFormScreen() {
   const [linkedCategoryId, setLinkedCategoryId] = useState(existing?.linkedCategoryId ?? '');
   const [contribution, setContribution] = useState('');
   const [saving, setSaving] = useState(false);
+  const targetError = validateMoneyInput(target, state.settings.baseCurrency, state.settings.locale, {
+    label: 'Target',
+    positive: true,
+  });
+  const initialError = validateMoneyInput(initial, state.settings.baseCurrency, state.settings.locale, {
+    label: 'Starting progress',
+    nonNegative: true,
+  });
+  const targetDateError = validateDateInput(targetDate, { label: 'Target date', optional: true });
+  const contributionError = validateMoneyInput(contribution, state.settings.baseCurrency, state.settings.locale, {
+    label: 'Contribution',
+    optional: true,
+    positive: true,
+  });
+  const canSave = !targetError && !initialError && !targetDateError && !contributionError;
 
   const save = async () => {
+    if (saving || !canSave) return;
     setSaving(true);
     try {
       const goal = await repository.saveGoal({
@@ -75,26 +92,26 @@ export function GoalFormScreen() {
   return (
     <FormScreen contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 16 }}>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
+        <View accessibilityLabel="Goal type" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>
           {(['saving', 'spending'] as GoalKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item === 'saving' ? 'Savings goal' : 'Planned purchase'} selected={kind === item} onPress={() => setKind(item)} /></View>)}
         </View>
         <FormField label="Goal name" value={name} onChangeText={setName} />
-        <FormField label={`Target (${state.settings.baseCurrency})`} value={target} onChangeText={setTarget} keyboardType="decimal-pad" />
-        <FormField label="Starting progress" value={initial} onChangeText={setInitial} keyboardType="decimal-pad" />
-        <FormField label="Target date (optional)" value={targetDate} onChangeText={setTargetDate} placeholder="YYYY-MM-DD" />
+        <FormField label={`Target (${state.settings.baseCurrency})`} value={target} onChangeText={setTarget} keyboardType="decimal-pad" error={targetError} required />
+        <FormField label="Starting progress" value={initial} onChangeText={setInitial} keyboardType="decimal-pad" error={initialError} required />
+        <FormField label="Target date (optional)" value={targetDate} onChangeText={setTargetDate} placeholder="YYYY-MM-DD" error={targetDateError} />
       </Card>
 
       <Card style={{ gap: 14 }}>
         <AppText variant="headline">Automatic progress</AppText>
         <AppText muted>Optionally count matching posted transactions. You can still add progress manually.</AppText>
         <AppText variant="label">Linked account</AppText>
-        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!linkedAccountId} onPress={() => setLinkedAccountId('')} />{state.accounts.filter((item) => !item.archived).map((item) => <ChoiceChip key={item.id} label={item.name} selected={linkedAccountId === item.id} onPress={() => setLinkedAccountId(item.id)} />)}</View>
+        <View accessibilityLabel="Linked account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!linkedAccountId} onPress={() => setLinkedAccountId('')} />{state.accounts.filter((item) => !item.archived).map((item) => <ChoiceChip key={item.id} label={item.name} selected={linkedAccountId === item.id} onPress={() => setLinkedAccountId(item.id)} />)}</View>
         <AppText variant="label">Linked category</AppText>
-        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!linkedCategoryId} onPress={() => setLinkedCategoryId('')} />{state.categories.filter((item) => item.kind === (kind === 'saving' ? 'income' : 'expense') && !item.archived).map((item) => <ChoiceChip key={item.id} label={item.name} selected={linkedCategoryId === item.id} onPress={() => setLinkedCategoryId(item.id)} />)}</View>
+        <View accessibilityLabel="Linked category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!linkedCategoryId} onPress={() => setLinkedCategoryId('')} />{state.categories.filter((item) => item.kind === (kind === 'saving' ? 'income' : 'expense') && !item.archived).map((item) => <ChoiceChip key={item.id} label={item.name} selected={linkedCategoryId === item.id} onPress={() => setLinkedCategoryId(item.id)} />)}</View>
       </Card>
 
-      {existing ? <Card><FormField label="Add a manual contribution" value={contribution} onChangeText={setContribution} keyboardType="decimal-pad" placeholder="0" /></Card> : null}
-      <ActionButton title={saving ? 'Saving…' : existing ? 'Save goal' : 'Create goal'} icon="checkmark" onPress={save} disabled={saving} />
+      {existing ? <Card><FormField label="Add a manual contribution" value={contribution} onChangeText={setContribution} keyboardType="decimal-pad" placeholder="0" error={contributionError} /></Card> : null}
+      <ActionButton title={saving ? 'Saving…' : existing ? 'Save goal' : 'Create goal'} icon="checkmark" onPress={save} disabled={saving || !canSave} busy={saving} />
       {existing ? <ActionButton title="Delete goal" variant="danger" onPress={remove} disabled={saving} /> : null}
     </FormScreen>
   );

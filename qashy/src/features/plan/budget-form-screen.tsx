@@ -13,6 +13,7 @@ import { useFinanceRepository, useFinanceState } from '@/providers/finance-provi
 import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
+import { validateDateInput, validateMoneyInput } from '@/utils/form-validation';
 import { minorToDecimalString, parseMoney } from '@/utils/money';
 
 export function BudgetFormScreen() {
@@ -31,12 +32,33 @@ export function BudgetFormScreen() {
   const [categoryLimits, setCategoryLimits] = useState<Record<string, string>>(() => Object.fromEntries(existing?.categoryLimits.map((item) => [item.categoryId, toMoneyText(item.limitMinor)]) ?? []));
   const [saving, setSaving] = useState(false);
   const expenseCategories = state.categories.filter((item) => item.kind === 'expense' && !item.archived);
+  const anchorDate = existing?.period.anchorDate ?? todayLocal();
+  const limitError = validateMoneyInput(limit, state.settings.baseCurrency, state.settings.locale, {
+    label: 'Total limit',
+    positive: true,
+  });
+  const endDateFormatError = unit === 'custom'
+    ? validateDateInput(endDate, { label: 'End date' })
+    : undefined;
+  const endDateError = !endDateFormatError && unit === 'custom' && endDate < anchorDate
+    ? 'End date must not precede the budget start date.'
+    : endDateFormatError;
+  const categoryLimitErrors = Object.fromEntries(selectedCategories.map((categoryId) => [
+    categoryId,
+    validateMoneyInput(categoryLimits[categoryId] ?? '', state.settings.baseCurrency, state.settings.locale, {
+      label: 'Category cap',
+      optional: true,
+      positive: true,
+    }),
+  ]));
+  const canSave = !limitError && !endDateError && !Object.values(categoryLimitErrors).some(Boolean);
 
   const toggleCategory = (categoryId: string) => {
     setSelectedCategories((current) => current.includes(categoryId) ? current.filter((item) => item !== categoryId) : [...current, categoryId]);
   };
 
   const save = async () => {
+    if (saving || !canSave) return;
     setSaving(true);
     try {
       await repository.saveBudget({
@@ -44,7 +66,7 @@ export function BudgetFormScreen() {
         icon: 'chart.pie',
         color: existing?.color ?? theme.staticAccent,
         limitMinor: parseMoney(limit, state.settings.baseCurrency, state.settings.locale),
-        period: { unit, interval: 1, anchorDate: existing?.period.anchorDate ?? todayLocal(), endDate: unit === 'custom' ? endDate : null },
+        period: { unit, interval: 1, anchorDate, endDate: unit === 'custom' ? endDate : null },
         rollover,
         filters: { accountIds: [], categoryIds: selectedCategories, tagIds: [] },
         categoryLimits: selectedCategories
@@ -78,12 +100,12 @@ export function BudgetFormScreen() {
     <FormScreen contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 16 }}>
         <FormField label="Budget name" value={name} onChangeText={setName} />
-        <FormField label={`Total limit (${state.settings.baseCurrency})`} value={limit} onChangeText={setLimit} keyboardType="decimal-pad" />
+        <FormField label={`Total limit (${state.settings.baseCurrency})`} value={limit} onChangeText={setLimit} keyboardType="decimal-pad" error={limitError} required />
         <AppText variant="label">Period</AppText>
-        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+        <View accessibilityLabel="Budget period" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
           {(['day', 'week', 'month', 'year', 'custom'] as PeriodUnit[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={unit === item} onPress={() => setUnit(item)} />)}
         </View>
-        {unit === 'custom' ? <FormField label="End date" value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD" /> : null}
+        {unit === 'custom' ? <FormField label="End date" value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD" error={endDateError} required /> : null}
         <View style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
           <View style={{ flex: 1, gap: 2 }}><AppText variant="label">Rollover</AppText><AppText variant="caption" muted>Carry both surplus and overspend forward.</AppText></View>
           <Switch value={rollover} onValueChange={setRollover} trackColor={{ true: theme.staticAccent }} />
@@ -93,16 +115,16 @@ export function BudgetFormScreen() {
       <Card style={{ gap: 14 }}>
         <AppText variant="headline">Categories and caps</AppText>
         <AppText muted>Leave every category unselected to count all expenses.</AppText>
-        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-          {expenseCategories.map((category) => <ChoiceChip key={category.id} label={category.name} selected={selectedCategories.includes(category.id)} onPress={() => toggleCategory(category.id)} />)}
+        <View accessibilityLabel="Included categories" role="group" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+          {expenseCategories.map((category) => <ChoiceChip mode="checkbox" key={category.id} label={category.name} selected={selectedCategories.includes(category.id)} onPress={() => toggleCategory(category.id)} />)}
         </View>
         {selectedCategories.map((categoryId) => {
           const category = expenseCategories.find((item) => item.id === categoryId);
-          return category ? <FormField key={category.id} label={`${category.name} cap (optional)`} value={categoryLimits[category.id] ?? ''} onChangeText={(value) => setCategoryLimits((current) => ({ ...current, [category.id]: value }))} keyboardType="decimal-pad" placeholder="No cap" /> : null;
+          return category ? <FormField key={category.id} label={`${category.name} cap (optional)`} value={categoryLimits[category.id] ?? ''} onChangeText={(value) => setCategoryLimits((current) => ({ ...current, [category.id]: value }))} keyboardType="decimal-pad" placeholder="No cap" error={categoryLimitErrors[category.id]} /> : null;
         })}
       </Card>
 
-      <ActionButton title={saving ? 'Saving…' : existing ? 'Save budget' : 'Create budget'} icon="checkmark" onPress={save} disabled={saving} />
+      <ActionButton title={saving ? 'Saving…' : existing ? 'Save budget' : 'Create budget'} icon="checkmark" onPress={save} disabled={saving || !canSave} busy={saving} />
       {existing ? <ActionButton title="Delete budget" variant="danger" onPress={remove} disabled={saving} /> : null}
     </FormScreen>
   );

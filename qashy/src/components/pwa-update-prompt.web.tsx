@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppText } from '@/components/ui/app-text';
 import { GlassSurface } from '@/components/ui/glass-surface';
+import { TextButton } from '@/components/ui/text-button';
 import { useQashyTheme } from '@/theme/theme';
 
 declare global {
@@ -13,6 +15,8 @@ declare global {
 
 export function PwaUpdatePrompt() {
   const [visible, setVisible] = useState(false);
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const theme = useQashyTheme();
   useEffect(() => {
     const show = () => setVisible(true);
@@ -40,15 +44,31 @@ export function PwaUpdatePrompt() {
   }, []);
   if (!visible) return null;
   return (
-    <GlassSurface style={{ position: 'absolute', right: 20, bottom: 20, maxWidth: 380, borderRadius: 22, borderCurve: 'continuous', borderWidth: 1, borderColor: theme.border, padding: 16, zIndex: 1000 }}>
-      <View style={{ gap: 10 }}>
-        <AppText variant="label">A fresh version is ready</AppText>
-        <AppText variant="caption" muted>Reload when you’re ready. Your finance data stays in IndexedDB.</AppText>
-        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
-          <Pressable onPress={() => setVisible(false)}><AppText variant="label" muted>Later</AppText></Pressable>
-          <Pressable onPress={() => { window.__qashyWaitingWorker?.postMessage({ type: 'SKIP_WAITING' }); window.location.reload(); }}><AppText variant="label" style={{ color: theme.accent }}>Reload</AppText></Pressable>
+    <View
+      accessibilityLabel="App update available"
+      accessibilityLiveRegion="polite"
+      role="status"
+      style={{
+        position: 'absolute',
+        left: width < 440 ? 12 + insets.left : undefined,
+        right: 12 + insets.right,
+        bottom: width < 768 ? 76 + Math.max(6, insets.bottom) : 20 + insets.bottom,
+        maxWidth: 380,
+        zIndex: 1000,
+      }}>
+      <GlassSurface style={{ borderRadius: 22, borderCurve: 'continuous', borderWidth: 1, borderColor: theme.border, padding: 16 }}>
+        <View style={{ gap: 10 }}>
+          <AppText variant="label">A fresh version is ready</AppText>
+          <AppText variant="caption" muted>Reload when you’re ready. Your finance data stays in IndexedDB.</AppText>
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+            <TextButton title="Later" tone="muted" onPress={() => setVisible(false)} />
+            <TextButton title="Reload" onPress={() => {
+              window.__qashyWaitingWorker?.postMessage({ type: 'SKIP_WAITING' });
+              window.location.reload();
+            }} />
+          </View>
         </View>
-      </View>
-    </GlassSurface>
+      </GlassSurface>
+    </View>
   );
 }

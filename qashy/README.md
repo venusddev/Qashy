@@ -23,6 +23,12 @@ npm run test:web
 
 `npm run build:web` creates the static PWA and its Workbox service worker in `dist/`. Serve that directory over HTTPS (or localhost) to test installation and offline startup.
 
+Brand artwork lives in `assets/branding`. On macOS, regenerate the committed app icon, splash mark, Android adaptive-icon layers, favicon, and PWA icon with:
+
+```bash
+swift scripts/generate-brand-assets.swift
+```
+
 ## Architecture
 
 - `src/domain` contains sync-ready finance entities. Money is stored as integer minor units; exchange rates are decimal strings and each transaction snapshots its base-currency value.

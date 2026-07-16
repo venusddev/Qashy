@@ -50,6 +50,9 @@ describe('FinanceRepository contract', () => {
     const summary = repository.getDashboard('2026-07-01', '2026-07-31');
     expect(summary.expenseMinor).toBe(2500);
     expect(summary.netFlowMinor).toBe(-2500);
+    expect(summary.dailySpend).toHaveLength(31);
+    expect(summary.dailySpend.find((item) => item.date === '2026-07-10')?.amountMinor).toBe(2500);
+    expect(summary.dailySpend.find((item) => item.date === '2026-07-09')?.amountMinor).toBe(0);
     expect(summary.accountBalances.find((item) => item.account.id === first.id)?.balanceMinor).toBe(4500);
     expect(summary.accountBalances.find((item) => item.account.id === second.id)?.balanceMinor).toBe(3000);
 

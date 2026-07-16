@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Pressable, SectionList, TextInput, View, useWindowDimensions } from 'react-native';
+import { SectionList, TextInput, View, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TransactionRow } from '@/components/finance/transaction-row';
 import { ActionButton } from '@/components/ui/action-button';
@@ -8,7 +9,11 @@ import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
 import { ChoiceChip } from '@/components/ui/choice-chip';
+import { FloatingActionButton } from '@/components/ui/floating-action-button';
+import { IconButton } from '@/components/ui/icon-button';
+import { PageHeading } from '@/components/ui/page-heading';
 import { screenContentMetrics } from '@/components/ui/screen-container';
+import { TextButton } from '@/components/ui/text-button';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { radius } from '@/theme/tokens';
@@ -22,9 +27,11 @@ export function TransactionsScreen() {
   const state = useFinanceState();
   const theme = useQashyTheme();
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectionMode, setSelectionMode] = useState(false);
   // Optimistic overlays for batch mutations: context updates from the
   // repository don't always reach an already-mounted screen on web, so the
   // list applies the change locally, then drops the overlay as soon as a
@@ -74,6 +81,7 @@ export function TransactionsScreen() {
         ...Object.fromEntries(ids.map((id) => [id, categoryId])),
       }));
       setSelectedIds([]);
+      setSelectionMode(false);
     } catch (reason) {
       showError('Couldn’t change category', errorMessage(reason, 'Try a compatible category.'));
     }
@@ -86,6 +94,7 @@ export function TransactionsScreen() {
       await repository.deleteEntities('transactions', ids);
       setHiddenIds((current) => [...new Set([...current, ...ids])]);
       setSelectedIds([]);
+      setSelectionMode(false);
     } catch (reason) {
       showError('Couldn’t delete transactions', errorMessage(reason, 'Try again.'));
     }
@@ -96,13 +105,14 @@ export function TransactionsScreen() {
       <SectionList
       contentInsetAdjustmentBehavior="automatic"
       style={{ flex: 1, backgroundColor: theme.background }}
-      contentContainerStyle={[screenContentMetrics(width), { gap: 8 }]}
+      contentContainerStyle={[screenContentMetrics(width, insets.bottom), { gap: 8 }]}
       sections={sections}
       extraData={`${selectedIds.join(',')}|${JSON.stringify(categoryOverrides)}|${hiddenIds.join(',')}|${repository.getSnapshot().transactions.map((item) => `${item.id}:${item.revision}`).join(',')}`}
       keyExtractor={(item) => `${item.id}:${item.revision}`}
       stickySectionHeadersEnabled={false}
       ListHeaderComponent={
         <View style={{ gap: 14, paddingBottom: 16 }}>
+          <PageHeading title="Transactions" subtitle="Search, filter, and manage your local ledger." />
           <View style={{ minHeight: 50, borderRadius: radius.control, borderCurve: 'continuous', backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 10 }}>
             <AppIcon name="magnifyingglass" color={theme.textMuted} size={19} />
             <TextInput
@@ -113,32 +123,51 @@ export function TransactionsScreen() {
               onChangeText={setSearch}
               style={{ flex: 1, color: theme.text, fontSize: 16 }}
             />
-            {search ? <Pressable accessibilityLabel="Clear search" onPress={() => setSearch('')}><AppIcon name="xmark" color={theme.textMuted} size={18} /></Pressable> : null}
+            {search ? <IconButton label="Clear search" icon="xmark" iconSize={18} onPress={() => setSearch('')} style={{ marginRight: -10 }} /> : null}
           </View>
-          <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+          <View accessibilityLabel="Transaction type filter" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
             {(['all', 'expense', 'income', 'transfer', 'upcoming'] as KindFilter[]).map((item) => (
               <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => setKind(item)} />
             ))}
           </View>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
             <AppText variant="caption" muted>{transactions.length} {transactions.length === 1 ? 'transaction' : 'transactions'}</AppText>
-            <Pressable onPress={() => router.push('/csv')}><AppText variant="label" style={{ color: theme.accent }}>Import or export</AppText></Pressable>
+            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {transactions.length ? (
+                <TextButton
+                  title={selectionMode ? 'Done selecting' : 'Select'}
+                  tone={selectionMode ? 'muted' : 'accent'}
+                  onPress={() => {
+                    setSelectionMode((current) => !current);
+                    setSelectedIds([]);
+                  }}
+                />
+              ) : null}
+              <TextButton title="Import or export" onPress={() => router.push('/csv')} />
+            </View>
           </View>
-          {selectedIds.length ? (
+          {selectionMode ? (
             <Card style={{ gap: 12, backgroundColor: theme.accentContainer, borderColor: theme.accent }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                 <AppText variant="headline">{selectedIds.length} selected</AppText>
-                <Pressable accessibilityRole="button" onPress={() => setSelectedIds([])}><AppText variant="label" style={{ color: theme.accent }}>Clear</AppText></Pressable>
+                <TextButton title={selectedIds.length ? 'Clear' : 'Done'} onPress={() => {
+                  if (selectedIds.length) setSelectedIds([]);
+                  else setSelectionMode(false);
+                }} />
               </View>
-              <AppText variant="caption" muted>Change category</AppText>
-              {selectedKinds.length > 1 ? <AppText variant="caption" muted>Select only income or only expense transactions to assign a category.</AppText> : null}
-              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                <ChoiceChip label="Uncategorized" selected={false} onPress={() => changeCategory(null)} />
-                {state.categories.filter((item) => item.kind === compatibleCategoryKind && !item.archived).map((category) => (
-                  <ChoiceChip key={category.id} label={category.name} selected={false} onPress={() => changeCategory(category.id)} />
-                ))}
-              </View>
-              <ActionButton title="Delete selected" variant="danger" onPress={deleteSelected} />
+              {selectedIds.length ? (
+                <>
+                  <AppText variant="caption" muted>Change category</AppText>
+                  {selectedKinds.length > 1 ? <AppText variant="caption" muted>Select only income or only expense transactions to assign a category.</AppText> : null}
+                  <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                    <ChoiceChip mode="button" label="Uncategorized" selected={false} onPress={() => changeCategory(null)} />
+                    {state.categories.filter((item) => item.kind === compatibleCategoryKind && !item.archived).map((category) => (
+                      <ChoiceChip mode="button" key={category.id} label={category.name} selected={false} onPress={() => changeCategory(category.id)} />
+                    ))}
+                  </View>
+                  <ActionButton title="Delete selected" variant="danger" onPress={deleteSelected} />
+                </>
+              ) : <AppText variant="caption" muted>Choose one or more transactions below.</AppText>}
             </Card>
           ) : null}
         </View>
@@ -150,7 +179,16 @@ export function TransactionsScreen() {
       )}
       renderItem={({ item, index, section }) => (
         <Card style={{ paddingVertical: 0, paddingHorizontal: 14, marginBottom: 4, backgroundColor: selectedIds.includes(item.id) ? theme.accentContainer : theme.surface }}>
-          <TransactionRow transaction={item} selected={selectedIds.includes(item.id)} onLongPress={() => toggleSelected(item.id)} onPress={selectedIds.length ? () => toggleSelected(item.id) : undefined} />
+          <TransactionRow
+            transaction={item}
+            selectionMode={selectionMode}
+            selected={selectedIds.includes(item.id)}
+            onLongPress={() => {
+              setSelectionMode(true);
+              toggleSelected(item.id);
+            }}
+            onPress={selectionMode ? () => toggleSelected(item.id) : undefined}
+          />
         </Card>
       )}
       ListEmptyComponent={
@@ -162,12 +200,11 @@ export function TransactionsScreen() {
       }
       ListFooterComponent={<View style={{ height: 72 }} />}
       />
-      <Pressable
-        accessibilityLabel="Add transaction"
+      <FloatingActionButton
+        label="Add transaction"
         onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/transactions' } })}
-        style={({ pressed }) => ({ position: 'absolute', right: 24, bottom: process.env.EXPO_OS === 'web' && width < 768 ? 92 : 24, width: 58, height: 58, borderRadius: 999, backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 14px rgba(25,27,32,0.28)', opacity: pressed ? 0.85 : 1 })}>
-        <AppIcon name="plus" color={theme.onAccent} size={25} />
-      </Pressable>
+        style={{ position: 'absolute', right: 24, bottom: process.env.EXPO_OS === 'web' && width < 768 ? 92 : 24 }}
+      />
     </View>
   );
 }

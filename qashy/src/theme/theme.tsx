@@ -10,7 +10,14 @@ import {
 
 import { QASHY_ACCENT } from '@/domain/defaults';
 import { useFinanceState } from '@/providers/finance-provider';
-import { darkTokens, lightTokens, mixHex, readableTextColor } from '@/theme/tokens';
+import {
+  accessibleAccentColor,
+  darkTokens,
+  ensureContrast,
+  lightTokens,
+  mixHex,
+  readableTextColor,
+} from '@/theme/tokens';
 
 export interface ThemeTokens {
   mode: 'light' | 'dark';
@@ -26,8 +33,11 @@ export interface ThemeTokens {
   textMuted: ColorValue;
   border: ColorValue;
   positive: ColorValue;
+  onPositive: ColorValue;
   negative: ColorValue;
+  onNegative: ColorValue;
   warning: ColorValue;
+  onWarning: ColorValue;
   glassTint: 'light' | 'dark' | 'systemMaterial';
   staticAccent: string;
 }
@@ -39,12 +49,14 @@ const ThemeContext = createContext<ThemeTokens | null>(null);
 // keeps a conventional, high-contrast look in both modes.
 function accentTokens(seed: string, dark: boolean): ThemeTokens {
   const base = dark ? darkTokens : lightTokens;
+  const accent = accessibleAccentColor(seed, base.surface, base.text);
+  const accentContainer = mixHex(accent, base.surface, dark ? 0.78 : 0.86);
   return {
     mode: dark ? 'dark' : 'light',
-    accent: seed,
-    onAccent: readableTextColor(seed),
-    accentContainer: mixHex(seed, base.surface, dark ? 0.82 : 0.88),
-    onAccentContainer: mixHex(seed, base.text, dark ? 0.55 : 0.45),
+    accent,
+    onAccent: readableTextColor(accent),
+    accentContainer,
+    onAccentContainer: ensureContrast(accent, accentContainer, base.text),
     background: base.background,
     surface: base.surface,
     surfaceElevated: base.surfaceElevated,
@@ -53,10 +65,13 @@ function accentTokens(seed: string, dark: boolean): ThemeTokens {
     textMuted: base.textMuted,
     border: base.border,
     positive: base.positive,
+    onPositive: readableTextColor(base.positive),
     negative: base.negative,
+    onNegative: readableTextColor(base.negative),
     warning: base.warning,
+    onWarning: readableTextColor(base.warning),
     glassTint: dark ? 'dark' : 'light',
-    staticAccent: seed,
+    staticAccent: accent,
   };
 }
 
@@ -118,7 +133,7 @@ export function QashyThemeProvider({ children }: { children: ReactNode }) {
       <Host
         style={{ flex: 1 }}
         colorScheme={mode}
-        seedColor={usesSystemAccent ? undefined : settings.accentHex}>
+        seedColor={usesSystemAccent && Platform.OS === 'android' ? undefined : tokens.staticAccent}>
         <NavigationThemeProvider value={navigationTheme}>{children}</NavigationThemeProvider>
       </Host>
     </ThemeContext>

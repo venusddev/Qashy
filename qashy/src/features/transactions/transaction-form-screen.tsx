@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
@@ -8,11 +8,17 @@ import { Card } from '@/components/ui/card';
 import { ChoiceChip } from '@/components/ui/choice-chip';
 import { FormField } from '@/components/ui/form-field';
 import { FormScreen } from '@/components/ui/form-screen';
+import { TextButton } from '@/components/ui/text-button';
 import type { TransactionKind } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
-import { isLocalDate, todayLocal } from '@/utils/date';
+import { todayLocal } from '@/utils/date';
+import {
+  validateDateInput,
+  validateMoneyInput,
+  validatePositiveDecimal,
+} from '@/utils/form-validation';
 import { minorToDecimalString, parseMoney } from '@/utils/money';
 
 export function TransactionFormScreen() {
@@ -42,6 +48,7 @@ export function TransactionFormScreen() {
   const destinationAccount = state.accounts.find((item) => item.id === destinationAccountId);
   const categories = useMemo(() => state.categories.filter((item) => !item.archived && item.kind === (kind === 'income' ? 'income' : 'expense')), [state.categories, kind]);
   const needsRate = account && account.currency !== state.settings.baseCurrency;
+  const destinationChoices = state.accounts.filter((item) => !item.archived && item.id !== accountId);
   // A saved transaction may reference an account that was archived later;
   // keep it visible (disabled) so the selection isn't silently blank.
   const accountChoices = useMemo(() => {
@@ -50,17 +57,29 @@ export function TransactionFormScreen() {
     return current && current.archived ? [current, ...active] : active;
   }, [state.accounts, accountId]);
 
-  const amountValid = useMemo(() => {
-    if (!account) return false;
-    try {
-      parseMoney(amount, account.currency, state.settings.locale);
-      return true;
-    } catch {
-      return false;
-    }
-  }, [amount, account, state.settings.locale]);
-  const dateValid = isLocalDate(date);
-  const canSave = Boolean(account) && amountValid && dateValid && (kind !== 'transfer' || Boolean(destinationAccountId));
+  const amountError = account
+    ? validateMoneyInput(amount, account.currency, state.settings.locale, { label: 'Amount', positive: true })
+    : 'Choose an account before entering an amount.';
+  const dateError = validateDateInput(date);
+  const destinationAmountError = kind === 'transfer' && destinationAccount
+    ? validateMoneyInput(destinationAmount, destinationAccount.currency, state.settings.locale, {
+      label: 'Destination amount',
+      optional: true,
+      positive: true,
+    })
+    : undefined;
+  const exchangeRateError = needsRate
+    ? validatePositiveDecimal(exchangeRate, 'Exchange rate', true)
+    : undefined;
+  const destinationError = kind === 'transfer' && !destinationAccountId
+    ? 'Choose a destination account.'
+    : undefined;
+  const canSave = Boolean(account)
+    && !amountError
+    && !dateError
+    && !destinationAmountError
+    && !exchangeRateError
+    && !destinationError;
 
   const save = async () => {
     if (!account || busy) return;
@@ -105,7 +124,7 @@ export function TransactionFormScreen() {
 
   return (
     <FormScreen>
-      <View style={{ flexDirection: 'row', gap: 8 }}>
+      <View accessibilityLabel="Transaction kind" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>
         {(['expense', 'income', 'transfer'] as TransactionKind[]).map((item) => (
           <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => { setKind(item); setCategoryId(''); }} /></View>
         ))}
@@ -119,24 +138,38 @@ export function TransactionFormScreen() {
           placeholder="0.00"
           keyboardType="decimal-pad"
           autoFocus={!existing}
-          hint={amount.trim() && !amountValid ? 'Enter a valid amount greater than zero.' : undefined}
+          error={amountError}
+          required
           style={{ fontSize: 30, fontWeight: '700', minHeight: 68, fontVariant: ['tabular-nums'] }}
         />
         <FormField label="Title" value={title} onChangeText={setTitle} placeholder={kind === 'transfer' ? 'Transfer' : 'What was it?'} />
-        <FormField label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" autoCapitalize="none" hint={date.trim() && !dateValid ? 'Use a real date in YYYY-MM-DD format.' : undefined} />
+        <FormField label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" autoCapitalize="none" error={dateError} required />
       </Card>
 
       <Card style={{ gap: 14 }}>
         <AppText variant="label">From account</AppText>
-        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+        <View accessibilityLabel="From account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
           {accountChoices.map((item) => <ChoiceChip key={item.id} label={`${item.name} · ${item.currency}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={accountId === item.id} onPress={() => { setAccountId(item.id); setExchangeRate(''); setDestinationAmount(''); if (destinationAccountId === item.id) setDestinationAccountId(''); }} />)}
         </View>
         {kind === 'transfer' ? (
           <>
             <AppText variant="label">To account</AppText>
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              {state.accounts.filter((item) => !item.archived && item.id !== accountId).map((item) => <ChoiceChip key={item.id} label={`${item.name} · ${item.currency}`} selected={destinationAccountId === item.id} onPress={() => { setDestinationAccountId(item.id); setDestinationAmount(''); }} />)}
-            </View>
+            {destinationChoices.length ? (
+              <View accessibilityLabel="To account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                {destinationChoices.map((item) => <ChoiceChip key={item.id} label={`${item.name} · ${item.currency}`} selected={destinationAccountId === item.id} onPress={() => { setDestinationAccountId(item.id); setDestinationAmount(''); }} />)}
+              </View>
+            ) : (
+              <View role="alert" style={{ gap: 10, padding: 14, borderRadius: 14, backgroundColor: theme.surfaceMuted }}>
+                <AppText variant="label">Transfers need two accounts</AppText>
+                <AppText variant="caption" muted>Add another account, then return here to finish this transfer. Your draft will stay open.</AppText>
+                <ActionButton
+                  title="Add another account"
+                  variant="secondary"
+                  onPress={() => router.push({ pathname: '/account', params: { returnTo: '/transaction' } })}
+                />
+              </View>
+            )}
+            {destinationError && destinationChoices.length ? <AppText accessibilityRole="alert" variant="caption" style={{ color: theme.negative }}>{destinationError}</AppText> : null}
             {destinationAccount ? (
               <FormField
                 label={`Destination amount (${destinationAccount.currency})`}
@@ -144,6 +177,7 @@ export function TransactionFormScreen() {
                 onChangeText={setDestinationAmount}
                 keyboardType="decimal-pad"
                 placeholder="Calculated from saved rates"
+                error={destinationAmountError}
                 hint="Leave blank to calculate through your effective exchange rates."
               />
             ) : null}
@@ -151,7 +185,7 @@ export function TransactionFormScreen() {
         ) : (
           <>
             <AppText variant="label">Category</AppText>
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            <View accessibilityLabel="Category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               {categories.map((item) => <ChoiceChip key={item.id} label={item.name} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}
             </View>
           </>
@@ -159,19 +193,17 @@ export function TransactionFormScreen() {
       </Card>
 
       {needsRate ? (
-        <Card><FormField label={`1 ${account.currency} equals how many ${state.settings.baseCurrency}?`} value={exchangeRate} onChangeText={setExchangeRate} keyboardType="decimal-pad" placeholder="Use saved effective rate" hint="Leave blank to use the saved rate for this date. The applied rate is snapshotted." /></Card>
+        <Card><FormField label={`1 ${account.currency} equals how many ${state.settings.baseCurrency}?`} value={exchangeRate} onChangeText={setExchangeRate} keyboardType="decimal-pad" placeholder="Use saved effective rate" error={exchangeRateError} hint="Leave blank to use the saved rate for this date. The applied rate is snapshotted." /></Card>
       ) : null}
 
       <Card style={{ gap: 14 }}>
         <FormField label="Note" value={note} onChangeText={setNote} placeholder="Optional context" multiline style={{ minHeight: 92, textAlignVertical: 'top' }} />
         {!existing && kind !== 'transfer' ? (
-          <Pressable onPress={() => router.push({ pathname: '/recurring', params: { kind, title, amount, accountId, categoryId } })}>
-            <AppText variant="label" style={{ color: theme.accent }}>Make this recurring instead</AppText>
-          </Pressable>
+          <TextButton title="Make this recurring instead" onPress={() => router.push({ pathname: '/recurring', params: { kind, title, amount, accountId, categoryId } })} style={{ alignSelf: 'flex-start' }} />
         ) : null}
       </Card>
 
-      <ActionButton title={busy ? 'Saving…' : existing ? 'Save changes' : 'Add transaction'} icon="checkmark" onPress={save} disabled={busy || !canSave} />
+      <ActionButton title={busy ? 'Saving…' : existing ? 'Save changes' : 'Add transaction'} icon="checkmark" onPress={save} disabled={busy || !canSave} busy={busy} />
       {existing ? <ActionButton title="Delete transaction" variant="danger" onPress={remove} disabled={busy} /> : null}
     </FormScreen>
   );

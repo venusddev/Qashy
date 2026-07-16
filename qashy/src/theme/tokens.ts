@@ -74,8 +74,14 @@ export function relativeLuminance(hex: string) {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
+export function contrastRatio(first: string, second: string) {
+  const lighter = Math.max(relativeLuminance(first), relativeLuminance(second));
+  const darker = Math.min(relativeLuminance(first), relativeLuminance(second));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 export function readableTextColor(hex: string): '#FFFFFF' | '#1A1C22' {
-  return relativeLuminance(hex) > 0.45 ? '#1A1C22' : '#FFFFFF';
+  return contrastRatio('#FFFFFF', hex) >= contrastRatio('#1A1C22', hex) ? '#FFFFFF' : '#1A1C22';
 }
 
 export function mixHex(from: string, to: string, weight: number) {
@@ -83,4 +89,31 @@ export function mixHex(from: string, to: string, weight: number) {
   const b = channels(to);
   const t = Math.min(1, Math.max(0, weight));
   return toHex([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]);
+}
+
+export function ensureContrast(
+  foreground: string,
+  background: string,
+  fallback: string,
+  minimum = 4.5,
+) {
+  if (contrastRatio(foreground, background) >= minimum) return foreground.toUpperCase();
+  const safeFallback = contrastRatio(fallback, background) >= minimum
+    ? fallback
+    : readableTextColor(background);
+  let low = 0;
+  let high = 1;
+  for (let index = 0; index < 18; index += 1) {
+    const midpoint = (low + high) / 2;
+    if (contrastRatio(mixHex(foreground, safeFallback, midpoint), background) >= minimum) {
+      high = midpoint;
+    } else {
+      low = midpoint;
+    }
+  }
+  return mixHex(foreground, safeFallback, high).toUpperCase();
+}
+
+export function accessibleAccentColor(seed: string, surface: string, text: string) {
+  return ensureContrast(seed, surface, text, 3);
 }

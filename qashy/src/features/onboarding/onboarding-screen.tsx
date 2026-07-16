@@ -1,12 +1,13 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
+import { ScrollView, View, useWindowDimensions } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
 import { ChoiceChip } from '@/components/ui/choice-chip';
+import { ColorSwatch } from '@/components/ui/color-swatch';
 import { FormField } from '@/components/ui/form-field';
 import { QASHY_ACCENT } from '@/domain/defaults';
 import type { AccountType, AccentSource, ThemeMode } from '@/domain/models';
@@ -14,6 +15,7 @@ import { useFinanceRepository, useFinanceState } from '@/providers/finance-provi
 import { useQashyTheme } from '@/theme/theme';
 import { ACCENT_PRESETS, radius } from '@/theme/tokens';
 import { errorMessage, showError } from '@/utils/confirm';
+import { validateMoneyInput } from '@/utils/form-validation';
 import { parseMoney } from '@/utils/money';
 
 function isValidLocale(value: string) {
@@ -43,11 +45,16 @@ export function OnboardingScreen() {
   const [saving, setSaving] = useState(false);
   const localeValid = isValidLocale(locale);
   const currencyValid = /^[A-Za-z]{3}$/.test(currency.trim());
+  const openingError = localeValid && currencyValid
+    ? validateMoneyInput(openingBalance, currency, locale, { label: 'Opening balance' })
+    : undefined;
   // Step 1 gates Continue so a bad locale or currency surfaces immediately
   // instead of failing the whole flow at the final step.
-  const stepValid = step !== 1 || (localeValid && currencyValid);
+  const stepValid = (step !== 1 || (localeValid && currencyValid))
+    && (step !== 2 || !openingError);
 
   const finish = async () => {
+    if (saving || !localeValid || !currencyValid || openingError) return;
     setSaving(true);
     try {
       await repository.completeOnboarding({
@@ -117,7 +124,7 @@ export function OnboardingScreen() {
             <View style={{ gap: 16 }}>
               <FormField label="Locale" value={locale} onChangeText={setLocale} placeholder="en-US" autoCapitalize="none" hint={locale.trim() && !localeValid ? 'Use a valid locale such as en-US.' : undefined} />
               <FormField label="Base currency" value={currency} onChangeText={setCurrency} placeholder="USD" autoCapitalize="characters" maxLength={3} hint={currency.trim() && !currencyValid ? 'Use a three-letter currency code such as USD.' : 'Budgets, goals, and reports use this currency.'} />
-              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              <View accessibilityLabel="Base currency" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                 {['USD', 'EUR', 'GBP', 'ILS', 'JPY'].map((item) => <ChoiceChip key={item} label={item} selected={currency === item} onPress={() => setCurrency(item)} />)}
               </View>
             </View>
@@ -127,34 +134,35 @@ export function OnboardingScreen() {
             <View style={{ gap: 16 }}>
               <FormField label="Account name" value={accountName} onChangeText={setAccountName} placeholder="Everyday" />
               <AppText variant="label">Account type</AppText>
-              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              <View accessibilityLabel="Account type" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                 {(['checking', 'cash', 'savings', 'credit', 'wallet'] as AccountType[]).map((item) => (
                   <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={accountType === item} onPress={() => setAccountType(item)} />
                 ))}
               </View>
-              <FormField label={`Opening balance (${currency})`} value={openingBalance} onChangeText={setOpeningBalance} keyboardType="decimal-pad" placeholder="0" />
+              <FormField label={`Opening balance (${currency})`} value={openingBalance} onChangeText={setOpeningBalance} keyboardType="decimal-pad" placeholder="0" error={openingError} required />
             </View>
           ) : null}
 
           {step === 3 ? (
             <View style={{ gap: 18 }}>
               <AppText variant="label">Appearance</AppText>
-              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              <View accessibilityLabel="Appearance" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                 {(['system', 'light', 'dark'] as ThemeMode[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={themeMode === item} onPress={() => setThemeMode(item)} />)}
               </View>
               <AppText variant="label">Accent</AppText>
-              <ChoiceChip label="System accent" selected={accentSource === 'system'} onPress={() => setAccentSource('system')} icon="paintbrush" />
-              <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
-                {ACCENT_PRESETS.map((color) => (
-                  <View key={color} style={{ borderRadius: 99, borderWidth: accentSource !== 'system' && accentHex === color ? 3 : 0, borderColor: theme.text, padding: 3 }}>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Use ${color} accent`}
+              <View accessibilityLabel="Accent color" accessibilityRole="radiogroup" style={{ gap: 12 }}>
+                <ChoiceChip label="System accent" selected={accentSource === 'system'} onPress={() => setAccentSource('system')} icon="paintbrush" />
+                <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
+                  {ACCENT_PRESETS.map((color) => (
+                    <ColorSwatch
+                      key={color}
+                      color={color}
+                      selected={accentSource === 'preset' && accentHex === color}
+                      label={`Use ${color} accent`}
                       onPress={() => { setAccentSource('preset'); setAccentHex(color); }}
-                      style={{ width: 38, height: 38, borderRadius: 99, backgroundColor: color }}
                     />
-                  </View>
-                ))}
+                  ))}
+                </View>
               </View>
             </View>
           ) : null}
@@ -165,6 +173,7 @@ export function OnboardingScreen() {
               title={step === 3 ? (saving ? 'Setting up…' : 'Start using Qashy') : 'Continue'}
               icon={step === 3 ? 'checkmark' : 'chevron.right'}
               disabled={saving || !stepValid}
+              busy={saving}
               onPress={() => step === 3 ? finish() : setStep((value) => value + 1)}
             />
           </View>

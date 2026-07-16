@@ -5,15 +5,34 @@ import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { useQashyTheme } from '@/theme/theme';
 
-export function ActionButton({ title, icon, variant = 'primary', onPress, style, ...props }: PressableProps & { title: string; icon?: string; variant?: 'primary' | 'secondary' | 'danger' }) {
+export function ActionButton({
+  title,
+  icon,
+  variant = 'primary',
+  onPress,
+  style,
+  disabled = false,
+  accessibilityState,
+  busy = false,
+  ...props
+}: PressableProps & {
+  title: string;
+  icon?: string;
+  variant?: 'primary' | 'secondary' | 'danger';
+  busy?: boolean;
+}) {
   const theme = useQashyTheme();
+  const isDisabled = Boolean(disabled);
   const backgroundColor = variant === 'primary' ? theme.accent : variant === 'danger' ? theme.negative : theme.surfaceMuted;
-  const foreground = variant === 'primary' || variant === 'danger' ? theme.onAccent : theme.text;
+  const foreground = variant === 'primary' ? theme.onAccent : variant === 'danger' ? theme.onNegative : theme.text;
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ ...accessibilityState, busy, disabled: isDisabled }}
       {...props}
+      disabled={isDisabled}
       onPress={(event) => {
+        if (isDisabled) return;
         if (process.env.EXPO_OS === 'ios') Haptics.selectionAsync();
         onPress?.(event);
       }}
@@ -27,7 +46,7 @@ export function ActionButton({ title, icon, variant = 'primary', onPress, style,
           justifyContent: 'center',
           flexDirection: 'row',
           gap: 8,
-          opacity: pressableState.pressed ? 0.76 : 1,
+          opacity: isDisabled ? 0.45 : pressableState.pressed ? 0.76 : 1,
         },
         typeof style === 'function' ? style(pressableState) : style,
       ]}>

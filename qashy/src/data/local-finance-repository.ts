@@ -396,6 +396,14 @@ export class LocalFinanceRepository implements FinanceRepository {
     posted.filter((item) => item.kind === 'expense').forEach((item) => {
       dayTotals.set(item.localDate, (dayTotals.get(item.localDate) ?? 0) + item.baseAmountMinor);
     });
+    const dailySpend: DashboardSummary['dailySpend'] = [];
+    let spendDate = fromDate;
+    let spendGuard = 0;
+    while (spendDate <= toDate && spendGuard < 36600) {
+      dailySpend.push({ date: spendDate, amountMinor: dayTotals.get(spendDate) ?? 0 });
+      spendDate = addRecurrence(spendDate, 'day', 1);
+      spendGuard += 1;
+    }
     let netWorthMinor = 0;
     const missingExchangeRates: DashboardSummary['missingExchangeRates'] = [];
     for (const item of accountBalances) {
@@ -427,7 +435,7 @@ export class LocalFinanceRepository implements FinanceRepository {
       categorySpend,
       recentTransactions: posted.slice(0, 5),
       upcomingTransactions: this.queryTransactions({ statuses: ['upcoming'], sort: 'oldest', limit: 5 }),
-      dailySpend: Array.from(dayTotals, ([date, amountMinor]) => ({ date, amountMinor })).sort((a, b) => a.date.localeCompare(b.date)),
+      dailySpend,
       missingExchangeRates,
     };
   }

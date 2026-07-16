@@ -1,0 +1,49 @@
+import { Pressable, type PressableProps } from 'react-native';
+
+import { AppIcon } from '@/components/ui/app-icon';
+import { AppText } from '@/components/ui/app-text';
+import { useQashyTheme } from '@/theme/theme';
+
+export function TextButton({
+  title,
+  icon,
+  tone = 'accent',
+  onPress,
+  disabled = false,
+  style,
+  accessibilityState,
+  ...props
+}: Omit<PressableProps, 'children'> & {
+  title: string;
+  icon?: string;
+  tone?: 'accent' | 'muted' | 'danger';
+}) {
+  const theme = useQashyTheme();
+  const isDisabled = Boolean(disabled);
+  const color = tone === 'danger' ? theme.negative : tone === 'muted' ? theme.textMuted : theme.accent;
+  return (
+    <Pressable
+      accessibilityLabel={title}
+      accessibilityRole="button"
+      accessibilityState={{ ...accessibilityState, disabled: isDisabled }}
+      {...props}
+      disabled={isDisabled}
+      onPress={onPress}
+      style={(state) => [
+        {
+          minHeight: 44,
+          paddingHorizontal: 6,
+          borderRadius: 10,
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexDirection: 'row',
+          gap: 6,
+          opacity: isDisabled ? 0.4 : state.pressed ? 0.62 : 1,
+        },
+        typeof style === 'function' ? style(state) : style,
+      ]}>
+      {icon ? <AppIcon name={icon} color={color} size={16} /> : null}
+      <AppText selectable={false} variant="label" style={{ color }}>{title}</AppText>
+    </Pressable>
+  );
+}

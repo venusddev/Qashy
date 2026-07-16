@@ -4,12 +4,31 @@ import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { useQashyTheme } from '@/theme/theme';
 
-export function ChoiceChip({ label, selected, onPress, icon, disabled = false }: { label: string; selected: boolean; onPress: () => void; icon?: string; disabled?: boolean }) {
+export type ChoiceChipMode = 'radio' | 'checkbox' | 'button';
+
+export function ChoiceChip({
+  label,
+  selected,
+  onPress,
+  icon,
+  disabled = false,
+  mode = 'radio',
+}: {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+  icon?: string;
+  disabled?: boolean;
+  mode?: ChoiceChipMode;
+}) {
   const theme = useQashyTheme();
+  const selectable = mode !== 'button';
   return (
     <Pressable
-      accessibilityRole="radio"
-      accessibilityState={{ selected, disabled }}
+      accessibilityLabel={label}
+      accessibilityRole={mode}
+      accessibilityState={selectable ? { checked: selected, disabled } : { disabled }}
+      aria-checked={selectable ? selected : undefined}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => ({
@@ -25,8 +44,8 @@ export function ChoiceChip({ label, selected, onPress, icon, disabled = false }:
         gap: 7,
         opacity: disabled ? 0.45 : pressed ? 0.72 : 1,
       })}>
-      {icon ? <AppIcon name={icon} color={selected ? theme.accent : theme.textMuted} size={17} /> : null}
-      <AppText selectable={false} variant="label" style={{ color: selected ? theme.accent : theme.text }}>{label}</AppText>
+      {icon ? <AppIcon name={icon} color={selected ? theme.onAccentContainer : theme.textMuted} size={17} /> : null}
+      <AppText selectable={false} variant="label" style={{ color: selected ? theme.onAccentContainer : theme.text }}>{label}</AppText>
     </Pressable>
   );
 }

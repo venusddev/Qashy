@@ -13,6 +13,11 @@ import { useFinanceRepository, useFinanceState } from '@/providers/finance-provi
 import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
+import {
+  validateDateInput,
+  validateMoneyInput,
+  validatePositiveInteger,
+} from '@/utils/form-validation';
 import { minorToDecimalString, parseMoney } from '@/utils/money';
 
 export function RecurringFormScreen() {
@@ -36,9 +41,19 @@ export function RecurringFormScreen() {
   const [busy, setBusy] = useState(false);
   const account = state.accounts.find((item) => item.id === accountId) ?? initialAccount;
   const categories = state.categories.filter((item) => item.kind === kind && !item.archived);
+  const amountError = account
+    ? validateMoneyInput(amount, account.currency, state.settings.locale, { label: 'Amount', positive: true })
+    : 'Choose an account before entering an amount.';
+  const intervalError = validatePositiveInteger(interval, 'Repeat interval');
+  const startDateError = validateDateInput(startDate, { label: 'Start date' });
+  const endDateFormatError = validateDateInput(endDate, { label: 'End date', optional: true });
+  const endDateError = !endDateFormatError && endDate && startDate && endDate < startDate
+    ? 'End date must not precede the start date.'
+    : endDateFormatError;
+  const canSave = Boolean(account) && !amountError && !intervalError && !startDateError && !endDateError;
 
   const save = async () => {
-    if (!account || busy) return;
+    if (!account || busy || !canSave) return;
     setBusy(true);
     try {
       const normalizedInterval = Math.max(1, Math.floor(Number(interval) || 1));
@@ -85,28 +100,28 @@ export function RecurringFormScreen() {
   return (
     <FormScreen contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 16 }}>
-        <View style={{ flexDirection: 'row', gap: 8 }}>{(['expense', 'income'] as CategoryKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => { setKind(item); setCategoryId(''); }} /></View>)}</View>
+        <View accessibilityLabel="Recurring transaction kind" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>{(['expense', 'income'] as CategoryKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => { setKind(item); setCategoryId(''); }} /></View>)}</View>
         <FormField label="Title" value={title} onChangeText={setTitle} placeholder="Rent, salary, subscription…" />
-        <FormField label={`Amount (${account?.currency ?? state.settings.baseCurrency})`} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
+        <FormField label={`Amount (${account?.currency ?? state.settings.baseCurrency})`} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" error={amountError} required />
         <AppText variant="label">Account</AppText>
-        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{state.accounts.filter((item) => !item.archived).map((item) => <ChoiceChip key={item.id} label={item.name} selected={accountId === item.id} onPress={() => setAccountId(item.id)} />)}</View>
+        <View accessibilityLabel="Recurring account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{state.accounts.filter((item) => !item.archived).map((item) => <ChoiceChip key={item.id} label={item.name} selected={accountId === item.id} onPress={() => setAccountId(item.id)} />)}</View>
         <AppText variant="label">Category</AppText>
-        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{categories.map((item) => <ChoiceChip key={item.id} label={item.name} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}</View>
+        <View accessibilityLabel="Recurring category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{categories.map((item) => <ChoiceChip key={item.id} label={item.name} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}</View>
       </Card>
 
       <Card style={{ gap: 16 }}>
         <AppText variant="label">Repeats</AppText>
-        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{(['day', 'week', 'month', 'year'] as RecurrenceUnit[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={unit === item} onPress={() => setUnit(item)} />)}</View>
-        <FormField label="Every" value={interval} onChangeText={setInterval} keyboardType="number-pad" hint={`Every ${interval || '1'} ${unit}${Number(interval) === 1 ? '' : 's'}.`} />
-        <FormField label="Starts" value={startDate} onChangeText={setStartDate} placeholder="YYYY-MM-DD" />
-        <FormField label="Ends (optional)" value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD" />
+        <View accessibilityLabel="Recurrence period" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{(['day', 'week', 'month', 'year'] as RecurrenceUnit[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={unit === item} onPress={() => setUnit(item)} />)}</View>
+        <FormField label="Every" value={interval} onChangeText={setInterval} keyboardType="number-pad" error={intervalError} hint={`Every ${interval || '1'} ${unit}${Number(interval) === 1 ? '' : 's'}.`} required />
+        <FormField label="Starts" value={startDate} onChangeText={setStartDate} placeholder="YYYY-MM-DD" error={startDateError} required />
+        <FormField label="Ends (optional)" value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD" error={endDateError} />
         <View style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
           <View style={{ flex: 1, gap: 2 }}><AppText variant="label">Post automatically</AppText><AppText variant="caption" muted>Off by default. Upcoming items wait for your review.</AppText></View>
           <Switch value={autoPost} onValueChange={setAutoPost} trackColor={{ true: theme.staticAccent }} />
         </View>
       </Card>
 
-      <ActionButton title={busy ? 'Saving…' : existing ? 'Save schedule' : 'Create schedule'} icon="checkmark" onPress={save} disabled={busy} />
+      <ActionButton title={busy ? 'Saving…' : existing ? 'Save schedule' : 'Create schedule'} icon="checkmark" onPress={save} disabled={busy || !canSave} busy={busy} />
       {existing ? <ActionButton title="Delete schedule" variant="danger" onPress={remove} disabled={busy} /> : null}
     </FormScreen>
   );

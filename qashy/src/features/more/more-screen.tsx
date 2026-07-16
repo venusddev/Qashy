@@ -4,6 +4,7 @@ import { ScrollView, View, useWindowDimensions } from 'react-native';
 
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
+import { PageHeading } from '@/components/ui/page-heading';
 import { ScreenContainer } from '@/components/ui/screen-container';
 import { SectionHeader } from '@/components/ui/section-header';
 import { SettingsRow } from '@/components/ui/settings-row';
@@ -56,6 +57,7 @@ export function MoreScreen() {
   return (
     <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }}>
       <ScreenContainer>
+        <PageHeading title="More" subtitle="Accounts, categories, automation, portability, and appearance." />
         <View style={{ flexDirection: wide ? 'row' : 'column', gap: 18, alignItems: 'flex-start' }}>
           <View style={{ flex: 1, width: '100%', gap: 14 }}>
             <SectionHeader title="Accounts" action="Add" onAction={() => router.push('/account')} />
@@ -68,7 +70,7 @@ export function MoreScreen() {
 
             <SectionHeader title="Categories" action="Add" onAction={() => router.push('/category')} />
             <Card style={{ paddingVertical: 8 }}>
-              {state.categories.filter((item) => !item.archived).map((category) => <SettingsRow key={category.id} title={category.name} subtitle={category.kind} icon={category.kind === 'income' ? 'arrow.down' : 'arrow.up'} color={category.color} onPress={() => router.push({ pathname: '/category', params: { id: category.id } })} />)}
+              {state.categories.filter((item) => !item.archived).map((category) => <SettingsRow key={category.id} title={category.name} subtitle={category.kind} icon={category.icon} color={category.color} onPress={() => router.push({ pathname: '/category', params: { id: category.id } })} />)}
             </Card>
           </View>
 
@@ -88,7 +90,7 @@ export function MoreScreen() {
                 <SectionHeader title="Archived" />
                 <Card style={{ paddingVertical: 8 }}>
                   {archivedAccounts.map((account) => <SettingsRow key={account.id} title={account.name} subtitle={`Archived account · ${account.currency}`} value={restoringId === account.id ? 'Restoring…' : 'Restore'} icon="wallet" color={account.color} onPress={() => restore('account', account.id)} />)}
-                  {archivedCategories.map((category) => <SettingsRow key={category.id} title={category.name} subtitle={`Archived ${category.kind} category`} value={restoringId === category.id ? 'Restoring…' : 'Restore'} icon={category.kind === 'income' ? 'arrow.down' : 'arrow.up'} color={category.color} onPress={() => restore('category', category.id)} />)}
+                  {archivedCategories.map((category) => <SettingsRow key={category.id} title={category.name} subtitle={`Archived ${category.kind} category`} value={restoringId === category.id ? 'Restoring…' : 'Restore'} icon={category.icon} color={category.color} onPress={() => restore('category', category.id)} />)}
                 </Card>
               </>
             ) : null}

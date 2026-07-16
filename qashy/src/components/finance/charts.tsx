@@ -4,35 +4,52 @@ import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 import { AppText } from '@/components/ui/app-text';
 import type { DashboardSummary } from '@/domain/models';
 import { useQashyTheme } from '@/theme/theme';
+import { shortDate } from '@/utils/date';
 import { formatMoney } from '@/utils/money';
 
 export function SpendLineChart({ points, currency, locale }: { points: DashboardSummary['dailySpend']; currency: string; locale: string }) {
   const theme = useQashyTheme();
   const { width } = useWindowDimensions();
   const chartWidth = Math.min(Math.max(width - 72, 260), 520);
-  const height = 150;
-  const max = Math.max(...points.map((item) => item.amountMinor), 1);
-  const data = points.length ? points : [{ date: '', amountMinor: 0 }, { date: '', amountMinor: 0 }];
-  const path = data
+  const height = 174;
+  const actualMax = Math.max(...points.map((item) => item.amountMinor), 0);
+  const scaleMax = Math.max(actualMax, 1);
+  const hasSpending = actualMax > 0;
+  const path = points
     .map((point, index) => {
-      const x = 8 + (index / Math.max(data.length - 1, 1)) * (chartWidth - 16);
-      const y = height - 24 - (point.amountMinor / max) * (height - 48);
+      const x = 8 + (index / Math.max(points.length - 1, 1)) * (chartWidth - 16);
+      const y = height - 32 - (point.amountMinor / scaleMax) * (height - 54);
       return `${index ? 'L' : 'M'} ${x} ${y}`;
     })
     .join(' ');
+  const firstDate = points.at(0)?.date;
+  const lastDate = points.at(-1)?.date;
+  const label = hasSpending
+    ? `Daily spending from ${firstDate} to ${lastDate}. Highest day ${formatMoney(actualMax, currency, locale)}.`
+    : `No spending from ${firstDate ?? 'the start of this period'} to ${lastDate ?? 'the end of this period'}.`;
   return (
-    <View accessibilityLabel={`Daily spending chart. Highest day ${formatMoney(max, currency, locale)}`}>
-      <Svg width="100%" height={height} viewBox={`0 0 ${chartWidth} ${height}`}>
-        {[0.25, 0.5, 0.75].map((ratio) => (
-          <Line key={ratio} x1="8" x2={chartWidth - 8} y1={height * ratio} y2={height * ratio} stroke={theme.border as string} strokeWidth="1" />
-        ))}
-        <Path d={path} fill="none" stroke={theme.staticAccent} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-        {data.map((point, index) => {
-          const x = 8 + (index / Math.max(data.length - 1, 1)) * (chartWidth - 16);
-          const y = height - 24 - (point.amountMinor / max) * (height - 48);
-          return <Circle key={`${point.date}-${index}`} cx={x} cy={y} r="4" fill={theme.staticAccent} />;
-        })}
-      </Svg>
+    <View accessibilityRole="image" accessibilityLabel={label} style={{ minHeight: height }}>
+      {hasSpending ? (
+        <Svg width="100%" height={height} viewBox={`0 0 ${chartWidth} ${height}`}>
+          {[0.25, 0.5, 0.75].map((ratio) => (
+            <Line key={ratio} x1="8" x2={chartWidth - 8} y1={(height - 24) * ratio} y2={(height - 24) * ratio} stroke={theme.border as string} strokeWidth="1" />
+          ))}
+          <Path d={path} fill="none" stroke={theme.staticAccent} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+          {points.map((point, index) => {
+            if (!point.amountMinor) return null;
+            const x = 8 + (index / Math.max(points.length - 1, 1)) * (chartWidth - 16);
+            const y = height - 32 - (point.amountMinor / scaleMax) * (height - 54);
+            return <Circle key={point.date} cx={x} cy={y} r="4" fill={theme.staticAccent} />;
+          })}
+          {firstDate ? <SvgText x="8" y={height - 4} fill={theme.textMuted as string} fontSize="11">{shortDate(firstDate, locale)}</SvgText> : null}
+          {lastDate ? <SvgText x={chartWidth - 8} y={height - 4} textAnchor="end" fill={theme.textMuted as string} fontSize="11">{shortDate(lastDate, locale)}</SvgText> : null}
+        </Svg>
+      ) : (
+        <View style={{ minHeight: height, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <AppText variant="label">No spending in this period</AppText>
+          <AppText variant="caption" muted>{firstDate && lastDate ? `${shortDate(firstDate, locale)} – ${shortDate(lastDate, locale)}` : 'Add an expense to start the rhythm.'}</AppText>
+        </View>
+      )}
     </View>
   );
 }

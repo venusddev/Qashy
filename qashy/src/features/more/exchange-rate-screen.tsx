@@ -8,6 +8,11 @@ import { FormScreen } from '@/components/ui/form-screen';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
+import {
+  validateCurrencyCode,
+  validateDateInput,
+  validatePositiveDecimal,
+} from '@/utils/form-validation';
 
 export function ExchangeRateScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -18,8 +23,15 @@ export function ExchangeRateScreen() {
   const [rate, setRate] = useState(existing?.rate ?? '1');
   const [effectiveDate, setEffectiveDate] = useState(existing?.effectiveDate ?? todayLocal());
   const [saving, setSaving] = useState(false);
+  const currencyError = validateCurrencyCode(fromCurrency, state.settings.locale)
+    ?? (fromCurrency.toUpperCase() === state.settings.baseCurrency
+      ? `Choose a currency other than ${state.settings.baseCurrency}.`
+      : undefined);
+  const rateError = validatePositiveDecimal(rate, 'Exchange rate');
+  const dateError = validateDateInput(effectiveDate, { label: 'Effective date' });
+  const canSave = !currencyError && !rateError && !dateError;
   const save = async () => {
-    if (saving) return;
+    if (saving || !canSave) return;
     setSaving(true);
     try {
       await repository.saveExchangeRate({ fromCurrency: fromCurrency.toUpperCase(), toCurrency: state.settings.baseCurrency, rate, effectiveDate }, existing?.id);
@@ -46,11 +58,11 @@ export function ExchangeRateScreen() {
   return (
     <FormScreen maxWidth={620} contentContainerStyle={{ gap: 16 }}>
       <Card style={{ gap: 16 }}>
-        <FormField label="From currency" value={fromCurrency} onChangeText={setFromCurrency} autoCapitalize="characters" maxLength={3} />
-        <FormField label={`1 ${fromCurrency.toUpperCase()} equals how many ${state.settings.baseCurrency}?`} value={rate} onChangeText={setRate} keyboardType="decimal-pad" />
-        <FormField label="Effective date" value={effectiveDate} onChangeText={setEffectiveDate} placeholder="YYYY-MM-DD" />
+        <FormField label="From currency" value={fromCurrency} onChangeText={setFromCurrency} autoCapitalize="characters" maxLength={3} error={currencyError} required />
+        <FormField label={`1 ${fromCurrency.toUpperCase()} equals how many ${state.settings.baseCurrency}?`} value={rate} onChangeText={setRate} keyboardType="decimal-pad" error={rateError} required />
+        <FormField label="Effective date" value={effectiveDate} onChangeText={setEffectiveDate} placeholder="YYYY-MM-DD" error={dateError} required />
       </Card>
-      <ActionButton title={saving ? 'Saving…' : 'Save rate'} icon="checkmark" onPress={save} disabled={saving} />
+      <ActionButton title={saving ? 'Saving…' : 'Save rate'} icon="checkmark" onPress={save} disabled={saving || !canSave} busy={saving} />
       {existing ? <ActionButton title="Delete rate" variant="danger" onPress={remove} disabled={saving} /> : null}
     </FormScreen>
   );

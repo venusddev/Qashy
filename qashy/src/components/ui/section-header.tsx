@@ -1,17 +1,16 @@
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import { AppText } from '@/components/ui/app-text';
-import { useQashyTheme } from '@/theme/theme';
+import { TextButton } from '@/components/ui/text-button';
 
 export function SectionHeader({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) {
-  const theme = useQashyTheme();
+  const headingLevelProps = process.env.EXPO_OS === 'web' ? ({ 'aria-level': 2 } as object) : {};
+
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-      <AppText variant="headline">{title}</AppText>
+      <AppText {...headingLevelProps} accessibilityRole="header" variant="headline">{title}</AppText>
       {action ? (
-        <Pressable accessibilityRole="button" onPress={onAction} hitSlop={8}>
-          <AppText variant="label" style={{ color: theme.accent }}>{action}</AppText>
-        </Pressable>
+        <TextButton title={action} onPress={onAction} style={{ marginVertical: -8 }} />
       ) : null}
     </View>
   );

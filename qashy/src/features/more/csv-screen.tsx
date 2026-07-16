@@ -1,12 +1,14 @@
+import { Picker } from '@expo/ui';
 import * as DocumentPicker from 'expo-document-picker';
 import { File as ExpoFile, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
+import { ChoiceChip } from '@/components/ui/choice-chip';
 import type { CsvImportRow, ImportResult, TransactionKind, TransactionStatus } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { FormScreen } from '@/components/ui/form-screen';
@@ -53,6 +55,7 @@ export function CsvScreen() {
   const [rows, setRows] = useState<CsvImportRow[]>([]);
   const [preview, setPreview] = useState<ImportResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const missingRequiredFields = CSV_FIELDS.filter((field) => !field.optional && !mapping[field.key]);
 
   const pick = async () => {
     const result = await DocumentPicker.getDocumentAsync({ type: ['text/csv', 'text/comma-separated-values', 'text/plain'], copyToCacheDirectory: true, base64: false });
@@ -68,6 +71,7 @@ export function CsvScreen() {
   };
 
   const previewImport = async () => {
+    if (missingRequiredFields.length) return;
     const defaultAccount = state.accounts.find((item) => item.id === defaultAccountId)?.name ?? '';
     const defaultCategory = state.categories.find((item) => item.id === defaultCategoryId)?.name ?? '';
     const value = (record: Record<string, string | number>, field: CsvField) =>
@@ -90,14 +94,6 @@ export function CsvScreen() {
     }));
     setRows(parsed);
     setPreview(await repository.importCsv(parsed, false));
-  };
-
-  const cycleMapping = (field: typeof CSV_FIELDS[number]) => {
-    const candidates = field.optional ? ['', ...headers] : headers;
-    if (!candidates.length) return;
-    const current = candidates.indexOf(mapping[field.key]);
-    setMapping((value) => ({ ...value, [field.key]: candidates[(current + 1) % candidates.length] }));
-    setPreview(null);
   };
 
   const commit = async () => {
@@ -146,34 +142,50 @@ export function CsvScreen() {
         {sourceRows.length ? (
           <View style={{ gap: 12, paddingTop: 6 }}>
             <AppText variant="headline">Column mapping</AppText>
-            <AppText variant="caption" muted>Tap a row to cycle through the source columns. Optional fields can be set to Not mapped.</AppText>
+            <AppText variant="caption" muted>Choose the source column for each Qashy field. Optional fields can stay Not mapped.</AppText>
             {CSV_FIELDS.map((field) => (
-              <Pressable
+              <View
                 key={field.key}
-                accessibilityRole="button"
                 accessibilityLabel={`Map ${field.label}`}
-                onPress={() => cycleMapping(field)}
-                style={({ pressed }) => ({ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottomWidth: 1, borderBottomColor: theme.border, opacity: pressed ? 0.65 : 1 })}>
-                <AppText variant="label">{field.label}{field.optional ? '' : ' *'}</AppText>
-                <AppText variant="caption" style={{ color: mapping[field.key] ? theme.accent : theme.textMuted }}>{mapping[field.key] || 'Not mapped'} ›</AppText>
-              </Pressable>
+                role="group"
+                style={{ minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottomWidth: 1, borderBottomColor: theme.border }}>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <AppText variant="label">{field.label}{field.optional ? '' : ' *'}</AppText>
+                  {!field.optional && !mapping[field.key] ? <AppText accessibilityRole="alert" variant="caption" style={{ color: theme.negative }}>Required</AppText> : null}
+                </View>
+                <View style={{ minWidth: 180, minHeight: 44, justifyContent: 'center' }}>
+                  <Picker
+                    selectedValue={mapping[field.key]}
+                    onValueChange={(value) => {
+                      setMapping((current) => ({ ...current, [field.key]: String(value) }));
+                      setPreview(null);
+                    }}
+                    testID={`mapping-${field.key}`}>
+                    <Picker.Item label="Not mapped" value="" />
+                    {headers.map((header) => <Picker.Item key={header} label={header} value={header} />)}
+                  </Picker>
+                </View>
+              </View>
             ))}
             <AppText variant="label">Default account</AppText>
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            <View accessibilityLabel="Default account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               {state.accounts.filter((item) => !item.archived).map((account) => (
-                <Pressable key={account.id} accessibilityRole="radio" accessibilityState={{ selected: defaultAccountId === account.id }} onPress={() => { setDefaultAccountId(account.id); setPreview(null); }} style={{ padding: 10, borderRadius: radius.control, backgroundColor: defaultAccountId === account.id ? theme.accentContainer : theme.surfaceMuted }}>
-                  <AppText variant="label" style={{ color: defaultAccountId === account.id ? theme.accent : theme.text }}>{account.name}</AppText>
-                </Pressable>
+                <ChoiceChip key={account.id} label={account.name} selected={defaultAccountId === account.id} onPress={() => { setDefaultAccountId(account.id); setPreview(null); }} />
               ))}
             </View>
             <AppText variant="label">Default category</AppText>
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              <Pressable onPress={() => { setDefaultCategoryId(''); setPreview(null); }} style={{ padding: 10, borderRadius: radius.control, backgroundColor: !defaultCategoryId ? theme.accentContainer : theme.surfaceMuted }}><AppText variant="label">None</AppText></Pressable>
+            <View accessibilityLabel="Default category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              <ChoiceChip label="None" selected={!defaultCategoryId} onPress={() => { setDefaultCategoryId(''); setPreview(null); }} />
               {state.categories.filter((item) => !item.archived).map((category) => (
-                <Pressable key={category.id} onPress={() => { setDefaultCategoryId(category.id); setPreview(null); }} style={{ padding: 10, borderRadius: radius.control, backgroundColor: defaultCategoryId === category.id ? theme.accentContainer : theme.surfaceMuted }}><AppText variant="label">{category.name}</AppText></Pressable>
+                <ChoiceChip key={category.id} label={category.name} selected={defaultCategoryId === category.id} onPress={() => { setDefaultCategoryId(category.id); setPreview(null); }} />
               ))}
             </View>
-            <ActionButton title="Preview import" icon="checkmark" onPress={previewImport} />
+            {missingRequiredFields.length ? (
+              <AppText accessibilityRole="alert" variant="caption" style={{ color: theme.negative }}>
+                Map required fields: {missingRequiredFields.map((field) => field.label).join(', ')}.
+              </AppText>
+            ) : null}
+            <ActionButton title="Preview import" icon="checkmark" onPress={previewImport} disabled={Boolean(missingRequiredFields.length)} />
           </View>
         ) : null}
         {preview ? (

@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
+import { ScrollView, View, useWindowDimensions } from 'react-native';
 
 import { CategoryDonut, SpendLineChart } from '@/components/finance/charts';
 import { TransactionRow } from '@/components/finance/transaction-row';
@@ -8,9 +8,13 @@ import { ActionButton } from '@/components/ui/action-button';
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
+import { FloatingActionButton } from '@/components/ui/floating-action-button';
+import { IconButton } from '@/components/ui/icon-button';
+import { PageHeading } from '@/components/ui/page-heading';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { ScreenContainer } from '@/components/ui/screen-container';
 import { SectionHeader } from '@/components/ui/section-header';
+import { TextButton } from '@/components/ui/text-button';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { radius, readableTextColor } from '@/theme/tokens';
@@ -60,17 +64,24 @@ export function OverviewScreen() {
   const budgetProgress = summary.budgetLimitMinor > 0 ? summary.budgetSpentMinor / summary.budgetLimitMinor : summary.budgetSpentMinor > 0 ? 1 : 0;
 
   return (
-    <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }}>
-      <ScreenContainer>
+    <View style={{ flex: 1, backgroundColor: theme.background }}>
+      <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }}>
+        <ScreenContainer>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-          <View style={{ gap: 4, flexShrink: 1, minWidth: 200 }}>
-            <AppText variant="caption" muted>YOUR MONEY AT A GLANCE</AppText>
-            <AppText variant="headline">A quieter view of your finances.</AppText>
-          </View>
+          {process.env.EXPO_OS === 'web' ? (
+            <View style={{ flexShrink: 1, minWidth: 200 }}>
+              <PageHeading title="Overview" subtitle="A quieter view of your finances." eyebrow="YOUR MONEY AT A GLANCE" />
+            </View>
+          ) : (
+            <View style={{ gap: 4, flexShrink: 1, minWidth: 200 }}>
+              <AppText variant="caption" muted>YOUR MONEY AT A GLANCE</AppText>
+              <AppText variant="headline">A quieter view of your finances.</AppText>
+            </View>
+          )}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: theme.surface, borderRadius: 999, padding: 4, borderWidth: 1, borderColor: theme.border }}>
-            <Pressable accessibilityLabel="Previous month" onPress={() => setMonth((value) => moveMonth(value, -1))} style={{ padding: 9 }}><AppIcon name="chevron.left" color={theme.text} size={16} /></Pressable>
+            <IconButton label="Previous month" icon="chevron.left" iconSize={16} onPress={() => setMonth((value) => moveMonth(value, -1))} />
             <AppText variant="label" style={{ minWidth: 116, textAlign: 'center' }}>{monthLabel(month, locale)}</AppText>
-            <Pressable accessibilityLabel="Next month" onPress={() => setMonth((value) => moveMonth(value, 1))} style={{ padding: 9 }}><AppIcon name="chevron.right" color={theme.text} size={16} /></Pressable>
+            <IconButton label="Next month" icon="chevron.right" iconSize={16} onPress={() => setMonth((value) => moveMonth(value, 1))} />
           </View>
         </View>
 
@@ -146,8 +157,8 @@ export function OverviewScreen() {
               <View key={transaction.id} style={{ gap: 2 }}>
                 <TransactionRow transaction={transaction} compact returnTo="/overview" />
                 <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
-                  <Pressable disabled={pendingUpcomingId !== null} onPress={() => resolveUpcoming(transaction.id, 'skip')} style={{ padding: 8, opacity: pendingUpcomingId === transaction.id ? 0.5 : 1 }}><AppText variant="caption" muted>Skip</AppText></Pressable>
-                  <Pressable disabled={pendingUpcomingId !== null} onPress={() => resolveUpcoming(transaction.id, 'confirm')} style={{ padding: 8, opacity: pendingUpcomingId === transaction.id ? 0.5 : 1 }}><AppText variant="caption" style={{ color: theme.accent }}>Mark paid</AppText></Pressable>
+                  <TextButton title="Skip" tone="muted" disabled={pendingUpcomingId !== null} onPress={() => resolveUpcoming(transaction.id, 'skip')} />
+                  <TextButton title="Mark paid" disabled={pendingUpcomingId !== null} onPress={() => resolveUpcoming(transaction.id, 'confirm')} />
                 </View>
               </View>
             ))}
@@ -158,21 +169,20 @@ export function OverviewScreen() {
           <SectionHeader title="Recent activity" action="See all" onAction={() => router.push('/transactions')} />
           {summary.recentTransactions.length ? summary.recentTransactions.map((transaction) => <TransactionRow key={transaction.id} transaction={transaction} returnTo="/overview" />) : (
             <View style={{ alignItems: 'center', gap: 12, paddingVertical: 28 }}>
-              <View style={{ width: 52, height: 52, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="arrow.left.arrow.right" color={theme.accent} size={24} /></View>
+              <View style={{ width: 52, height: 52, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="arrow.left.arrow.right" color={theme.onAccentContainer} size={24} /></View>
               <AppText variant="headline">Your ledger is ready</AppText>
               <AppText muted style={{ textAlign: 'center' }}>Add the first transaction and Qashy will turn it into useful context.</AppText>
               <ActionButton title="Add transaction" icon="plus" onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/overview' } })} />
             </View>
           )}
         </Card>
-      </ScreenContainer>
-
-      <Pressable
-        accessibilityLabel="Add transaction"
+        </ScreenContainer>
+      </ScrollView>
+      <FloatingActionButton
+        label="Add transaction"
         onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/overview' } })}
-        style={({ pressed }) => ({ position: 'absolute', right: width < 768 ? 20 : 32, bottom: process.env.EXPO_OS === 'web' && width < 768 ? 92 : 26, width: 58, height: 58, borderRadius: 999, backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 14px rgba(25,27,32,0.28)', opacity: pressed ? 0.85 : 1 })}>
-        <AppIcon name="plus" color={theme.onAccent} size={25} />
-      </Pressable>
-    </ScrollView>
+        style={{ position: 'absolute', right: width < 768 ? 20 : 32, bottom: process.env.EXPO_OS === 'web' && width < 768 ? 92 : 26 }}
+      />
+    </View>
   );
 }
