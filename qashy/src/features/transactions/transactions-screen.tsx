@@ -122,14 +122,23 @@ export function TransactionsScreen() {
               placeholder="Search title or note"
               placeholderTextColor={theme.textMuted}
               value={search}
-              onChangeText={setSearch}
+              onChangeText={(value) => {
+                setSearch(value);
+                setSelectedIds([]);
+              }}
               style={{ flex: 1, color: theme.text, fontSize: 16 }}
             />
-            {search ? <IconButton label="Clear search" icon="xmark" iconSize={18} enteringVariant="zoom" onPress={() => setSearch('')} style={{ marginRight: -10 }} /> : null}
+            {search ? <IconButton label="Clear search" icon="xmark" iconSize={18} enteringVariant="zoom" onPress={() => {
+              setSearch('');
+              setSelectedIds([]);
+            }} style={{ marginRight: -10 }} /> : null}
           </View>
           <View accessibilityLabel="Transaction type filter" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
             {(['all', 'expense', 'income', 'transfer', 'upcoming'] as KindFilter[]).map((item) => (
-              <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => setKind(item)} />
+              <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => {
+                setKind(item);
+                setSelectedIds([]);
+              }} />
             ))}
           </View>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>

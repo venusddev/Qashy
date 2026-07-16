@@ -230,6 +230,7 @@ describe('FinanceRepository contract', () => {
       currency: String(record.currency), account: String(record.account), category: String(record.category),
       tags: String(record.tags), note: String(record.note), exchangeRate: String(record.exchange_rate),
       destinationAccount: String(record.destination_account), destinationAmount: String(record.destination_amount),
+      destinationBaseAmountMinor: String(record.destination_base_amount_minor),
     } satisfies CsvImportRow));
     const { repository: imported } = await createRepository();
     await imported.importCsv(rows, true);
@@ -274,25 +275,32 @@ describe('FinanceRepository contract', () => {
   });
 
   it('skips a poisoned recurring rule without blocking startup or healthy rules', async () => {
-    const storage = new MemoryStorageAdapter();
-    const { repository } = await createRepository(storage);
-    const usd = repository.getSnapshot().accounts[0];
-    const eur = await repository.saveAccount({ name: 'Euro', type: 'checking', currency: 'EUR', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
-    const rate = await repository.saveExchangeRate({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '2', effectiveDate: '2026-01-01' });
-    await repository.saveRecurringRule({
-      template: { kind: 'expense', title: 'Foreign', note: '', accountId: eur.id, categoryId: null, tagIds: [], amountMinor: 100, currency: 'EUR' },
-      unit: 'month', interval: 1, startDate: '2026-01-01', endDate: '2026-01-31', nextDueDate: '2026-01-01', autoPost: false, active: true,
-    });
-    await repository.saveRecurringRule({
-      template: { kind: 'expense', title: 'Healthy', note: '', accountId: usd.id, categoryId: null, tagIds: [], amountMinor: 100, currency: 'USD' },
-      unit: 'month', interval: 1, startDate: '2026-01-01', endDate: '2026-01-31', nextDueDate: '2026-01-01', autoPost: false, active: true,
-    });
-    await repository.deleteEntities('exchangeRates', [rate.id]);
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-07-15T09:00:00Z'));
+      const storage = new MemoryStorageAdapter();
+      const { repository } = await createRepository(storage);
+      const usd = repository.getSnapshot().accounts[0];
+      const eur = await repository.saveAccount({ name: 'Euro', type: 'checking', currency: 'EUR', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
+      const rate = await repository.saveExchangeRate({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '2', effectiveDate: '2026-01-01' });
+      await repository.saveRecurringRule({
+        template: { kind: 'expense', title: 'Foreign', note: '', accountId: eur.id, categoryId: null, tagIds: [], amountMinor: 100, currency: 'EUR' },
+        unit: 'month', interval: 1, startDate: '2026-09-01', endDate: '2026-09-01', nextDueDate: '2026-09-01', autoPost: false, active: true,
+      });
+      await repository.saveRecurringRule({
+        template: { kind: 'expense', title: 'Healthy', note: '', accountId: usd.id, categoryId: null, tagIds: [], amountMinor: 100, currency: 'USD' },
+        unit: 'month', interval: 1, startDate: '2026-09-01', endDate: '2026-09-01', nextDueDate: '2026-09-01', autoPost: false, active: true,
+      });
+      await repository.deleteEntities('exchangeRates', [rate.id]);
 
-    const reloaded = new LocalFinanceRepository(storage);
-    await expect(reloaded.initialize()).resolves.toBeUndefined();
-    expect(reloaded.getSnapshot().transactions.some((item) => item.title === 'Healthy')).toBe(true);
-    expect(reloaded.getSnapshot().transactions.some((item) => item.title === 'Foreign')).toBe(false);
+      jest.setSystemTime(new Date('2026-08-20T09:00:00Z'));
+      const reloaded = new LocalFinanceRepository(storage);
+      await expect(reloaded.initialize()).resolves.toBeUndefined();
+      expect(reloaded.getSnapshot().transactions.some((item) => item.title === 'Healthy')).toBe(true);
+      expect(reloaded.getSnapshot().transactions.some((item) => item.title === 'Foreign')).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('does not drop a transaction saved while recurring generation is persisting', async () => {
@@ -319,14 +327,11 @@ describe('FinanceRepository contract', () => {
     const account = repository.getSnapshot().accounts[0];
     await repository.saveRecurringRule({
       template: { kind: 'expense', title: 'Rent', note: '', accountId: account.id, categoryId: null, tagIds: [], amountMinor: 1000, currency: 'USD' },
-      unit: 'month', interval: 1, startDate: '2026-01-01', endDate: '2026-01-31', nextDueDate: '2026-01-01', autoPost: false, active: true,
+      unit: 'month', interval: 1, startDate: '2099-01-01', endDate: '2099-01-31', nextDueDate: '2099-01-01', autoPost: false, active: true,
     });
-    // Remove the occurrence so the next generation run writes again.
-    const generatedId = repository.getSnapshot().transactions.find((item) => item.title === 'Rent')?.id;
-    if (generatedId) await repository.deleteEntities('transactions', [generatedId]);
 
     storage.pauseNext = true;
-    const generation = repository.generateRecurring('2026-01-31');
+    const generation = repository.generateRecurring('2099-01-31');
     await Promise.resolve();
     await Promise.resolve();
     const concurrentSave = repository.saveTransaction({ kind: 'expense', title: 'Concurrent', localDate: '2026-07-15', accountId: account.id, amountMinor: 500 });
@@ -370,13 +375,12 @@ describe('FinanceRepository contract', () => {
     }
   });
 
-  it('frees archived names for reuse and rejects restoring into a conflict', async () => {
+  it('reserves archived names so CSV lookups and restoration stay unambiguous', async () => {
     const { repository } = await createRepository();
     const original = await repository.saveAccount({ name: 'Savings', type: 'savings', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
     await repository.saveAccount({ name: 'Savings', type: 'savings', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: true }, original.id);
-    const replacement = await repository.saveAccount({ name: 'Savings', type: 'savings', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
-    expect(replacement.id).not.toBe(original.id);
-    await expect(repository.saveAccount({ name: 'Savings', type: 'savings', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false }, original.id)).rejects.toThrow('already in use');
+    await expect(repository.saveAccount({ name: 'Savings', type: 'savings', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false })).rejects.toThrow('already in use');
+    await expect(repository.saveAccount({ ...original, archived: false }, original.id)).resolves.toMatchObject({ archived: false });
   });
 
   it('rejects invalid dates, zero targets, and incompatible batch categories', async () => {
@@ -432,6 +436,7 @@ describe('FinanceRepository contract', () => {
       exchangeRate: String(record.exchange_rate),
       destinationAccount: String(record.destination_account),
       destinationAmount: String(record.destination_amount),
+      destinationBaseAmountMinor: String(record.destination_base_amount_minor),
     } satisfies CsvImportRow));
 
     const { repository: imported } = await createRepository(new MemoryStorageAdapter(), 'de-DE');
@@ -763,5 +768,337 @@ describe('FinanceRepository contract', () => {
     const reloaded = new LocalFinanceRepository(storage);
     await reloaded.initialize();
     expect(reloaded.getSnapshot().categories.map((item) => item.name)).toEqual(initialOrder);
+  });
+
+  it('rejects repeated onboarding without creating duplicate starter data', async () => {
+    const { repository } = await createRepository();
+    const before = repository.getSnapshot();
+    await expect(repository.completeOnboarding({
+      locale: 'en-US',
+      baseCurrency: 'USD',
+      accountName: 'Duplicate',
+      accountType: 'cash',
+      openingBalanceMinor: 0,
+      themeMode: 'system',
+      accentSource: 'system',
+      accentHex: '#5966E9',
+    })).rejects.toThrow('already complete');
+    expect(repository.getSnapshot().accounts).toHaveLength(before.accounts.length);
+    expect(repository.getSnapshot().categories).toHaveLength(before.categories.length);
+  });
+
+  it('keeps a deleted recurring occurrence deleted across regeneration and reload', async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-07-15T09:00:00Z'));
+      const storage = new MemoryStorageAdapter();
+      const { repository } = await createRepository(storage);
+      const account = repository.getSnapshot().accounts[0];
+      const created = await repository.saveRecurringRule({
+        template: { kind: 'expense', title: 'Optional', note: '', accountId: account.id, categoryId: null, tagIds: [], amountMinor: 100, currency: 'USD' },
+        unit: 'month', interval: 1, startDate: '2026-07-20', endDate: null, nextDueDate: '2026-07-20', autoPost: false, active: true,
+      });
+      const occurrence = repository.getSnapshot().transactions.find((item) => item.localDate === '2026-07-20')!;
+      await repository.deleteEntities('transactions', [occurrence.id]);
+      const currentRule = repository.getSnapshot().recurringRules.find((item) => item.id === created.id)!;
+      await repository.saveRecurringRule({ ...currentRule, nextDueDate: '2026-07-20' }, currentRule.id);
+      expect(repository.getSnapshot().transactions.some((item) => item.localDate === '2026-07-20')).toBe(false);
+
+      const reloaded = new LocalFinanceRepository(storage);
+      await reloaded.initialize();
+      expect(reloaded.getSnapshot().transactions.some((item) => item.localDate === '2026-07-20')).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps archived dependencies editable and reactivates schedules after restoration', async () => {
+    const { repository } = await createRepository();
+    const account = await repository.saveAccount({ name: 'Projects', type: 'checking', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
+    const category = repository.getSnapshot().categories.find((item) => item.kind === 'expense')!;
+    const transaction = await repository.saveTransaction({
+      kind: 'expense',
+      title: 'Supplies',
+      localDate: '2026-07-15',
+      accountId: account.id,
+      categoryId: category.id,
+      amountMinor: 500,
+    });
+    const budget = await repository.saveBudget({
+      name: 'Projects',
+      icon: 'chart',
+      color: '#5966E9',
+      limitMinor: 10000,
+      period: { unit: 'month', interval: 1, anchorDate: '2026-07-01', endDate: null },
+      rollover: false,
+      filters: { accountIds: [account.id], categoryIds: [category.id], tagIds: [] },
+      categoryLimits: [{ categoryId: category.id, limitMinor: 5000 }],
+      archived: false,
+    });
+    const goal = await repository.saveGoal({
+      name: 'Project purchase',
+      kind: 'spending',
+      icon: 'target',
+      color: '#5966E9',
+      targetMinor: 10000,
+      initialMinor: 0,
+      targetDate: null,
+      linkedAccountId: account.id,
+      linkedCategoryId: category.id,
+      archived: false,
+    });
+    const rule = await repository.saveRecurringRule({
+      template: { kind: 'expense', title: 'Hosting', note: '', accountId: account.id, categoryId: category.id, tagIds: [], amountMinor: 100, currency: 'USD' },
+      unit: 'month', interval: 1, startDate: '2099-01-01', endDate: null, nextDueDate: '2099-01-01', autoPost: false, active: true,
+    });
+
+    await repository.saveAccount({ ...account, archived: true }, account.id);
+    await repository.saveCategory({ ...category, archived: true }, category.id);
+    expect(repository.getSnapshot().recurringRules.find((item) => item.id === rule.id)?.active).toBe(false);
+    await expect(repository.saveTransaction({
+      kind: transaction.kind,
+      status: transaction.status,
+      title: 'Updated supplies',
+      note: transaction.note,
+      localDate: transaction.localDate,
+      accountId: transaction.accountId,
+      categoryId: transaction.categoryId,
+      amountMinor: transaction.amountMinor,
+    }, transaction.id)).resolves.toMatchObject({ title: 'Updated supplies' });
+    await expect(repository.saveBudget({ ...budget, name: 'Updated projects' }, budget.id)).resolves.toMatchObject({ name: 'Updated projects' });
+    await expect(repository.saveGoal({ ...goal, name: 'Updated purchase' }, goal.id)).resolves.toMatchObject({ name: 'Updated purchase' });
+    await expect(repository.saveRecurringRule({
+      ...repository.getSnapshot().recurringRules.find((item) => item.id === rule.id)!,
+      template: { ...rule.template, title: 'Updated hosting' },
+      active: true,
+    }, rule.id)).resolves.toMatchObject({ active: false });
+
+    await repository.saveAccount({ ...account, archived: false }, account.id);
+    expect(repository.getSnapshot().recurringRules.find((item) => item.id === rule.id)?.active).toBe(false);
+    await repository.saveCategory({ ...category, archived: false }, category.id);
+    expect(repository.getSnapshot().recurringRules.find((item) => item.id === rule.id)?.active).toBe(true);
+  });
+
+  it('updates generated upcoming transactions when a recurring template changes', async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-07-15T09:00:00Z'));
+      const { repository } = await createRepository();
+      const account = repository.getSnapshot().accounts[0];
+      const rule = await repository.saveRecurringRule({
+        template: { kind: 'expense', title: 'Old title', note: '', accountId: account.id, categoryId: null, tagIds: [], amountMinor: 100, currency: 'USD' },
+        unit: 'month', interval: 1, startDate: '2026-07-20', endDate: null, nextDueDate: '2026-07-20', autoPost: false, active: true,
+      });
+      const before = repository.getSnapshot().transactions.find((item) => item.localDate === '2026-07-20')!;
+      const currentRule = repository.getSnapshot().recurringRules.find((item) => item.id === rule.id)!;
+      await repository.saveRecurringRule({
+        ...currentRule,
+        template: { ...currentRule.template, title: 'New title', amountMinor: 250 },
+      }, rule.id);
+      const after = repository.getSnapshot().transactions.find((item) => item.localDate === '2026-07-20')!;
+      expect(after).toMatchObject({ id: before.id, title: 'New title', amountMinor: 250 });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('generates more than 366 missed recurring occurrences in one catch-up', async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2025-01-01T09:00:00Z'));
+      const { repository } = await createRepository();
+      const account = repository.getSnapshot().accounts[0];
+      await repository.saveRecurringRule({
+        template: { kind: 'expense', title: 'Daily', note: '', accountId: account.id, categoryId: null, tagIds: [], amountMinor: 1, currency: 'USD' },
+        unit: 'day', interval: 1, startDate: '2025-01-01', endDate: '2026-06-30', nextDueDate: '2025-01-01', autoPost: false, active: true,
+      });
+      await repository.generateRecurring('2026-06-30');
+      const occurrences = repository.getSnapshot().transactions.filter((item) => item.title === 'Daily');
+      expect(occurrences.length).toBeGreaterThan(366);
+      expect(occurrences.at(-1)?.localDate).toBe('2026-06-30');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('snapshots the destination base value used by cross-currency goal progress', async () => {
+    const { repository } = await createRepository();
+    const eur = await repository.saveAccount({ name: 'Euro', type: 'checking', currency: 'EUR', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
+    const gbp = await repository.saveAccount({ name: 'Pounds', type: 'savings', currency: 'GBP', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
+    await repository.saveExchangeRate({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '2', effectiveDate: '2026-01-01' });
+    const gbpRate = await repository.saveExchangeRate({ fromCurrency: 'GBP', toCurrency: 'USD', rate: '4', effectiveDate: '2026-01-01' });
+    const transfer = await repository.saveTransaction({
+      kind: 'transfer',
+      title: 'Move',
+      localDate: '2026-07-15',
+      accountId: eur.id,
+      destinationAccountId: gbp.id,
+      amountMinor: 10000,
+    });
+    const goal = await repository.saveGoal({
+      name: 'Pounds goal',
+      kind: 'saving',
+      icon: 'target',
+      color: '#5966E9',
+      targetMinor: 100000,
+      initialMinor: 0,
+      targetDate: null,
+      linkedAccountId: gbp.id,
+      linkedCategoryId: null,
+      archived: false,
+    });
+    expect(transfer.destinationBaseAmountMinor).toBe(20000);
+    expect(repository.getGoalProgress(goal.id)).toBe(20000);
+    await repository.saveExchangeRate({ ...gbpRate, rate: '8' }, gbpRate.id);
+    expect(repository.getGoalProgress(goal.id)).toBe(20000);
+    await repository.deleteEntities('exchangeRates', [gbpRate.id]);
+    expect(repository.getGoalProgress(goal.id)).toBe(20000);
+  });
+
+  it('clears transfer-only fields when a transaction becomes non-transfer', async () => {
+    const { repository } = await createRepository();
+    const source = repository.getSnapshot().accounts[0];
+    const destination = await repository.saveAccount({ name: 'Savings', type: 'savings', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
+    const transfer = await repository.saveTransaction({
+      kind: 'transfer',
+      title: 'Move',
+      localDate: '2026-07-15',
+      accountId: source.id,
+      destinationAccountId: destination.id,
+      amountMinor: 1000,
+    });
+    const expense = await repository.saveTransaction({
+      kind: 'expense',
+      title: 'Spent instead',
+      localDate: transfer.localDate,
+      accountId: source.id,
+      destinationAccountId: destination.id,
+      destinationAmountMinor: 1000,
+      amountMinor: transfer.amountMinor,
+    }, transfer.id);
+    expect(expense).toMatchObject({
+      destinationAccountId: null,
+      destinationAmountMinor: null,
+      destinationBaseAmountMinor: null,
+      destinationCurrency: null,
+      transferGroupId: null,
+    });
+  });
+
+  it('saves a goal edit and manual contribution atomically', async () => {
+    class FailingStorage extends MemoryStorageAdapter {
+      fail = false;
+
+      override async putMany(records: Parameters<MemoryStorageAdapter['putMany']>[0]) {
+        if (this.fail) throw new Error('simulated disk failure');
+        await super.putMany(records);
+      }
+    }
+    const storage = new FailingStorage();
+    const { repository } = await createRepository(storage);
+    const goal = await repository.saveGoal({
+      name: 'Original',
+      kind: 'saving',
+      icon: 'target',
+      color: '#5966E9',
+      targetMinor: 10000,
+      initialMinor: 0,
+      targetDate: null,
+      linkedAccountId: null,
+      linkedCategoryId: null,
+      archived: false,
+    });
+    storage.fail = true;
+    await expect(repository.saveGoalAndContribution(
+      { ...goal, name: 'Changed' },
+      { amountMinor: 500, localDate: '2026-07-15', transactionId: null, note: '' },
+      goal.id,
+    )).rejects.toThrow('simulated disk failure');
+    expect(repository.getSnapshot().goals.find((item) => item.id === goal.id)?.name).toBe('Original');
+    expect(repository.getSnapshot().contributions).toHaveLength(0);
+  });
+
+  it('migrates legacy duplicate names to unique values', async () => {
+    const storage = new MemoryStorageAdapter();
+    const { repository } = await createRepository(storage);
+    const account = repository.getSnapshot().accounts[0];
+    await storage.putMany([{
+      type: 'accounts',
+      entity: {
+        ...account,
+        id: 'legacy-duplicate-account',
+        archived: true,
+        revision: 1,
+      },
+    }]);
+    const reloaded = new LocalFinanceRepository(storage);
+    await reloaded.initialize();
+    const normalizedNames = reloaded.getSnapshot().accounts.map((item) => item.name.toLocaleLowerCase());
+    expect(new Set(normalizedNames).size).toBe(normalizedNames.length);
+    expect(reloaded.getSnapshot().accounts.find((item) => item.id === 'legacy-duplicate-account')?.name).toContain('(archived');
+  });
+
+  it('rejects transactions whose account or analytics totals exceed safe integers', async () => {
+    const { repository } = await createRepository();
+    const first = await repository.saveAccount({ name: 'Large one', type: 'checking', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
+    const second = await repository.saveAccount({ name: 'Large two', type: 'checking', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
+    await repository.saveTransaction({
+      kind: 'income',
+      title: 'Large',
+      localDate: '2026-07-15',
+      accountId: first.id,
+      amountMinor: Number.MAX_SAFE_INTEGER - 50,
+    });
+    await expect(repository.saveTransaction({
+      kind: 'income',
+      title: 'Overflow',
+      localDate: '2026-07-15',
+      accountId: second.id,
+      amountMinor: 100,
+    })).rejects.toThrow('outside the supported range');
+    expect(repository.getSnapshot().transactions).toHaveLength(1);
+  });
+
+  it('rejects account changes that would overflow net worth', async () => {
+    const { repository } = await createRepository();
+    await repository.saveAccount({
+      name: 'Almost maximum',
+      type: 'checking',
+      currency: 'USD',
+      openingBalanceMinor: Number.MAX_SAFE_INTEGER - 50,
+      icon: 'wallet',
+      color: '#5966E9',
+      archived: false,
+    });
+    await expect(repository.saveAccount({
+      name: 'Overflowing account',
+      type: 'checking',
+      currency: 'USD',
+      openingBalanceMinor: 100,
+      icon: 'wallet',
+      color: '#5966E9',
+      archived: false,
+    })).rejects.toThrow('Net worth is outside the supported range');
+  });
+
+  it('keeps entity order stable after an edit and reload', async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-07-15T09:00:00Z'));
+      const storage = new MemoryStorageAdapter();
+      const { repository } = await createRepository(storage);
+      const first = await repository.saveTag({ name: 'First', color: '#5966E9' });
+      jest.setSystemTime(new Date('2026-07-15T09:00:01Z'));
+      await repository.saveTag({ name: 'Second', color: '#5966E9' });
+      jest.setSystemTime(new Date('2026-07-15T09:00:02Z'));
+      await repository.saveTag({ name: 'First updated', color: '#5966E9' }, first.id);
+      expect(repository.getSnapshot().tags.map((item) => item.name)).toEqual(['First updated', 'Second']);
+
+      const reloaded = new LocalFinanceRepository(storage);
+      await reloaded.initialize();
+      expect(reloaded.getSnapshot().tags.map((item) => item.name)).toEqual(['First updated', 'Second']);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

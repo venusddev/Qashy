@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
 
@@ -81,6 +81,8 @@ export function AccountFormScreen() {
       setBusy(false);
     }
   };
+
+  if (id && !existing) return <Redirect href="/more" />;
 
   return (
     <FormScreen contentContainerStyle={{ gap: 16 }}>

@@ -34,6 +34,7 @@ export type TagInput = Omit<Tag, 'id' | 'revision' | 'createdAt' | 'updatedAt' |
 export type BudgetInput = Omit<Budget, 'id' | 'revision' | 'createdAt' | 'updatedAt' | 'deletedAt'>;
 export type GoalInput = Omit<Goal, 'id' | 'revision' | 'createdAt' | 'updatedAt' | 'deletedAt'>;
 export type ContributionInput = Omit<GoalContribution, 'id' | 'revision' | 'createdAt' | 'updatedAt' | 'deletedAt'>;
+export type GoalContributionInput = Omit<ContributionInput, 'goalId'>;
 export type RecurringInput = Omit<RecurringRule, 'id' | 'revision' | 'createdAt' | 'updatedAt' | 'deletedAt'>;
 export type RateInput = Omit<ExchangeRate, 'id' | 'revision' | 'createdAt' | 'updatedAt' | 'deletedAt'>;
 
@@ -49,6 +50,7 @@ export interface TransactionInput {
   tagIds?: string[];
   amountMinor: number;
   destinationAmountMinor?: number | null;
+  destinationBaseAmountMinor?: number | null;
   exchangeRate?: string;
   recurringRuleId?: string | null;
   occurrenceKey?: string | null;
@@ -66,6 +68,7 @@ export interface FinanceRepository {
   saveTransaction(input: TransactionInput, id?: string): Promise<TransactionRecord>;
   saveBudget(input: BudgetInput, id?: string): Promise<Budget>;
   saveGoal(input: GoalInput, id?: string): Promise<Goal>;
+  saveGoalAndContribution(input: GoalInput, contribution?: GoalContributionInput, id?: string): Promise<Goal>;
   saveContribution(input: ContributionInput, id?: string): Promise<GoalContribution>;
   saveRecurringRule(input: RecurringInput, id?: string): Promise<RecurringRule>;
   saveExchangeRate(input: RateInput, id?: string): Promise<ExchangeRate>;

@@ -36,4 +36,13 @@ describe('CSV utilities', () => {
     expect(rows[0].title).toBe('  padded  ');
     expect(rows[1].title).toBe('loose');
   });
+
+  it('rejects unclosed quoted fields', () => {
+    expect(() => parseCsvText('date,title\n2026-07-01,"unclosed')).toThrow('Unclosed quoted CSV field');
+  });
+
+  it('rejects quotes inside unquoted fields and trailing text after a closing quote', () => {
+    expect(() => parseCsvText('date,title\n2026-07-01,bad"quote')).toThrow('Malformed CSV quote');
+    expect(() => parseCsvText('date,title\n2026-07-01,"closed"tail')).toThrow('Malformed CSV quote');
+  });
 });

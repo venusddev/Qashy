@@ -16,6 +16,16 @@ test('onboarding shell is responsive and branded', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible();
 });
 
+test('guards onboarding and stale edit routes', async ({ page }) => {
+  await page.goto('/overview');
+  await expect(page).toHaveURL(/\/onboarding$/);
+  await completeOnboarding(page);
+  await page.goto('/onboarding');
+  await expect(page).toHaveURL(/\/overview$/);
+  await page.goto('/transaction?id=missing');
+  await expect(page).toHaveURL(/\/transactions$/);
+});
+
 test('exposes an installable web manifest', async ({ page }) => {
   const response = await page.request.get('/manifest.json');
   expect(response.ok()).toBeTruthy();
@@ -76,6 +86,23 @@ test('can leave an invalid custom accent by returning to the default source', as
   await expect(save).toBeEnabled();
   await save.click();
   await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible();
+});
+
+test('clears batch selection when the transaction search changes', async ({ page }) => {
+  await completeOnboarding(page);
+  await page.getByLabel('Add transaction').first().click();
+  await page.getByLabel('Amount (USD)').fill('12.50');
+  await page.getByLabel('Title').fill('Coffee');
+  await page.getByRole('button', { name: 'Add transaction' }).click();
+  await page.getByRole('link', { name: /Transactions/ }).click();
+  await page.getByRole('button', { name: 'Select' }).click();
+  await page.getByRole('checkbox', { name: /Coffee/ }).click();
+  await expect(page.getByText('1 selected')).toBeVisible();
+
+  await page.getByLabel('Search transactions').fill('no match');
+  await expect(page.getByText('0 selected')).toBeVisible();
+  await page.getByLabel('Search transactions').fill('');
+  await expect(page.getByRole('checkbox', { name: /Coffee/ })).not.toBeChecked();
 });
 
 test('registers the service worker and starts offline', async ({ page, context }) => {

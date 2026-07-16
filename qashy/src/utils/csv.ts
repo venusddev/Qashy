@@ -18,6 +18,8 @@ const HEADER_ALIASES: Record<string, string> = {
   destinationaccount: 'destinationAccount',
   destinationamount: 'destinationAmount',
   destination_amount: 'destinationAmount',
+  destination_base_amount_minor: 'destinationBaseAmountMinor',
+  destinationbaseamountminor: 'destinationBaseAmountMinor',
 };
 
 export function unescapeCsvFormula(value: string) {
@@ -42,6 +44,7 @@ export function parseCsvTable(input: string) {
   let field = '';
   let fieldQuoted = false;
   let quoted = false;
+  let quoteClosed = false;
   let line = 1;
   let rowLine = 1;
 
@@ -50,6 +53,7 @@ export function parseCsvTable(input: string) {
     quotedCells.push(fieldQuoted);
     field = '';
     fieldQuoted = false;
+    quoteClosed = false;
   };
   const endRow = () => {
     endField();
@@ -63,9 +67,15 @@ export function parseCsvTable(input: string) {
     if (character === '"' && quoted && input[index + 1] === '"') {
       field += '"';
       index += 1;
-    } else if (character === '"') {
-      quoted = !quoted;
+    } else if (character === '"' && quoted) {
+      quoted = false;
+      quoteClosed = true;
       fieldQuoted = true;
+    } else if (character === '"' && !quoted && !field.length && !quoteClosed) {
+      quoted = true;
+      fieldQuoted = true;
+    } else if (character === '"') {
+      throw new Error(`Malformed CSV quote on line ${line}.`);
     } else if (character === ',' && !quoted) {
       endField();
     } else if ((character === '\n' || character === '\r') && !quoted) {
@@ -74,10 +84,14 @@ export function parseCsvTable(input: string) {
       line += 1;
       rowLine = line;
     } else {
+      if (quoteClosed && !/\s/.test(character)) {
+        throw new Error(`Malformed CSV quote on line ${line}.`);
+      }
       if (character === '\n') line += 1;
-      field += character;
+      if (!quoteClosed) field += character;
     }
   }
+  if (quoted) throw new Error(`Unclosed quoted CSV field starting on line ${rowLine}.`);
   endRow();
 
   if (!rows.length) return { headers: [], rows: [] as Record<string, string | number>[] };

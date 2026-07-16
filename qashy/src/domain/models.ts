@@ -68,6 +68,7 @@ export interface TransactionRecord extends SyncEntity {
   tagIds: string[];
   amountMinor: number;
   destinationAmountMinor: number | null;
+  destinationBaseAmountMinor: number | null;
   currency: CurrencyCode;
   destinationCurrency: CurrencyCode | null;
   exchangeRate: string;
@@ -235,6 +236,7 @@ export interface CsvImportRow {
   exchangeRate: string;
   destinationAccount: string;
   destinationAmount: string;
+  destinationBaseAmountMinor?: string;
   status?: TransactionStatus;
 }
 

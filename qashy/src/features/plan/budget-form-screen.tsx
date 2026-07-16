@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { Switch, View } from 'react-native';
 
@@ -31,7 +31,10 @@ export function BudgetFormScreen() {
   const [selectedCategories, setSelectedCategories] = useState<string[]>(existing?.filters.categoryIds ?? []);
   const [categoryLimits, setCategoryLimits] = useState<Record<string, string>>(() => Object.fromEntries(existing?.categoryLimits.map((item) => [item.categoryId, toMoneyText(item.limitMinor)]) ?? []));
   const [saving, setSaving] = useState(false);
-  const expenseCategories = state.categories.filter((item) => item.kind === 'expense' && !item.archived);
+  const expenseCategories = state.categories.filter((item) =>
+    item.kind === 'expense' &&
+    (!item.archived || selectedCategories.includes(item.id)),
+  );
   const anchorDate = existing?.period.anchorDate ?? todayLocal();
   const limitError = validateMoneyInput(limit, state.settings.baseCurrency, state.settings.locale, {
     label: 'Total limit',
@@ -68,7 +71,11 @@ export function BudgetFormScreen() {
         limitMinor: parseMoney(limit, state.settings.baseCurrency, state.settings.locale),
         period: { unit, interval: 1, anchorDate, endDate: unit === 'custom' ? endDate : null },
         rollover,
-        filters: { accountIds: [], categoryIds: selectedCategories, tagIds: [] },
+        filters: {
+          accountIds: existing?.filters.accountIds ?? [],
+          categoryIds: selectedCategories,
+          tagIds: existing?.filters.tagIds ?? [],
+        },
         categoryLimits: selectedCategories
           .filter((categoryId) => categoryLimits[categoryId]?.trim())
           .map((categoryId) => ({ categoryId, limitMinor: parseMoney(categoryLimits[categoryId], state.settings.baseCurrency, state.settings.locale) })),
@@ -96,6 +103,8 @@ export function BudgetFormScreen() {
     }
   };
 
+  if (id && !existing) return <Redirect href="/plan" />;
+
   return (
     <FormScreen contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 16 }}>
@@ -116,7 +125,7 @@ export function BudgetFormScreen() {
         <AppText variant="headline">Categories and caps</AppText>
         <AppText muted>Leave every category unselected to count all expenses.</AppText>
         <View accessibilityLabel="Included categories" role="group" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-          {expenseCategories.map((category) => <ChoiceChip mode="checkbox" key={category.id} label={category.name} selected={selectedCategories.includes(category.id)} onPress={() => toggleCategory(category.id)} />)}
+          {expenseCategories.map((category) => <ChoiceChip mode="checkbox" key={category.id} label={`${category.name}${category.archived ? ' (archived)' : ''}`} selected={selectedCategories.includes(category.id)} onPress={() => toggleCategory(category.id)} />)}
         </View>
         {selectedCategories.map((categoryId) => {
           const category = expenseCategories.find((item) => item.id === categoryId);

@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
 
@@ -47,12 +47,19 @@ export function GoalFormScreen() {
     positive: true,
   });
   const canSave = !targetError && !initialError && !targetDateError && !contributionError;
+  const accountChoices = state.accounts.filter((item) =>
+    !item.archived || item.id === linkedAccountId,
+  );
+  const categoryChoices = state.categories.filter((item) =>
+    item.kind === (kind === 'saving' ? 'income' : 'expense') &&
+    (!item.archived || item.id === linkedCategoryId),
+  );
 
   const save = async () => {
     if (saving || !canSave) return;
     setSaving(true);
     try {
-      const goal = await repository.saveGoal({
+      await repository.saveGoalAndContribution({
         name: name.trim() || 'Goal',
         kind,
         icon: 'target',
@@ -63,10 +70,14 @@ export function GoalFormScreen() {
         linkedAccountId: linkedAccountId || null,
         linkedCategoryId: linkedCategoryId || null,
         archived: false,
-      }, existing?.id);
-      if (contribution.trim()) {
-        await repository.saveContribution({ goalId: goal.id, amountMinor: parseMoney(contribution, state.settings.baseCurrency, state.settings.locale), localDate: todayLocal(), transactionId: null, note: 'Manual contribution' });
-      }
+      }, contribution.trim()
+        ? {
+          amountMinor: parseMoney(contribution, state.settings.baseCurrency, state.settings.locale),
+          localDate: todayLocal(),
+          transactionId: null,
+          note: 'Manual contribution',
+        }
+        : undefined, existing?.id);
       router.dismissTo('/plan');
     } catch (reason) {
       showError('Couldn’t save goal', errorMessage(reason, 'Try again.'));
@@ -89,6 +100,8 @@ export function GoalFormScreen() {
     }
   };
 
+  if (id && !existing) return <Redirect href="/plan" />;
+
   return (
     <FormScreen contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 16 }}>
@@ -105,9 +118,9 @@ export function GoalFormScreen() {
         <AppText variant="headline">Automatic progress</AppText>
         <AppText muted>Optionally count matching posted transactions. You can still add progress manually.</AppText>
         <AppText variant="label">Linked account</AppText>
-        <View accessibilityLabel="Linked account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!linkedAccountId} onPress={() => setLinkedAccountId('')} />{state.accounts.filter((item) => !item.archived).map((item) => <ChoiceChip key={item.id} label={item.name} selected={linkedAccountId === item.id} onPress={() => setLinkedAccountId(item.id)} />)}</View>
+        <View accessibilityLabel="Linked account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!linkedAccountId} onPress={() => setLinkedAccountId('')} />{accountChoices.map((item) => <ChoiceChip key={item.id} label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={linkedAccountId === item.id} onPress={() => setLinkedAccountId(item.id)} />)}</View>
         <AppText variant="label">Linked category</AppText>
-        <View accessibilityLabel="Linked category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!linkedCategoryId} onPress={() => setLinkedCategoryId('')} />{state.categories.filter((item) => item.kind === (kind === 'saving' ? 'income' : 'expense') && !item.archived).map((item) => <ChoiceChip key={item.id} label={item.name} selected={linkedCategoryId === item.id} onPress={() => setLinkedCategoryId(item.id)} />)}</View>
+        <View accessibilityLabel="Linked category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!linkedCategoryId} onPress={() => setLinkedCategoryId('')} />{categoryChoices.map((item) => <ChoiceChip key={item.id} label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={linkedCategoryId === item.id} onPress={() => setLinkedCategoryId(item.id)} />)}</View>
       </Card>
 
       {existing ? <Card><FormField label="Add a manual contribution" value={contribution} onChangeText={setContribution} keyboardType="decimal-pad" placeholder="0" error={contributionError} /></Card> : null}

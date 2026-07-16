@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { Switch, View } from 'react-native';
 
@@ -40,7 +40,13 @@ export function RecurringFormScreen() {
   const [autoPost, setAutoPost] = useState(existing?.autoPost ?? false);
   const [busy, setBusy] = useState(false);
   const account = state.accounts.find((item) => item.id === accountId) ?? initialAccount;
-  const categories = state.categories.filter((item) => item.kind === kind && !item.archived);
+  const accountChoices = state.accounts.filter((item) => !item.archived || item.id === accountId);
+  const categories = state.categories.filter((item) =>
+    item.kind === kind && (!item.archived || item.id === categoryId),
+  );
+  const referencesArchivedEntity = Boolean(
+    account?.archived || categories.find((item) => item.id === categoryId)?.archived,
+  );
   const amountError = account
     ? validateMoneyInput(amount, account.currency, state.settings.locale, { label: 'Amount', positive: true })
     : 'Choose an account before entering an amount.';
@@ -68,7 +74,6 @@ export function RecurringFormScreen() {
         autoPost,
         active: true,
       }, existing?.id);
-      await repository.generateRecurring();
       router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t save schedule', errorMessage(reason, 'Try again.'));
@@ -91,6 +96,8 @@ export function RecurringFormScreen() {
     }
   };
 
+  if (params.id && !existing) return <Redirect href="/more" />;
+
   return (
     <FormScreen contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 16 }}>
@@ -98,9 +105,10 @@ export function RecurringFormScreen() {
         <FormField label="Title" value={title} onChangeText={setTitle} placeholder="Rent, salary, subscription…" />
         <FormField label={`Amount (${account?.currency ?? state.settings.baseCurrency})`} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" error={amountError} required />
         <AppText variant="label">Account</AppText>
-        <View accessibilityLabel="Recurring account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{state.accounts.filter((item) => !item.archived).map((item) => <ChoiceChip key={item.id} label={item.name} selected={accountId === item.id} onPress={() => setAccountId(item.id)} />)}</View>
+        <View accessibilityLabel="Recurring account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{accountChoices.map((item) => <ChoiceChip key={item.id} label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={accountId === item.id} onPress={() => setAccountId(item.id)} />)}</View>
         <AppText variant="label">Category</AppText>
-        <View accessibilityLabel="Recurring category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{categories.map((item) => <ChoiceChip key={item.id} label={item.name} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}</View>
+        <View accessibilityLabel="Recurring category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{categories.map((item) => <ChoiceChip key={item.id} label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}</View>
+        {referencesArchivedEntity ? <AppText variant="caption" muted>This schedule stays paused until its archived account and category are restored.</AppText> : null}
       </Card>
 
       <Card style={{ gap: 16 }}>

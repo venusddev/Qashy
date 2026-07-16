@@ -34,6 +34,7 @@ const CSV_FIELDS: { key: CsvField; label: string; optional?: boolean; aliases: s
   { key: 'exchangeRate', label: 'Exchange rate', optional: true, aliases: ['exchange_rate', 'exchangerate'] },
   { key: 'destinationAccount', label: 'Destination account', optional: true, aliases: ['destination_account', 'to_account'] },
   { key: 'destinationAmount', label: 'Destination amount', optional: true, aliases: ['destination_amount', 'to_amount'] },
+  { key: 'destinationBaseAmountMinor', label: 'Destination base amount (minor units)', optional: true, aliases: ['destination_base_amount_minor', 'destinationbaseamountminor'] },
 ];
 
 function inferMapping(headers: string[]) {
@@ -102,6 +103,7 @@ export function CsvScreen() {
       exchangeRate: value(record, 'exchangeRate'),
       destinationAccount: value(record, 'destinationAccount'),
       destinationAmount: value(record, 'destinationAmount'),
+      destinationBaseAmountMinor: value(record, 'destinationBaseAmountMinor'),
     }));
     setRows(parsed);
     setPreview(await repository.importCsv(parsed, false));

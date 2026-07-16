@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { View } from 'react-native';
 
@@ -55,7 +55,12 @@ export function TransactionFormScreen() {
   const [busy, setBusy] = useState(false);
   const account = state.accounts.find((item) => item.id === accountId) ?? defaultAccount;
   const destinationAccount = state.accounts.find((item) => item.id === destinationAccountId);
-  const categories = useMemo(() => state.categories.filter((item) => !item.archived && item.kind === (kind === 'income' ? 'income' : 'expense')), [state.categories, kind]);
+  const categories = useMemo(() => {
+    const expectedKind = kind === 'income' ? 'income' : 'expense';
+    const active = state.categories.filter((item) => !item.archived && item.kind === expectedKind);
+    const current = state.categories.find((item) => item.id === categoryId);
+    return current && current.archived && current.kind === expectedKind ? [current, ...active] : active;
+  }, [state.categories, kind, categoryId]);
   const needsRate = account && account.currency !== state.settings.baseCurrency;
   const destinationChoices = useMemo(() => {
     const active = state.accounts.filter((item) => !item.archived && item.id !== accountId);
@@ -144,6 +149,10 @@ export function TransactionFormScreen() {
     }
   };
 
+  if (id && !existing) {
+    return <Redirect href={returnTo === '/overview' ? '/overview' : '/transactions'} />;
+  }
+
   return (
     <FormScreen>
       <View accessibilityLabel="Transaction kind" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>
@@ -210,7 +219,7 @@ export function TransactionFormScreen() {
           <>
             <AppText variant="label">Category</AppText>
             <View accessibilityLabel="Category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              {categories.map((item) => <ChoiceChip key={item.id} label={item.name} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}
+              {categories.map((item) => <ChoiceChip key={item.id} label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}
             </View>
           </>
         )}

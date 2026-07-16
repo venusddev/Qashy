@@ -5,7 +5,7 @@ module.exports = {
   swDest: 'dist/sw.js',
   navigateFallback: '/index.html',
   cleanupOutdatedCaches: true,
-  clientsClaim: false,
+  clientsClaim: true,
   skipWaiting: false,
   maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
   runtimeCaching: [],

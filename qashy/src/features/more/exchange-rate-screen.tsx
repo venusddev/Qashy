@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 
 import { ActionButton } from '@/components/ui/action-button';
@@ -66,6 +66,8 @@ export function ExchangeRateScreen() {
       setSaving(false);
     }
   };
+  if (id && !existing) return <Redirect href="/more" />;
+
   return (
     <FormScreen maxWidth={620} contentContainerStyle={{ gap: 16 }}>
       <Card style={{ gap: 16 }}>

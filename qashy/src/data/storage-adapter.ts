@@ -6,8 +6,8 @@ export interface StoredEntity {
 }
 
 export function compareStoredEntities(first: FinanceEntity, second: FinanceEntity) {
-  const updatedOrder = first.updatedAt.localeCompare(second.updatedAt);
-  if (updatedOrder) return updatedOrder;
+  const createdOrder = first.createdAt.localeCompare(second.createdAt);
+  if (createdOrder) return createdOrder;
   const firstName = 'name' in first && typeof first.name === 'string'
     ? first.name.trim().toLowerCase()
     : '';

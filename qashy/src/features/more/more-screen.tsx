@@ -33,7 +33,7 @@ export function MoreScreen() {
   const activeAccounts = state.accounts.filter((item) => !item.archived);
   const archivedAccounts = state.accounts.filter((item) => item.archived);
   const archivedCategories = state.categories.filter((item) => item.archived);
-  const recurring = state.recurringRules.filter((item) => item.active);
+  const recurring = state.recurringRules;
   const [restoringId, setRestoringId] = useState<string | null>(null);
 
   const restore = async (entity: 'account' | 'category', id: string) => {
@@ -77,7 +77,14 @@ export function MoreScreen() {
           <View style={{ flex: 1, width: '100%', gap: 14 }}>
             <SectionHeader title="Automation" action="New recurring" onAction={() => router.push('/recurring')} />
             <Card style={{ paddingVertical: 8 }}>
-              {recurring.length ? recurring.map((rule) => <SettingsRow key={rule.id} title={rule.template.title} subtitle={`${rule.unit === 'month' ? 'Monthly' : rule.unit} · next ${rule.nextDueDate}`} value={formatMoney(rule.template.amountMinor, rule.template.currency, state.settings.locale)} icon="repeat" onPress={() => router.push({ pathname: '/recurring', params: { id: rule.id } })} />) : <View style={{ padding: 16 }}><AppText muted>Subscriptions and scheduled income will appear here.</AppText></View>}
+              {recurring.length ? recurring.map((rule) => {
+                const ended = Boolean(rule.endDate && rule.nextDueDate > rule.endDate);
+                const status = ended ? 'Ended' : rule.active ? `Next ${rule.nextDueDate}` : 'Paused';
+                const frequency = rule.unit === 'month'
+                  ? 'Monthly'
+                  : `${rule.unit[0].toUpperCase()}${rule.unit.slice(1)}`;
+                return <SettingsRow key={rule.id} title={rule.template.title} subtitle={`${frequency} · ${status}`} value={formatMoney(rule.template.amountMinor, rule.template.currency, state.settings.locale)} icon="repeat" onPress={() => router.push({ pathname: '/recurring', params: { id: rule.id } })} />;
+              }) : <View style={{ padding: 16 }}><AppText muted>Subscriptions and scheduled income will appear here.</AppText></View>}
             </Card>
 
             <SectionHeader title="Exchange rates" action="Add rate" onAction={() => router.push('/exchange-rate')} />

@@ -210,3 +210,22 @@ export function minorToLocalizedDecimalString(
 export function isSafeMinor(value: number) {
   return Number.isSafeInteger(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER;
 }
+
+export function addMinor(first: number, second: number, label = 'Amount') {
+  if (!isSafeMinor(first) || !isSafeMinor(second)) {
+    throw new Error(`${label} is outside the supported range.`);
+  }
+  const result = first + second;
+  if (!isSafeMinor(result)) throw new Error(`${label} is outside the supported range.`);
+  return result;
+}
+
+export function subtractMinor(first: number, second: number, label = 'Amount') {
+  return addMinor(first, -second, label);
+}
+
+export function sumMinor(values: Iterable<number>, label = 'Amount') {
+  let total = 0;
+  for (const value of values) total = addMinor(total, value, label);
+  return total;
+}
