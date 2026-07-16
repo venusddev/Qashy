@@ -14,7 +14,7 @@ import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
 import { validateDateInput, validateMoneyInput } from '@/utils/form-validation';
-import { minorToDecimalString, parseMoney } from '@/utils/money';
+import { minorToLocalizedDecimalString, parseMoney } from '@/utils/money';
 
 export function BudgetFormScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -22,7 +22,7 @@ export function BudgetFormScreen() {
   const state = useFinanceState();
   const theme = useQashyTheme();
   const existing = id ? state.budgets.find((item) => item.id === id) : undefined;
-  const toMoneyText = (minor: number) => minorToDecimalString(minor, state.settings.baseCurrency, state.settings.locale);
+  const toMoneyText = (minor: number) => minorToLocalizedDecimalString(minor, state.settings.baseCurrency, state.settings.locale);
   const [name, setName] = useState(existing?.name ?? 'Everyday spending');
   const [limit, setLimit] = useState(existing ? toMoneyText(existing.limitMinor) : '1000');
   const [unit, setUnit] = useState<PeriodUnit>(existing?.period.unit ?? 'month');
@@ -108,7 +108,7 @@ export function BudgetFormScreen() {
         {unit === 'custom' ? <FormField label="End date" value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD" error={endDateError} required /> : null}
         <View style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
           <View style={{ flex: 1, gap: 2 }}><AppText variant="label">Rollover</AppText><AppText variant="caption" muted>Carry both surplus and overspend forward.</AppText></View>
-          <Switch value={rollover} onValueChange={setRollover} trackColor={{ true: theme.staticAccent }} />
+          <Switch value={rollover} onValueChange={setRollover} trackColor={{ true: theme.accent }} />
         </View>
       </Card>
 

@@ -13,6 +13,10 @@ import {
   validateDateInput,
   validatePositiveDecimal,
 } from '@/utils/form-validation';
+import {
+  localizeDecimalString,
+  normalizeDecimalString,
+} from '@/utils/money';
 
 export function ExchangeRateScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -20,21 +24,28 @@ export function ExchangeRateScreen() {
   const state = useFinanceState();
   const existing = id ? state.exchangeRates.find((item) => item.id === id) : undefined;
   const [fromCurrency, setFromCurrency] = useState(existing?.fromCurrency ?? 'EUR');
-  const [rate, setRate] = useState(existing?.rate ?? '1');
+  const [rate, setRate] = useState(() => existing?.rate
+    ? localizeDecimalString(existing.rate, state.settings.locale)
+    : '1');
   const [effectiveDate, setEffectiveDate] = useState(existing?.effectiveDate ?? todayLocal());
   const [saving, setSaving] = useState(false);
   const currencyError = validateCurrencyCode(fromCurrency, state.settings.locale)
     ?? (fromCurrency.toUpperCase() === state.settings.baseCurrency
       ? `Choose a currency other than ${state.settings.baseCurrency}.`
       : undefined);
-  const rateError = validatePositiveDecimal(rate, 'Exchange rate');
+  const rateError = validatePositiveDecimal(rate, 'Exchange rate', false, state.settings.locale);
   const dateError = validateDateInput(effectiveDate, { label: 'Effective date' });
   const canSave = !currencyError && !rateError && !dateError;
   const save = async () => {
     if (saving || !canSave) return;
     setSaving(true);
     try {
-      await repository.saveExchangeRate({ fromCurrency: fromCurrency.toUpperCase(), toCurrency: state.settings.baseCurrency, rate, effectiveDate }, existing?.id);
+      await repository.saveExchangeRate({
+        fromCurrency: fromCurrency.toUpperCase(),
+        toCurrency: state.settings.baseCurrency,
+        rate: normalizeDecimalString(rate, state.settings.locale),
+        effectiveDate,
+      }, existing?.id);
       router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t save rate', errorMessage(reason, 'Check the form and try again.'));

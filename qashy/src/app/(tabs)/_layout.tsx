@@ -5,7 +5,7 @@ import { useQashyTheme } from '@/theme/theme';
 export default function TabsLayout() {
   const theme = useQashyTheme();
   return (
-    <NativeTabs tintColor={theme.staticAccent} minimizeBehavior="onScrollDown">
+    <NativeTabs tintColor={theme.accent} minimizeBehavior="onScrollDown">
       <NativeTabs.Trigger name="overview">
         <NativeTabs.Trigger.Label>Overview</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf={{ default: 'house', selected: 'house.fill' }} md="home" />

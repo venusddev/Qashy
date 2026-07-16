@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
+import { MotionView } from '@/components/ui/motion';
 import { useQashyTheme } from '@/theme/theme';
 
 const NAV_ITEMS = [
@@ -55,10 +56,27 @@ function NavigationItem({
           alignItems: 'center',
           justifyContent: mobile ? 'center' : 'flex-start',
           gap: mobile ? 3 : 10,
-          backgroundColor: active ? theme.accentContainer : 'transparent',
+          backgroundColor: 'transparent',
           position: 'relative',
           zIndex: showTooltip ? 20 : undefined,
         }}>
+        {active ? (
+          <MotionView
+            variant="fade"
+            exit
+            animateLayout
+            style={{
+              position: 'absolute',
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: 0,
+              borderRadius: 16,
+              borderCurve: 'continuous',
+              backgroundColor: theme.accentContainer,
+            }}
+          />
+        ) : null}
         <AppIcon name={item.icon} color={foreground} size={mobile ? 22 : 20} />
         {mobile || !compact ? (
           <AppText selectable={false} variant="label" numberOfLines={1} style={{ color: foreground, fontSize: mobile ? 11 : 15 }}>
@@ -66,7 +84,9 @@ function NavigationItem({
           </AppText>
         ) : null}
         {compact && !mobile && showTooltip ? (
-          <View
+          <MotionView
+            variant="right"
+            exit
             pointerEvents="none"
             role="tooltip"
             style={{
@@ -83,7 +103,7 @@ function NavigationItem({
               boxShadow: '0 4px 14px rgba(25,27,32,0.16)',
             }}>
             <AppText selectable={false} variant="caption" numberOfLines={1}>{item.label}</AppText>
-          </View>
+          </MotionView>
         ) : null}
       </Pressable>
     </Link>

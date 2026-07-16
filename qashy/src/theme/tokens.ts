@@ -80,8 +80,8 @@ export function contrastRatio(first: string, second: string) {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-export function readableTextColor(hex: string): '#FFFFFF' | '#1A1C22' {
-  return contrastRatio('#FFFFFF', hex) >= contrastRatio('#1A1C22', hex) ? '#FFFFFF' : '#1A1C22';
+export function readableTextColor(hex: string): '#FFFFFF' | '#000000' {
+  return contrastRatio('#FFFFFF', hex) >= contrastRatio('#000000', hex) ? '#FFFFFF' : '#000000';
 }
 
 export function mixHex(from: string, to: string, weight: number) {

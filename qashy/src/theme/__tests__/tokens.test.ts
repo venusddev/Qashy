@@ -1,7 +1,10 @@
 import {
+  ACCENT_PRESETS,
   accessibleAccentColor,
   contrastRatio,
+  darkTokens,
   ensureContrast,
+  lightTokens,
   readableTextColor,
 } from '@/theme/tokens';
 
@@ -22,5 +25,15 @@ describe('theme contrast', () => {
     const foreground = ensureContrast('#E7892C', '#FFF4E9', '#191B20');
     expect(contrastRatio(foreground, '#FFF4E9')).toBeGreaterThanOrEqual(4.5);
     expect(foreground).not.toBe('#191B20');
+  });
+
+  it.each([
+    ['light', lightTokens],
+    ['dark', darkTokens],
+  ] as const)('keeps every curated accent label AA-readable in %s mode', (_mode, tokens) => {
+    ACCENT_PRESETS.forEach((preset) => {
+      const accent = accessibleAccentColor(preset, tokens.surface, tokens.text);
+      expect(contrastRatio(readableTextColor(accent), accent)).toBeGreaterThanOrEqual(4.5);
+    });
   });
 });

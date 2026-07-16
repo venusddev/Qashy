@@ -14,7 +14,7 @@ import { useFinanceRepository, useFinanceState } from '@/providers/finance-provi
 import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { validateCurrencyCode, validateMoneyInput } from '@/utils/form-validation';
-import { minorToDecimalString, parseMoney } from '@/utils/money';
+import { minorToLocalizedDecimalString, parseMoney } from '@/utils/money';
 
 const COLORS = ['#5966E9', '#007AFF', '#00A58E', '#36A852', '#E7892C', '#E0516B', '#A95BCD'];
 
@@ -27,7 +27,7 @@ export function AccountFormScreen() {
   const [name, setName] = useState(existing?.name ?? '');
   const [type, setType] = useState<AccountType>(existing?.type ?? 'checking');
   const [currency, setCurrency] = useState(existing?.currency ?? state.settings.baseCurrency);
-  const [opening, setOpening] = useState(existing ? minorToDecimalString(existing.openingBalanceMinor, existing.currency, state.settings.locale) : '0');
+  const [opening, setOpening] = useState(existing ? minorToLocalizedDecimalString(existing.openingBalanceMinor, existing.currency, state.settings.locale) : '0');
   const [openingTouched, setOpeningTouched] = useState(false);
   const [color, setColor] = useState(existing?.color ?? theme.staticAccent);
   const [busy, setBusy] = useState(false);
@@ -47,7 +47,7 @@ export function AccountFormScreen() {
     // instead of being silently reinterpreted under the new currency's digits.
     if (existing && !openingTouched && /^[A-Za-z]{3}$/.test(value)) {
       try {
-        setOpening(minorToDecimalString(existing.openingBalanceMinor, value.toUpperCase(), state.settings.locale));
+        setOpening(minorToLocalizedDecimalString(existing.openingBalanceMinor, value.toUpperCase(), state.settings.locale));
       } catch {
         // Unknown currency code while typing; leave the field as-is.
       }

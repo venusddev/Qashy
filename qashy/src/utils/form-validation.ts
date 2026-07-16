@@ -1,17 +1,17 @@
 import { Decimal } from 'decimal.js';
 
 import { isLocalDate } from '@/utils/date';
-import { currencyDigits, parseMoney } from '@/utils/money';
+import {
+  isSupportedCurrencyCode,
+  normalizeDecimalString,
+  parseMoney,
+} from '@/utils/money';
 
 export function validateCurrencyCode(value: string, locale: string) {
   const currency = value.trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) return 'Use a three-letter currency code such as USD.';
-  try {
-    currencyDigits(currency, locale);
-    return undefined;
-  } catch {
-    return 'Use a currency supported by this device.';
-  }
+  void locale;
+  return isSupportedCurrencyCode(currency) ? undefined : 'Use a supported ISO 4217 currency code.';
 }
 
 export function validateMoneyInput(
@@ -46,10 +46,15 @@ export function validateDateInput(
   return isLocalDate(value) ? undefined : `Use a real ${label.toLocaleLowerCase()} in YYYY-MM-DD format.`;
 }
 
-export function validatePositiveDecimal(value: string, label = 'Value', optional = false) {
+export function validatePositiveDecimal(
+  value: string,
+  label = 'Value',
+  optional = false,
+  locale = 'en-US',
+) {
   if (!value.trim()) return optional ? undefined : `${label} is required.`;
   try {
-    const decimal = new Decimal(value.trim());
+    const decimal = new Decimal(normalizeDecimalString(value, locale));
     return decimal.isFinite() && decimal.isPositive()
       ? undefined
       : `${label} must be greater than zero.`;

@@ -1,4 +1,4 @@
-import { addRecurrence } from '@/utils/date';
+import { addRecurrence, firstRecurrenceOnOrAfter } from '@/utils/date';
 import { resolvePeriod } from '@/utils/period';
 
 describe('calendar behavior', () => {
@@ -11,6 +11,16 @@ describe('calendar behavior', () => {
     const february = addRecurrence('2026-01-30', 'month', 1, '2026-01-30');
     expect(february).toBe('2026-02-28');
     expect(addRecurrence(february, 'month', 1, '2026-01-30')).toBe('2026-03-30');
+  });
+
+  it('does not infer month-end from February 28 or a 30-day month', () => {
+    expect(addRecurrence('2026-02-28', 'month', 1)).toBe('2026-03-28');
+    expect(addRecurrence('2026-04-30', 'month', 1)).toBe('2026-05-30');
+  });
+
+  it('finds the first aligned recurrence at or after a lower bound', () => {
+    expect(firstRecurrenceOnOrAfter('2026-01-01', 'week', 1, '2026-08-01')).toBe('2026-08-06');
+    expect(firstRecurrenceOnOrAfter('2026-01-31', 'month', 1, '2026-03-01')).toBe('2026-03-31');
   });
 
   it('snaps monthly periods to calendar months regardless of anchor day', () => {

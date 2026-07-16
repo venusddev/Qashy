@@ -1,7 +1,8 @@
-import { Pressable, type PressableProps } from 'react-native';
+import { type PressableProps } from 'react-native';
 
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
+import { MotionPressable } from '@/components/ui/motion';
 import { useQashyTheme } from '@/theme/theme';
 
 export function TextButton({
@@ -22,7 +23,7 @@ export function TextButton({
   const isDisabled = Boolean(disabled);
   const color = tone === 'danger' ? theme.negative : tone === 'muted' ? theme.textMuted : theme.accent;
   return (
-    <Pressable
+    <MotionPressable
       accessibilityLabel={title}
       accessibilityRole="button"
       accessibilityState={{ ...accessibilityState, disabled: isDisabled }}
@@ -44,6 +45,6 @@ export function TextButton({
       ]}>
       {icon ? <AppIcon name={icon} color={color} size={16} /> : null}
       <AppText selectable={false} variant="label" style={{ color }}>{title}</AppText>
-    </Pressable>
+    </MotionPressable>
   );
 }

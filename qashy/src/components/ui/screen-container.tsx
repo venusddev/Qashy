@@ -1,5 +1,7 @@
-import { View, useWindowDimensions, type ViewProps, type ViewStyle } from 'react-native';
+import { useWindowDimensions, type ViewProps, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { MotionView } from '@/components/ui/motion';
 
 // Shared metrics so list screens that cannot nest inside ScreenContainer
 // (e.g. SectionList content) still match its width and padding.
@@ -17,5 +19,11 @@ export function screenContentMetrics(width: number, bottomInset = 0): ViewStyle 
 export function ScreenContainer({ style, ...props }: ViewProps) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  return <View {...props} style={[screenContentMetrics(width, insets.bottom), { gap: 20 }, style]} />;
+  return (
+    <MotionView
+      {...props}
+      variant="up"
+      style={[screenContentMetrics(width, insets.bottom), { gap: 20 }, style]}
+    />
+  );
 }

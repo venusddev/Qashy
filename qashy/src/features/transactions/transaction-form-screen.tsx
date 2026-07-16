@@ -19,7 +19,12 @@ import {
   validateMoneyInput,
   validatePositiveDecimal,
 } from '@/utils/form-validation';
-import { minorToDecimalString, parseMoney } from '@/utils/money';
+import {
+  localizeDecimalString,
+  minorToLocalizedDecimalString,
+  normalizeDecimalString,
+  parseMoney,
+} from '@/utils/money';
 
 export function TransactionFormScreen() {
   const { id, returnTo } = useLocalSearchParams<{ id?: string; returnTo?: string }>();
@@ -30,17 +35,21 @@ export function TransactionFormScreen() {
   const defaultAccount = state.accounts.find((item) => !item.archived);
   const [kind, setKind] = useState<TransactionKind>(existing?.kind ?? 'expense');
   const [title, setTitle] = useState(existing?.title ?? '');
-  const [amount, setAmount] = useState(() => existing ? minorToDecimalString(existing.amountMinor, existing.currency, state.settings.locale) : '');
+  const [amount, setAmount] = useState(() => existing
+    ? minorToLocalizedDecimalString(existing.amountMinor, existing.currency, state.settings.locale)
+    : '');
   const [date, setDate] = useState(existing?.localDate ?? todayLocal());
   const [accountId, setAccountId] = useState(existing?.accountId ?? defaultAccount?.id ?? '');
   const [destinationAccountId, setDestinationAccountId] = useState(existing?.destinationAccountId ?? '');
   const [categoryId, setCategoryId] = useState(existing?.categoryId ?? '');
   const [note, setNote] = useState(existing?.note ?? '');
-  const [exchangeRate, setExchangeRate] = useState(existing?.exchangeRate ?? '');
+  const [exchangeRate, setExchangeRate] = useState(() => existing?.exchangeRate
+    ? localizeDecimalString(existing.exchangeRate, state.settings.locale)
+    : '');
   const existingDestination = state.accounts.find((item) => item.id === existing?.destinationAccountId);
   const [destinationAmount, setDestinationAmount] = useState(() =>
     existing && existing.destinationAmountMinor !== null && existingDestination
-      ? minorToDecimalString(existing.destinationAmountMinor, existingDestination.currency, state.settings.locale)
+      ? minorToLocalizedDecimalString(existing.destinationAmountMinor, existingDestination.currency, state.settings.locale)
       : '',
   );
   const [busy, setBusy] = useState(false);
@@ -48,7 +57,11 @@ export function TransactionFormScreen() {
   const destinationAccount = state.accounts.find((item) => item.id === destinationAccountId);
   const categories = useMemo(() => state.categories.filter((item) => !item.archived && item.kind === (kind === 'income' ? 'income' : 'expense')), [state.categories, kind]);
   const needsRate = account && account.currency !== state.settings.baseCurrency;
-  const destinationChoices = state.accounts.filter((item) => !item.archived && item.id !== accountId);
+  const destinationChoices = useMemo(() => {
+    const active = state.accounts.filter((item) => !item.archived && item.id !== accountId);
+    const current = state.accounts.find((item) => item.id === destinationAccountId);
+    return current && current.archived && current.id !== accountId ? [current, ...active] : active;
+  }, [state.accounts, accountId, destinationAccountId]);
   // A saved transaction may reference an account that was archived later;
   // keep it visible (disabled) so the selection isn't silently blank.
   const accountChoices = useMemo(() => {
@@ -61,7 +74,11 @@ export function TransactionFormScreen() {
     ? validateMoneyInput(amount, account.currency, state.settings.locale, { label: 'Amount', positive: true })
     : 'Choose an account before entering an amount.';
   const dateError = validateDateInput(date);
-  const destinationAmountError = kind === 'transfer' && destinationAccount
+  const sameCurrencyTransfer = kind === 'transfer' &&
+    !!account &&
+    !!destinationAccount &&
+    account.currency === destinationAccount.currency;
+  const destinationAmountError = kind === 'transfer' && destinationAccount && !sameCurrencyTransfer
     ? validateMoneyInput(destinationAmount, destinationAccount.currency, state.settings.locale, {
       label: 'Destination amount',
       optional: true,
@@ -69,7 +86,7 @@ export function TransactionFormScreen() {
     })
     : undefined;
   const exchangeRateError = needsRate
-    ? validatePositiveDecimal(exchangeRate, 'Exchange rate', true)
+    ? validatePositiveDecimal(exchangeRate, 'Exchange rate', true, state.settings.locale)
     : undefined;
   const destinationError = kind === 'transfer' && !destinationAccountId
     ? 'Choose a destination account.'
@@ -92,12 +109,17 @@ export function TransactionFormScreen() {
         localDate: date,
         accountId: account.id,
         destinationAccountId: kind === 'transfer' ? destinationAccountId : null,
-        destinationAmountMinor: kind === 'transfer' && destinationAccount && destinationAmount.trim()
+        destinationAmountMinor: kind === 'transfer' &&
+          destinationAccount &&
+          !sameCurrencyTransfer &&
+          destinationAmount.trim()
           ? parseMoney(destinationAmount, destinationAccount.currency, state.settings.locale)
           : null,
         categoryId: kind === 'transfer' ? null : categoryId || null,
         amountMinor: parseMoney(amount, account.currency, state.settings.locale),
-        exchangeRate: needsRate && exchangeRate.trim() ? exchangeRate.trim() : undefined,
+        exchangeRate: needsRate && exchangeRate.trim()
+          ? normalizeDecimalString(exchangeRate, state.settings.locale)
+          : undefined,
         status: existing?.status ?? 'posted',
       }, existing?.id);
       router.dismissTo(returnTo === '/overview' ? '/overview' : '/transactions');
@@ -156,7 +178,7 @@ export function TransactionFormScreen() {
             <AppText variant="label">To account</AppText>
             {destinationChoices.length ? (
               <View accessibilityLabel="To account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                {destinationChoices.map((item) => <ChoiceChip key={item.id} label={`${item.name} · ${item.currency}`} selected={destinationAccountId === item.id} onPress={() => { setDestinationAccountId(item.id); setDestinationAmount(''); }} />)}
+                {destinationChoices.map((item) => <ChoiceChip key={item.id} label={`${item.name} · ${item.currency}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={destinationAccountId === item.id} onPress={() => { setDestinationAccountId(item.id); setDestinationAmount(''); }} />)}
               </View>
             ) : (
               <View role="alert" style={{ gap: 10, padding: 14, borderRadius: 14, backgroundColor: theme.surfaceMuted }}>
@@ -170,7 +192,7 @@ export function TransactionFormScreen() {
               </View>
             )}
             {destinationError && destinationChoices.length ? <AppText accessibilityRole="alert" variant="caption" style={{ color: theme.negative }}>{destinationError}</AppText> : null}
-            {destinationAccount ? (
+            {destinationAccount && !sameCurrencyTransfer ? (
               <FormField
                 label={`Destination amount (${destinationAccount.currency})`}
                 value={destinationAmount}
@@ -180,6 +202,8 @@ export function TransactionFormScreen() {
                 error={destinationAmountError}
                 hint="Leave blank to calculate through your effective exchange rates."
               />
+            ) : sameCurrencyTransfer ? (
+              <AppText variant="caption" muted>The destination receives the same amount; same-currency transfers always conserve value.</AppText>
             ) : null}
           </>
         ) : (

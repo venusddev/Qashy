@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppText } from '@/components/ui/app-text';
 import { GlassSurface } from '@/components/ui/glass-surface';
+import { MotionView } from '@/components/ui/motion';
 import { TextButton } from '@/components/ui/text-button';
 import { useQashyTheme } from '@/theme/theme';
 
@@ -44,9 +45,10 @@ export function PwaUpdatePrompt() {
   }, []);
   if (!visible) return null;
   return (
-    <View
+    <MotionView
       accessibilityLabel="App update available"
       accessibilityLiveRegion="polite"
+      exit
       role="status"
       style={{
         position: 'absolute',
@@ -63,12 +65,22 @@ export function PwaUpdatePrompt() {
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
             <TextButton title="Later" tone="muted" onPress={() => setVisible(false)} />
             <TextButton title="Reload" onPress={() => {
-              window.__qashyWaitingWorker?.postMessage({ type: 'SKIP_WAITING' });
-              window.location.reload();
+              const worker = window.__qashyWaitingWorker;
+              if (!worker) {
+                window.location.reload();
+                return;
+              }
+              setVisible(false);
+              navigator.serviceWorker.addEventListener(
+                'controllerchange',
+                () => window.location.reload(),
+                { once: true },
+              );
+              worker.postMessage({ type: 'SKIP_WAITING' });
             }} />
           </View>
         </View>
       </GlassSurface>
-    </View>
+    </MotionView>
   );
 }

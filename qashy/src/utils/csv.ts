@@ -20,6 +20,10 @@ const HEADER_ALIASES: Record<string, string> = {
   destination_amount: 'destinationAmount',
 };
 
+export function unescapeCsvFormula(value: string) {
+  return value.replace(/^'(?=[=+@\t\r-])/, '');
+}
+
 export function parseCsvText(input: string) {
   const table = parseCsvTable(input);
   return table.rows.map((source) => {
@@ -85,7 +89,7 @@ export function parseCsvTable(input: string) {
     const record: Record<string, string | number> = { rowNumber: source.lineNumber };
     headers.forEach((header, column) => {
       const raw = source.cells[column] ?? '';
-      record[header] = source.quotedCells[column] ? raw : raw.trim();
+      record[header] = unescapeCsvFormula(source.quotedCells[column] ? raw : raw.trim());
     });
     return record;
   });

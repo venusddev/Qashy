@@ -1,8 +1,9 @@
 import * as Haptics from 'expo-haptics';
-import { Pressable, type PressableProps } from 'react-native';
+import { type PressableProps } from 'react-native';
 
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
+import { MotionPressable, MotionView } from '@/components/ui/motion';
 import { useQashyTheme } from '@/theme/theme';
 
 export function ActionButton({
@@ -26,7 +27,7 @@ export function ActionButton({
   const backgroundColor = variant === 'primary' ? theme.accent : variant === 'danger' ? theme.negative : theme.surfaceMuted;
   const foreground = variant === 'primary' ? theme.onAccent : variant === 'danger' ? theme.onNegative : theme.text;
   return (
-    <Pressable
+    <MotionPressable
       accessibilityRole="button"
       accessibilityState={{ ...accessibilityState, busy, disabled: isDisabled }}
       {...props}
@@ -50,8 +51,14 @@ export function ActionButton({
         },
         typeof style === 'function' ? style(pressableState) : style,
       ]}>
-      {icon ? <AppIcon name={icon} color={foreground} size={18} /> : null}
-      <AppText selectable={false} variant="label" style={{ color: foreground }}>{title}</AppText>
-    </Pressable>
+      <MotionView
+        key={`${title}-${icon ?? ''}`}
+        variant="fade"
+        animateLayout
+        style={{ alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 }}>
+        {icon ? <AppIcon name={icon} color={foreground} size={18} /> : null}
+        <AppText selectable={false} variant="label" style={{ color: foreground }}>{title}</AppText>
+      </MotionView>
+    </MotionPressable>
   );
 }

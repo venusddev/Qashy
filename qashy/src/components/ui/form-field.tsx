@@ -1,6 +1,7 @@
 import { TextInput, View, type TextInputProps } from 'react-native';
 
 import { AppText } from '@/components/ui/app-text';
+import { MotionView } from '@/components/ui/motion';
 import { useQashyTheme } from '@/theme/theme';
 
 export function FormField({
@@ -14,13 +15,18 @@ export function FormField({
 }: TextInputProps & { label: string; hint?: string; error?: string; required?: boolean }) {
   const theme = useQashyTheme();
   const description = error ?? hint;
+  const baseAccessibilityLabel = props.accessibilityLabel ?? label;
+  const fieldAccessibilityLabel = required
+    ? `${baseAccessibilityLabel}, required`
+    : baseAccessibilityLabel;
   return (
     <View style={{ gap: 7 }}>
       <AppText variant="label">{label}{required ? ' *' : ''}</AppText>
       <TextInput
         {...props}
-        accessibilityLabel={props.accessibilityLabel ?? label}
+        accessibilityLabel={fieldAccessibilityLabel}
         accessibilityHint={error ?? accessibilityHint}
+        aria-required={required || undefined}
         placeholderTextColor={theme.textMuted}
         style={[
           {
@@ -39,15 +45,17 @@ export function FormField({
         ]}
       />
       {description ? (
-        <AppText
-          accessibilityRole={error ? 'alert' : undefined}
-          accessibilityLiveRegion={error ? 'polite' : undefined}
-          selectable
-          variant="caption"
-          muted={!error}
-          style={error ? { color: theme.negative } : undefined}>
-          {description}
-        </AppText>
+        <MotionView key={description} variant="up" exit animateLayout>
+          <AppText
+            accessibilityRole={error ? 'alert' : undefined}
+            accessibilityLiveRegion={error ? 'polite' : undefined}
+            selectable
+            variant="caption"
+            muted={!error}
+            style={error ? { color: theme.negative } : undefined}>
+            {description}
+          </AppText>
+        </MotionView>
       ) : null}
     </View>
   );

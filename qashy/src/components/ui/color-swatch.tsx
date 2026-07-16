@@ -1,6 +1,5 @@
-import { Pressable } from 'react-native';
-
 import { AppIcon } from '@/components/ui/app-icon';
+import { MotionPressable, MotionView } from '@/components/ui/motion';
 import { readableTextColor } from '@/theme/tokens';
 
 export function ColorSwatch({
@@ -15,12 +14,15 @@ export function ColorSwatch({
   onPress: () => void;
 }) {
   return (
-    <Pressable
+    <MotionPressable
       accessibilityLabel={label}
       accessibilityRole="radio"
       accessibilityState={{ checked: selected }}
       aria-checked={selected}
+      active={selected}
       onPress={onPress}
+      pressedScale={0.9}
+      hoverScale={1.06}
       style={({ pressed }) => ({
         width: 48,
         height: 48,
@@ -32,7 +34,11 @@ export function ColorSwatch({
         borderColor: selected ? readableTextColor(color) : 'transparent',
         opacity: pressed ? 0.68 : 1,
       })}>
-      {selected ? <AppIcon name="checkmark" color={readableTextColor(color)} size={20} /> : null}
-    </Pressable>
+      {selected ? (
+        <MotionView variant="zoom" exit>
+          <AppIcon name="checkmark" color={readableTextColor(color)} size={20} />
+        </MotionView>
+      ) : null}
+    </MotionPressable>
   );
 }

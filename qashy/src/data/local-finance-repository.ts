@@ -39,10 +39,21 @@ import type {
   TransactionInput,
 } from '@/data/repository';
 import { createDefaultCategories, createInitialState, initialSettings } from '@/domain/defaults';
-import { addRecurrence, isLocalDate, todayLocal } from '@/utils/date';
+import {
+  addRecurrence,
+  firstRecurrenceOnOrAfter,
+  isLocalDate,
+  todayLocal,
+} from '@/utils/date';
 import { createEntity, makeId, nowIso, updateEntity } from '@/utils/entity';
 import { escapeCsv } from '@/utils/csv';
-import { convertMinor, isSafeMinor, minorToDecimalString, parseMoney } from '@/utils/money';
+import {
+  convertMinor,
+  isSafeMinor,
+  isSupportedCurrencyCode,
+  minorToDecimalString,
+  parseInvariantMoney,
+} from '@/utils/money';
 import { resolvePeriod } from '@/utils/period';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -304,7 +315,25 @@ export class LocalFinanceRepository implements FinanceRepository {
   }
 
   async saveRecurringRule(input: RecurringInput, id?: string) {
-    const normalized = this.validateRecurring(input);
+    const existing = this.findExisting(this.state.recurringRules, id, 'recurring rule');
+    const scheduleChanged = !!existing && (
+      existing.unit !== input.unit ||
+      existing.interval !== input.interval ||
+      existing.startDate !== input.startDate ||
+      existing.endDate !== input.endDate
+    );
+    const nextInput = scheduleChanged
+      ? {
+        ...input,
+        nextDueDate: firstRecurrenceOnOrAfter(
+          input.startDate,
+          input.unit,
+          input.interval,
+          [input.startDate, existing.nextDueDate, todayLocal()].sort().at(-1)!,
+        ),
+      }
+      : input;
+    const normalized = this.validateRecurring(nextInput);
     return await this.saveListEntity<RecurringRule>('recurringRules', normalized, id);
   }
 
@@ -342,8 +371,8 @@ export class LocalFinanceRepository implements FinanceRepository {
       if (query.statuses?.length && !query.statuses.includes(transaction.status)) return false;
       if (query.fromDate && transaction.localDate < query.fromDate) return false;
       if (query.toDate && transaction.localDate > query.toDate) return false;
-      if (query.minMinor !== undefined && transaction.amountMinor < query.minMinor) return false;
-      if (query.maxMinor !== undefined && transaction.amountMinor > query.maxMinor) return false;
+      if (query.minMinor !== undefined && transaction.baseAmountMinor < query.minMinor) return false;
+      if (query.maxMinor !== undefined && transaction.baseAmountMinor > query.maxMinor) return false;
       return true;
     });
     result = result.sort((a, b) => {
@@ -360,7 +389,7 @@ export class LocalFinanceRepository implements FinanceRepository {
     this.assertDate(toDate);
     if (fromDate > toDate) throw new Error('Dashboard start date must not be after its end date.');
     const posted = this.queryTransactions({ fromDate, toDate, statuses: ['posted'] });
-    const allPosted = this.queryTransactions({ toDate, statuses: ['posted'], sort: 'oldest' });
+    const allPosted = this.queryTransactions({ statuses: ['posted'], sort: 'oldest' });
     const accounts = this.active(this.state.accounts).filter((account) => !account.archived);
     const accountBalances = accounts.map((account) => {
       let balanceMinor = account.openingBalanceMinor;
@@ -377,16 +406,27 @@ export class LocalFinanceRepository implements FinanceRepository {
     });
     const incomeMinor = posted.filter((item) => item.kind === 'income').reduce((sum, item) => sum + item.baseAmountMinor, 0);
     const expenseMinor = posted.filter((item) => item.kind === 'expense').reduce((sum, item) => sum + item.baseAmountMinor, 0);
-    const categorySpend = this.active(this.state.categories)
-      .filter((category) => category.kind === 'expense')
+    const expenseCategories = this.active(this.state.categories)
+      .filter((category) => category.kind === 'expense');
+    const categorySpend: DashboardSummary['categorySpend'] = expenseCategories
       .map((category) => ({
         category,
         amountMinor: posted
           .filter((item) => item.kind === 'expense' && item.categoryId === category.id)
           .reduce((sum, item) => sum + item.baseAmountMinor, 0),
       }))
-      .filter((item) => item.amountMinor > 0)
-      .sort((a, b) => b.amountMinor - a.amountMinor);
+      .filter((item) => item.amountMinor > 0);
+    const expenseCategoryIds = new Set(expenseCategories.map((category) => category.id));
+    const uncategorizedMinor = posted
+      .filter((item) =>
+        item.kind === 'expense' &&
+        (!item.categoryId || !expenseCategoryIds.has(item.categoryId)),
+      )
+      .reduce((sum, item) => sum + item.baseAmountMinor, 0);
+    if (uncategorizedMinor > 0) {
+      categorySpend.push({ category: null, amountMinor: uncategorizedMinor });
+    }
+    categorySpend.sort((a, b) => b.amountMinor - a.amountMinor);
     const today = todayLocal();
     const budgetDate = today >= fromDate && today <= toDate ? today : toDate;
     const budgetEntries = this.getBudgetStatuses(budgetDate);
@@ -406,13 +446,14 @@ export class LocalFinanceRepository implements FinanceRepository {
     }
     let netWorthMinor = 0;
     const missingExchangeRates: DashboardSummary['missingExchangeRates'] = [];
+    const balanceDate = todayLocal();
     for (const item of accountBalances) {
       try {
         netWorthMinor += convertMinor(
           item.balanceMinor,
           item.account.currency,
           this.state.settings.baseCurrency,
-          this.resolveRate(item.account.currency, this.state.settings.baseCurrency, toDate),
+          this.resolveRate(item.account.currency, this.state.settings.baseCurrency, balanceDate),
           this.state.settings.locale,
         );
       } catch {
@@ -440,18 +481,25 @@ export class LocalFinanceRepository implements FinanceRepository {
     };
   }
 
-  getBudgetStatuses(onDate: string): BudgetStatus[] {
+  getBudgetStatuses(
+    onDate: string,
+    options: { includeInactiveCustom?: boolean } = {},
+  ): BudgetStatus[] {
     this.assertDate(onDate);
     return this.active(this.state.budgets)
       .filter((budget) => !budget.archived)
       .flatMap((budget) => {
         const bounds = resolvePeriod(budget.period, onDate);
-        if (budget.period.unit === 'custom' && (onDate < bounds.start || onDate > bounds.end)) return [];
+        if (
+          budget.period.unit === 'custom' &&
+          !options.includeInactiveCustom &&
+          (onDate < bounds.start || onDate > bounds.end)
+        ) return [];
         // Fall back to a transient snapshot when the period rolled over while
         // the app stayed open; the next generateRecurring run persists it.
         const snapshot = this.state.budgetPeriods.find((item) =>
           item.budgetId === budget.id && item.periodStart === bounds.start,
-        ) ?? this.buildBudgetSnapshots(budget, false).find((item) => item.periodStart === bounds.start);
+        ) ?? this.buildBudgetSnapshots(budget, false, onDate).find((item) => item.periodStart === bounds.start);
         if (!snapshot) return [];
         const spentMinor = this.budgetSpend(snapshot.filters, snapshot.periodStart, snapshot.periodEnd);
         const categorySpend = snapshot.categoryLimits.map((limit) => ({
@@ -478,6 +526,9 @@ export class LocalFinanceRepository implements FinanceRepository {
     const manual = this.state.contributions
       .filter((item) => item.goalId === goal.id)
       .reduce((sum, item) => sum + item.amountMinor, 0);
+    if (!goal.linkedAccountId && !goal.linkedCategoryId) {
+      return goal.initialMinor + manual;
+    }
     const linked = this.state.transactions
       .filter((item) => item.status === 'posted')
       .filter((item) => !goal.linkedCategoryId || item.categoryId === goal.linkedCategoryId)
@@ -660,12 +711,35 @@ export class LocalFinanceRepository implements FinanceRepository {
         ))
         .map((rule) => updateEntity(rule, { active: false }))
       : [];
+    const contributions = type === 'goals'
+      ? this.state.contributions
+        .filter((item) => deletedIds.has(item.goalId))
+        .map((item) => updateEntity(item, { deletedAt: nowIso() }))
+      : [];
+    const budgetPeriods = type === 'budgets'
+      ? this.state.budgetPeriods
+        .filter((item) => deletedIds.has(item.budgetId))
+        .map((item) => updateEntity(item, { deletedAt: nowIso() }))
+      : [];
     await this.storage.putMany([
       ...deleted.map((entity) => ({ type: type as EntityType, entity })),
       ...rules.map((entity) => ({ type: 'recurringRules' as const, entity })),
+      ...contributions.map((entity) => ({ type: 'contributions' as const, entity })),
+      ...budgetPeriods.map((entity) => ({ type: 'budgetPeriods' as const, entity })),
     ]);
-    this.state = { ...this.state, [type]: list.filter((entity) => !ids.includes(entity.id)) };
-    rules.forEach((rule) => this.replaceInList('recurringRules', rule));
+    const ruleChanges = new Map(rules.map((rule) => [rule.id, rule]));
+    const nextState = {
+      ...this.state,
+      [type]: (this.state[type] as FinanceEntity[]).filter((entity) => !deletedIds.has(entity.id)),
+    } as FinanceState;
+    nextState.recurringRules = nextState.recurringRules.map((rule) => ruleChanges.get(rule.id) ?? rule);
+    if (type === 'goals') {
+      nextState.contributions = nextState.contributions.filter((item) => !deletedIds.has(item.goalId));
+    }
+    if (type === 'budgets') {
+      nextState.budgetPeriods = nextState.budgetPeriods.filter((item) => !deletedIds.has(item.budgetId));
+    }
+    this.state = nextState;
     this.emit();
   }
 
@@ -691,7 +765,7 @@ export class LocalFinanceRepository implements FinanceRepository {
         if (row.currency !== account.currency) {
           throw new Error(`Currency ${row.currency} does not match ${account.name} (${account.currency}).`);
         }
-        const amountMinor = parseMoney(row.amount, row.currency, this.state.settings.locale);
+        const amountMinor = parseInvariantMoney(row.amount, row.currency, this.state.settings.locale);
         const destination = row.destinationAccount
           ? this.active(this.state.accounts).find((item) =>
             !item.archived && item.name.toLowerCase() === row.destinationAccount.toLowerCase(),
@@ -720,7 +794,7 @@ export class LocalFinanceRepository implements FinanceRepository {
           tagIds: [],
           amountMinor,
           destinationAmountMinor: destination && row.destinationAmount
-            ? parseMoney(row.destinationAmount, destination.currency, this.state.settings.locale)
+            ? parseInvariantMoney(row.destinationAmount, destination.currency, this.state.settings.locale)
             : null,
           exchangeRate: row.exchangeRate || undefined,
         };
@@ -846,7 +920,9 @@ export class LocalFinanceRepository implements FinanceRepository {
     );
     let destinationAmountMinor: number | null = null;
     if (input.kind === 'transfer') {
-      if (input.destinationAmountMinor !== undefined && input.destinationAmountMinor !== null) {
+      if (destination!.currency === account.currency) {
+        destinationAmountMinor = input.amountMinor;
+      } else if (input.destinationAmountMinor !== undefined && input.destinationAmountMinor !== null) {
         this.assertPositiveMinor(input.destinationAmountMinor, 'Destination amount');
         destinationAmountMinor = input.destinationAmountMinor;
       } else {
@@ -950,8 +1026,8 @@ export class LocalFinanceRepository implements FinanceRepository {
     return periods.length;
   }
 
-  private buildBudgetSnapshots(budget: Budget, updateCurrent: boolean) {
-    const bounds = resolvePeriod(budget.period, todayLocal());
+  private buildBudgetSnapshots(budget: Budget, updateCurrent: boolean, onDate = todayLocal()) {
+    const bounds = resolvePeriod(budget.period, onDate);
     const existing = this.state.budgetPeriods.find((item) => item.budgetId === budget.id && item.periodStart === bounds.start);
     if (existing) {
       if (!updateCurrent) return [];
@@ -1145,6 +1221,7 @@ export class LocalFinanceRepository implements FinanceRepository {
   private normalizeCurrency(value: string) {
     const currency = value.trim().toUpperCase();
     if (!/^[A-Z]{3}$/.test(currency)) throw new Error('Use a three-letter currency code such as USD.');
+    if (!isSupportedCurrencyCode(currency)) throw new Error('Use a supported ISO 4217 currency code.');
     return currency;
   }
 

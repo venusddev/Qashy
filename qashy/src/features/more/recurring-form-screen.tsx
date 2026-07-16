@@ -18,7 +18,7 @@ import {
   validateMoneyInput,
   validatePositiveInteger,
 } from '@/utils/form-validation';
-import { minorToDecimalString, parseMoney } from '@/utils/money';
+import { minorToLocalizedDecimalString, parseMoney } from '@/utils/money';
 
 export function RecurringFormScreen() {
   const params = useLocalSearchParams<{ id?: string; kind?: CategoryKind; title?: string; amount?: string; accountId?: string; categoryId?: string }>();
@@ -30,7 +30,7 @@ export function RecurringFormScreen() {
     ?? state.accounts.find((item) => !item.archived);
   const [kind, setKind] = useState<CategoryKind>(existing?.template.kind ?? params.kind ?? 'expense');
   const [title, setTitle] = useState(existing?.template.title ?? params.title ?? '');
-  const [amount, setAmount] = useState(existing ? minorToDecimalString(existing.template.amountMinor, existing.template.currency, state.settings.locale) : params.amount ?? '');
+  const [amount, setAmount] = useState(existing ? minorToLocalizedDecimalString(existing.template.amountMinor, existing.template.currency, state.settings.locale) : params.amount ?? '');
   const [accountId, setAccountId] = useState(initialAccount?.id ?? '');
   const [categoryId, setCategoryId] = useState(existing?.template.categoryId ?? params.categoryId ?? '');
   const [unit, setUnit] = useState<RecurrenceUnit>(existing?.unit ?? 'month');
@@ -58,19 +58,13 @@ export function RecurringFormScreen() {
     try {
       const normalizedInterval = Math.max(1, Math.floor(Number(interval) || 1));
       const normalizedEndDate = endDate || null;
-      const scheduleChanged = !!existing && (
-        existing.unit !== unit ||
-        existing.interval !== normalizedInterval ||
-        existing.startDate !== startDate ||
-        existing.endDate !== normalizedEndDate
-      );
       await repository.saveRecurringRule({
         template: { kind, title: title.trim() || 'Recurring transaction', note: '', accountId: account.id, categoryId: categoryId || null, tagIds: [], amountMinor: parseMoney(amount, account.currency, state.settings.locale), currency: account.currency },
         unit,
         interval: normalizedInterval,
         startDate,
         endDate: normalizedEndDate,
-        nextDueDate: !existing || scheduleChanged ? startDate : existing.nextDueDate,
+        nextDueDate: existing?.nextDueDate ?? startDate,
         autoPost,
         active: true,
       }, existing?.id);
@@ -117,7 +111,7 @@ export function RecurringFormScreen() {
         <FormField label="Ends (optional)" value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD" error={endDateError} />
         <View style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
           <View style={{ flex: 1, gap: 2 }}><AppText variant="label">Post automatically</AppText><AppText variant="caption" muted>Off by default. Upcoming items wait for your review.</AppText></View>
-          <Switch value={autoPost} onValueChange={setAutoPost} trackColor={{ true: theme.staticAccent }} />
+          <Switch value={autoPost} onValueChange={setAutoPost} trackColor={{ true: theme.accent }} />
         </View>
       </Card>
 

@@ -206,7 +206,7 @@ export interface DashboardSummary {
   budgetLimitMinor: number;
   budgetSpentMinor: number;
   accountBalances: { account: Account; balanceMinor: number }[];
-  categorySpend: { category: Category; amountMinor: number }[];
+  categorySpend: { category: Category | null; amountMinor: number }[];
   recentTransactions: TransactionRecord[];
   upcomingTransactions: TransactionRecord[];
   dailySpend: { date: string; amountMinor: number }[];

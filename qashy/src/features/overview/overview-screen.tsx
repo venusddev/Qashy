@@ -10,6 +10,7 @@ import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
 import { FloatingActionButton } from '@/components/ui/floating-action-button';
 import { IconButton } from '@/components/ui/icon-button';
+import { MotionView } from '@/components/ui/motion';
 import { PageHeading } from '@/components/ui/page-heading';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { ScreenContainer } from '@/components/ui/screen-container';
@@ -85,40 +86,42 @@ export function OverviewScreen() {
           </View>
         </View>
 
-        <Card style={{ padding: 24, backgroundColor: theme.surfaceElevated, gap: 22 }}>
-          <View style={{ gap: 6 }}>
-            <AppText variant="caption" style={{ color: theme.accent }}>NET WORTH</AppText>
-            <AppText variant="money" style={{ fontSize: 34, lineHeight: 40 }}>
-              {formatMoney(summary.netWorthMinor, currency, locale)}
-            </AppText>
-            {summary.missingExchangeRates.length ? (
-              <AppText variant="caption" style={{ color: theme.warning }}>
-                Excludes {summary.missingExchangeRates.map((rate) => rate.fromCurrency).join(', ')} until an effective exchange rate is added.
+        <Card style={{ padding: 24, backgroundColor: theme.surfaceElevated }}>
+          <MotionView key={month} variant="fade" exit animateLayout style={{ gap: 22 }}>
+            <View style={{ gap: 6 }}>
+              <AppText variant="caption" style={{ color: theme.accent }}>CURRENT NET WORTH</AppText>
+              <AppText variant="money" style={{ fontSize: 34, lineHeight: 40 }}>
+                {formatMoney(summary.netWorthMinor, currency, locale)}
               </AppText>
-            ) : null}
-          </View>
-          <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
-            {[
-              ['Income', summary.incomeMinor, theme.positive],
-              ['Spent', summary.expenseMinor, theme.negative],
-              ['Net flow', summary.netFlowMinor, summary.netFlowMinor >= 0 ? theme.positive : theme.negative],
-            ].map(([label, amount, color]) => (
-              <View key={label as string} style={{ minWidth: 130, flex: 1, gap: 4 }}>
-                <AppText variant="caption" muted>{label as string}</AppText>
-                <AppText variant="headline" style={{ color: color as never, fontVariant: ['tabular-nums'] }}>{formatMoney(amount as number, currency, locale, { compact: width < 520 })}</AppText>
-              </View>
-            ))}
-          </View>
+              {summary.missingExchangeRates.length ? (
+                <AppText variant="caption" style={{ color: theme.warning }}>
+                  Excludes {summary.missingExchangeRates.map((rate) => rate.fromCurrency).join(', ')} until an effective exchange rate is added.
+                </AppText>
+              ) : null}
+            </View>
+            <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
+              {[
+                ['Income', summary.incomeMinor, theme.positive],
+                ['Spent', summary.expenseMinor, theme.negative],
+                ['Net flow', summary.netFlowMinor, summary.netFlowMinor >= 0 ? theme.positive : theme.negative],
+              ].map(([label, amount, color]) => (
+                <View key={label as string} style={{ minWidth: 130, flex: 1, gap: 4 }}>
+                  <AppText variant="caption" muted>{label as string}</AppText>
+                  <AppText variant="headline" style={{ color: color as never, fontVariant: ['tabular-nums'] }}>{formatMoney(amount as number, currency, locale, { compact: width < 520 })}</AppText>
+                </View>
+              ))}
+            </View>
+          </MotionView>
         </Card>
 
         <View style={{ flexDirection: wide ? 'row' : 'column', gap: 18, alignItems: 'stretch' }}>
           <Card style={{ flex: 1, gap: 16 }}>
             <SectionHeader title="Spending rhythm" />
-            <SpendLineChart points={summary.dailySpend} currency={currency} locale={locale} />
+            <SpendLineChart key={`spend-${month}`} points={summary.dailySpend} currency={currency} locale={locale} />
           </Card>
           <Card style={{ flex: 1, gap: 18 }}>
             <SectionHeader title="By category" />
-            <CategoryDonut items={summary.categorySpend} currency={currency} locale={locale} />
+            <CategoryDonut key={`categories-${month}`} items={summary.categorySpend} currency={currency} locale={locale} />
           </Card>
         </View>
 
@@ -140,12 +143,14 @@ export function OverviewScreen() {
           </Card>
           <Card style={{ flex: 1, gap: 14 }}>
             <SectionHeader title="Accounts" action="Manage" onAction={() => router.push('/more')} />
-            {summary.accountBalances.map(({ account, balanceMinor }) => (
-              <View key={account.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <View style={{ width: 38, height: 38, borderRadius: radius.control, backgroundColor: account.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="wallet" color={readableTextColor(account.color)} size={17} /></View>
-                <View style={{ flex: 1 }}><AppText variant="label">{account.name}</AppText><AppText variant="caption" muted>{account.currency} · {account.type}</AppText></View>
-                <AppText variant="label" style={{ fontVariant: ['tabular-nums'] }}>{formatMoney(balanceMinor, account.currency, locale)}</AppText>
-              </View>
+            {summary.accountBalances.map(({ account, balanceMinor }, index) => (
+              <MotionView key={account.id} delay={Math.min(index, 5) * 35} variant="right">
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <View style={{ width: 38, height: 38, borderRadius: radius.control, backgroundColor: account.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="wallet" color={readableTextColor(account.color)} size={17} /></View>
+                  <View style={{ flex: 1 }}><AppText variant="label">{account.name}</AppText><AppText variant="caption" muted>{account.currency} · {account.type}</AppText></View>
+                  <AppText variant="label" style={{ fontVariant: ['tabular-nums'] }}>{formatMoney(balanceMinor, account.currency, locale)}</AppText>
+                </View>
+              </MotionView>
             ))}
           </Card>
         </View>
@@ -153,27 +158,35 @@ export function OverviewScreen() {
         {summary.upcomingTransactions.length ? (
           <Card style={{ gap: 6 }}>
             <SectionHeader title="Coming up" />
-            {summary.upcomingTransactions.map((transaction) => (
-              <View key={transaction.id} style={{ gap: 2 }}>
+            {summary.upcomingTransactions.map((transaction, index) => (
+              <MotionView key={transaction.id} delay={Math.min(index, 4) * 35} animateLayout exit style={{ gap: 2 }}>
                 <TransactionRow transaction={transaction} compact returnTo="/overview" />
                 <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
                   <TextButton title="Skip" tone="muted" disabled={pendingUpcomingId !== null} onPress={() => resolveUpcoming(transaction.id, 'skip')} />
                   <TextButton title="Mark paid" disabled={pendingUpcomingId !== null} onPress={() => resolveUpcoming(transaction.id, 'confirm')} />
                 </View>
-              </View>
+              </MotionView>
             ))}
           </Card>
         ) : null}
 
         <Card style={{ gap: 4 }}>
           <SectionHeader title="Recent activity" action="See all" onAction={() => router.push('/transactions')} />
-          {summary.recentTransactions.length ? summary.recentTransactions.map((transaction) => <TransactionRow key={transaction.id} transaction={transaction} returnTo="/overview" />) : (
-            <View style={{ alignItems: 'center', gap: 12, paddingVertical: 28 }}>
+          {summary.recentTransactions.length ? summary.recentTransactions.map((transaction, index) => (
+            <MotionView key={transaction.id} delay={Math.min(index, 5) * 30} variant="right">
+              <TransactionRow transaction={transaction} returnTo="/overview" />
+            </MotionView>
+          )) : (
+            <MotionView variant="zoom" style={{ alignItems: 'center', gap: 12, paddingVertical: 28 }}>
               <View style={{ width: 52, height: 52, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="arrow.left.arrow.right" color={theme.onAccentContainer} size={24} /></View>
-              <AppText variant="headline">Your ledger is ready</AppText>
-              <AppText muted style={{ textAlign: 'center' }}>Add the first transaction and Qashy will turn it into useful context.</AppText>
-              <ActionButton title="Add transaction" icon="plus" onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/overview' } })} />
-            </View>
+              <AppText variant="headline">{state.transactions.length ? `No activity in ${monthLabel(month, locale)}` : 'Your ledger is ready'}</AppText>
+              <AppText muted style={{ textAlign: 'center' }}>{state.transactions.length ? 'Choose another month or open the full transaction list.' : 'Add the first transaction and Qashy will turn it into useful context.'}</AppText>
+              {state.transactions.length ? (
+                <ActionButton title="See all transactions" variant="secondary" onPress={() => router.push('/transactions')} />
+              ) : (
+                <ActionButton title="Add transaction" icon="plus" onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/overview' } })} />
+              )}
+            </MotionView>
           )}
         </Card>
         </ScreenContainer>

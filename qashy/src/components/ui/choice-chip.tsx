@@ -1,7 +1,6 @@
-import { Pressable } from 'react-native';
-
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
+import { MotionPressable } from '@/components/ui/motion';
 import { useQashyTheme } from '@/theme/theme';
 
 export type ChoiceChipMode = 'radio' | 'checkbox' | 'button';
@@ -24,13 +23,16 @@ export function ChoiceChip({
   const theme = useQashyTheme();
   const selectable = mode !== 'button';
   return (
-    <Pressable
+    <MotionPressable
       accessibilityLabel={label}
       accessibilityRole={mode}
       accessibilityState={selectable ? { checked: selected, disabled } : { disabled }}
       aria-checked={selectable ? selected : undefined}
+      active={selected}
       disabled={disabled}
       onPress={onPress}
+      pressedScale={0.95}
+      hoverScale={1.02}
       style={({ pressed }) => ({
         minHeight: 44,
         paddingHorizontal: 14,
@@ -46,6 +48,6 @@ export function ChoiceChip({
       })}>
       {icon ? <AppIcon name={icon} color={selected ? theme.onAccentContainer : theme.textMuted} size={17} /> : null}
       <AppText selectable={false} variant="label" style={{ color: selected ? theme.onAccentContainer : theme.text }}>{label}</AppText>
-    </Pressable>
+    </MotionPressable>
   );
 }

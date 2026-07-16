@@ -1,7 +1,11 @@
 import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 
 import type { EntityType, FinanceEntity } from '@/domain/models';
-import type { StorageAdapter, StoredEntity } from '@/data/storage-adapter';
+import {
+  compareStoredEntities,
+  type StorageAdapter,
+  type StoredEntity,
+} from '@/data/storage-adapter';
 
 const DATABASE_VERSION = 1;
 
@@ -29,10 +33,12 @@ export class PlatformStorageAdapter implements StorageAdapter {
 
   async readAll(type: EntityType) {
     const rows = await this.getDatabase().getAllAsync<{ payload: string }>(
-      'SELECT payload FROM records WHERE entity_type = ? ORDER BY updated_at ASC',
+      'SELECT payload FROM records WHERE entity_type = ? ORDER BY updated_at ASC, record_key ASC',
       type,
     );
-    return rows.map((row) => JSON.parse(row.payload) as FinanceEntity);
+    return rows
+      .map((row) => JSON.parse(row.payload) as FinanceEntity)
+      .sort(compareStoredEntities);
   }
 
   async putMany(records: StoredEntity[]) {

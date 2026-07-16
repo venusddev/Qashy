@@ -58,16 +58,27 @@ export function CsvScreen() {
   const missingRequiredFields = CSV_FIELDS.filter((field) => !field.optional && !mapping[field.key]);
 
   const pick = async () => {
-    const result = await DocumentPicker.getDocumentAsync({ type: ['text/csv', 'text/comma-separated-values', 'text/plain'], copyToCacheDirectory: true, base64: false });
-    if (result.canceled) return;
-    const asset = result.assets[0];
-    const text = asset.file ? await asset.file.text() : await new ExpoFile(asset.uri).text();
-    const table = parseCsvTable(text);
-    setSourceRows(table.rows);
-    setHeaders(table.headers);
-    setMapping(inferMapping(table.headers));
-    setRows([]);
-    setPreview(null);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ type: ['text/csv', 'text/comma-separated-values', 'text/plain'], copyToCacheDirectory: true, base64: false });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      const text = asset.file ? await asset.file.text() : await new ExpoFile(asset.uri).text();
+      const table = parseCsvTable(text);
+      setRows([]);
+      setPreview(null);
+      if (!table.rows.length) {
+        setSourceRows([]);
+        setHeaders([]);
+        setMapping(inferMapping([]));
+        showError('No transactions found', 'Choose a CSV with a header row and at least one data row.');
+        return;
+      }
+      setSourceRows(table.rows);
+      setHeaders(table.headers);
+      setMapping(inferMapping(table.headers));
+    } catch (reason) {
+      showError('Couldn’t read CSV', errorMessage(reason, 'Choose another UTF-8 CSV file.'));
+    }
   };
 
   const previewImport = async () => {
@@ -110,22 +121,31 @@ export function CsvScreen() {
   };
 
   const exportData = async () => {
-    const csv = repository.exportCsv();
-    const filename = `qashy-transactions-${todayLocal()}.csv`;
-    if (process.env.EXPO_OS === 'web') {
-      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = filename;
-      anchor.click();
-      URL.revokeObjectURL(url);
-      return;
+    try {
+      const csv = repository.exportCsv();
+      const filename = `qashy-transactions-${todayLocal()}.csv`;
+      if (process.env.EXPO_OS === 'web') {
+        const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.style.display = 'none';
+        document.body.appendChild(anchor);
+        anchor.click();
+        window.setTimeout(() => {
+          anchor.remove();
+          URL.revokeObjectURL(url);
+        }, 1000);
+        return;
+      }
+      const file = new ExpoFile(Paths.cache, filename);
+      if (file.exists) file.delete();
+      file.create();
+      file.write(csv);
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(file.uri, { mimeType: 'text/csv', dialogTitle: 'Export Qashy transactions' });
+    } catch (reason) {
+      showError('Couldn’t export CSV', errorMessage(reason, 'Try again.'));
     }
-    const file = new ExpoFile(Paths.cache, filename);
-    if (file.exists) file.delete();
-    file.create();
-    file.write(csv);
-    if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(file.uri, { mimeType: 'text/csv', dialogTitle: 'Export Qashy transactions' });
   };
 
   return (

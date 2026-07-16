@@ -1,5 +1,9 @@
 import type { EntityType, FinanceEntity } from '@/domain/models';
-import type { StorageAdapter, StoredEntity } from '@/data/storage-adapter';
+import {
+  compareStoredEntities,
+  type StorageAdapter,
+  type StoredEntity,
+} from '@/data/storage-adapter';
 
 export class MemoryStorageAdapter implements StorageAdapter {
   private records = new Map<string, StoredEntity>();
@@ -9,6 +13,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
   async readAll(type: EntityType) {
     return Array.from(this.records.values())
       .filter((record) => record.type === type)
+      .sort((a, b) => compareStoredEntities(a.entity, b.entity))
       .map((record) => structuredClone(record.entity) as FinanceEntity);
   }
 

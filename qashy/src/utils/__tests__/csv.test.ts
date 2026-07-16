@@ -18,6 +18,11 @@ describe('CSV utilities', () => {
     expect(escapeCsv('-1200')).toBe('-1200');
   });
 
+  it('reverses the spreadsheet formula guard during import', () => {
+    const rows = parseCsvText("title,account,note\n'=Coffee,'+Cash,'@memo");
+    expect(rows[0]).toMatchObject({ title: '=Coffee', account: '+Cash', note: '@memo' });
+  });
+
   it('reports physical line numbers when blank lines are skipped', () => {
     const rows = parseCsvText(
       'date,type,title,amount,currency,account\n\n2026-07-01,expense,First,1.00,USD,Everyday\n\n2026-07-02,expense,Second,2.00,USD,Everyday\n',

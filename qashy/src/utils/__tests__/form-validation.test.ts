@@ -18,10 +18,12 @@ describe('form validation', () => {
     expect(validatePositiveDecimal('-2', 'Rate', true)).toContain('greater than zero');
     expect(validateDateInput('', { optional: true })).toBeUndefined();
     expect(validateDateInput('2026-02-30', { optional: true })).toContain('real date');
+    expect(validatePositiveDecimal('1,25', 'Rate', false, 'de-DE')).toBeUndefined();
   });
 
   it('validates supported currencies and positive whole intervals', () => {
     expect(validateCurrencyCode('USD', 'en-US')).toBeUndefined();
+    expect(validateCurrencyCode('ZZZ', 'en-US')).toContain('ISO 4217');
     expect(validateCurrencyCode('US', 'en-US')).toContain('three-letter');
     expect(validatePositiveInteger('2', 'Interval')).toBeUndefined();
     expect(validatePositiveInteger('1.5', 'Interval')).toContain('whole number');

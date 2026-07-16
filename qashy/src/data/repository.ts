@@ -71,7 +71,7 @@ export interface FinanceRepository {
   saveExchangeRate(input: RateInput, id?: string): Promise<ExchangeRate>;
   queryTransactions(query?: TransactionQuery): TransactionRecord[];
   getDashboard(fromDate: string, toDate: string): DashboardSummary;
-  getBudgetStatuses(onDate: string): BudgetStatus[];
+  getBudgetStatuses(onDate: string, options?: { includeInactiveCustom?: boolean }): BudgetStatus[];
   getGoalProgress(goalId: string): number;
   generateRecurring(horizonDate?: string): Promise<number>;
   confirmUpcoming(id: string): Promise<void>;

@@ -15,6 +15,8 @@ export function FloatingActionButton({
       variant="accent"
       size={58}
       iconSize={25}
+      enteringVariant="zoom"
+      enteringDelay={140}
       style={(state) => [
         {
           boxShadow: '0 4px 14px rgba(25,27,32,0.28)',

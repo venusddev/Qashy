@@ -1,8 +1,9 @@
 import { router } from 'expo-router';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
+import { MotionPressable, MotionView } from '@/components/ui/motion';
 import type { TransactionRecord } from '@/domain/models';
 import { useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
@@ -30,13 +31,25 @@ export function TransactionRow({
   const theme = useQashyTheme();
   const account = accounts.find((item) => item.id === transaction.accountId);
   const category = categories.find((item) => item.id === transaction.categoryId);
+  const destination = accounts.find((item) => item.id === transaction.destinationAccountId);
   const isIncome = transaction.kind === 'income';
   const isTransfer = transaction.kind === 'transfer';
-  const color = isTransfer ? theme.accent : isIncome ? theme.positive : theme.text;
-  const rowLabel = `${transaction.title}, ${formatMoney(transaction.amountMinor, transaction.currency, settings.locale)}`;
+  const color = selected
+    ? theme.onAccentContainer
+    : isTransfer
+      ? theme.accent
+      : isIncome
+        ? theme.positive
+        : theme.text;
+  const direction = isTransfer ? 'Transfer, money moved' : isIncome ? 'Income, money in' : 'Expense, money out';
+  const signedAmount = `${isIncome ? 'plus ' : isTransfer ? '' : 'minus '}${formatMoney(transaction.amountMinor, transaction.currency, settings.locale)}`;
+  const accountContext = isTransfer
+    ? `${account?.name ?? 'Unknown account'} to ${destination?.name ?? 'Unknown account'}`
+    : account?.name ?? 'Unknown account';
+  const rowLabel = `${direction}, ${transaction.title}, ${signedAmount}, ${category?.name ?? (isTransfer ? 'transfer' : 'uncategorized')}, ${accountContext}, ${transaction.localDate}`;
 
   return (
-    <Pressable
+    <MotionPressable
       accessibilityActions={!selectionMode && onLongPress ? [{ name: 'longpress', label: 'Select transaction' }] : undefined}
       accessibilityHint={!selectionMode && onLongPress ? 'Long press to select this transaction for batch actions.' : undefined}
       accessibilityRole={selectionMode ? 'checkbox' : 'button'}
@@ -48,11 +61,19 @@ export function TransactionRow({
       }}
       onPress={onPress ?? (() => router.push({ pathname: '/transaction', params: { id: transaction.id, returnTo } }))}
       onLongPress={onLongPress}
+      active={selected}
+      pressedScale={0.985}
       style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: compact ? 54 : 64, opacity: pressed ? 0.65 : 1 })}>
       {selectionMode ? (
-        <View style={{ width: 24, height: 24, borderRadius: 7, borderWidth: 2, borderColor: selected ? theme.accent : theme.border, backgroundColor: selected ? theme.accent : theme.surface, alignItems: 'center', justifyContent: 'center' }}>
-          {selected ? <AppIcon name="checkmark" color={theme.onAccent} size={16} /> : null}
-        </View>
+        <MotionView variant="zoom" animateLayout style={{ width: 24, height: 24 }}>
+          <View style={{ flex: 1, borderRadius: 7, borderWidth: 2, borderColor: selected ? theme.accent : theme.border, backgroundColor: selected ? theme.accent : theme.surface, alignItems: 'center', justifyContent: 'center' }}>
+            {selected ? (
+              <MotionView variant="zoom" exit>
+                <AppIcon name="checkmark" color={theme.onAccent} size={16} />
+              </MotionView>
+            ) : null}
+          </View>
+        </MotionView>
       ) : null}
       <View style={{ width: compact ? 38 : 44, height: compact ? 38 : 44, borderRadius: radius.control, backgroundColor: category?.color ?? theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}>
         <AppIcon name={isTransfer ? 'arrow.left.arrow.right' : category?.icon ?? (isIncome ? 'arrow.down' : 'arrow.up')} color={category ? readableTextColor(category.color) : theme.onAccentContainer} size={18} />
@@ -74,6 +95,6 @@ export function TransactionRow({
         </AppText>
         {!compact ? <AppText variant="caption" muted>{transaction.localDate}</AppText> : null}
       </View>
-    </Pressable>
+    </MotionPressable>
   );
 }

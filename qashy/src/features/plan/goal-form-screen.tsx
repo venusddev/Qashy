@@ -14,7 +14,7 @@ import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
 import { validateDateInput, validateMoneyInput } from '@/utils/form-validation';
-import { minorToDecimalString, parseMoney } from '@/utils/money';
+import { minorToLocalizedDecimalString, parseMoney } from '@/utils/money';
 
 export function GoalFormScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -22,7 +22,7 @@ export function GoalFormScreen() {
   const state = useFinanceState();
   const theme = useQashyTheme();
   const existing = id ? state.goals.find((item) => item.id === id) : undefined;
-  const toMoneyText = (minor: number) => minorToDecimalString(minor, state.settings.baseCurrency, state.settings.locale);
+  const toMoneyText = (minor: number) => minorToLocalizedDecimalString(minor, state.settings.baseCurrency, state.settings.locale);
   const [name, setName] = useState(existing?.name ?? 'Rainy day fund');
   const [kind, setKind] = useState<GoalKind>(existing?.kind ?? 'saving');
   const [target, setTarget] = useState(existing ? toMoneyText(existing.targetMinor) : '5000');
@@ -93,7 +93,7 @@ export function GoalFormScreen() {
     <FormScreen contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 16 }}>
         <View accessibilityLabel="Goal type" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>
-          {(['saving', 'spending'] as GoalKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item === 'saving' ? 'Savings goal' : 'Planned purchase'} selected={kind === item} onPress={() => setKind(item)} /></View>)}
+          {(['saving', 'spending'] as GoalKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item === 'saving' ? 'Savings goal' : 'Planned purchase'} selected={kind === item} onPress={() => { setKind(item); setLinkedCategoryId(''); }} /></View>)}
         </View>
         <FormField label="Goal name" value={name} onChangeText={setName} />
         <FormField label={`Target (${state.settings.baseCurrency})`} value={target} onChangeText={setTarget} keyboardType="decimal-pad" error={targetError} required />

@@ -5,6 +5,7 @@ import { ActionButton } from '@/components/ui/action-button';
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
+import { MotionView } from '@/components/ui/motion';
 import { PageHeading } from '@/components/ui/page-heading';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { ScreenContainer } from '@/components/ui/screen-container';
@@ -21,7 +22,8 @@ export function PlanScreen() {
   const theme = useQashyTheme();
   const { width } = useWindowDimensions();
   const wide = width >= 860;
-  const budgets = repository.getBudgetStatuses(todayLocal());
+  const today = todayLocal();
+  const budgets = repository.getBudgetStatuses(today, { includeInactiveCustom: true });
   const goals = state.goals.filter((item) => !item.archived && !item.deletedAt);
 
   return (
@@ -31,13 +33,21 @@ export function PlanScreen() {
         <View style={{ flexDirection: wide ? 'row' : 'column', gap: 18, alignItems: 'flex-start' }}>
           <View style={{ flex: 1, width: '100%', gap: 14 }}>
             <SectionHeader title="Budgets" action="New budget" onAction={() => router.push('/budget')} />
-            {budgets.length ? budgets.map(({ budget, snapshot, spentMinor, effectiveLimitMinor, categorySpend }) => {
+            {budgets.length ? budgets.map(({ budget, snapshot, spentMinor, effectiveLimitMinor, categorySpend }, index) => {
               const ratio = effectiveLimitMinor > 0 ? spentMinor / effectiveLimitMinor : spentMinor > 0 ? 1 : 0;
+              const customState = budget.period.unit === 'custom'
+                ? today > snapshot.periodEnd
+                  ? 'Ended · '
+                  : today < snapshot.periodStart
+                    ? 'Upcoming · '
+                    : ''
+                : '';
               return (
-                <Card key={budget.id} style={{ gap: 14 }}>
+                <MotionView key={budget.id} delay={Math.min(index, 5) * 45} animateLayout exit>
+                  <Card style={{ gap: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <View style={{ width: 44, height: 44, borderRadius: radius.control, backgroundColor: budget.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="chart" color={readableTextColor(budget.color)} size={20} /></View>
-                    <View style={{ flex: 1, gap: 2 }}><AppText variant="headline">{budget.name}</AppText><AppText variant="caption" muted>{budget.period.unit} · {snapshot.periodStart} to {snapshot.periodEnd}{budget.rollover ? ` · rollover ${formatMoney(snapshot.rolloverMinor, state.settings.baseCurrency, state.settings.locale, { sign: true })}` : ''}</AppText></View>
+                    <View style={{ flex: 1, gap: 2 }}><AppText variant="headline">{budget.name}</AppText><AppText variant="caption" muted>{customState}{budget.period.unit} · {snapshot.periodStart} to {snapshot.periodEnd}{budget.rollover ? ` · rollover ${formatMoney(snapshot.rolloverMinor, state.settings.baseCurrency, state.settings.locale, { sign: true })}` : ''}</AppText></View>
                     <ActionButton title="Edit" variant="secondary" onPress={() => router.push({ pathname: '/budget', params: { id: budget.id } })} />
                   </View>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
@@ -53,41 +63,50 @@ export function PlanScreen() {
                       })}
                     </View>
                   ) : null}
-                </Card>
+                  </Card>
+                </MotionView>
               );
             }) : (
-              <Card style={{ alignItems: 'center', gap: 12, paddingVertical: 34 }}>
-                <View style={{ width: 54, height: 54, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="chart" color={theme.onAccentContainer} size={24} /></View>
-                <AppText variant="headline">Give spending a gentle boundary</AppText>
-                <AppText muted style={{ textAlign: 'center' }}>Create a monthly, weekly, yearly, or one-off budget. Nothing is forced into envelopes.</AppText>
-                <ActionButton title="Create a budget" icon="plus" onPress={() => router.push('/budget')} />
-              </Card>
+              <MotionView variant="zoom">
+                <Card style={{ alignItems: 'center', gap: 12, paddingVertical: 34 }}>
+                  <View style={{ width: 54, height: 54, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="chart" color={theme.onAccentContainer} size={24} /></View>
+                  <AppText variant="headline">Give spending a gentle boundary</AppText>
+                  <AppText muted style={{ textAlign: 'center' }}>Create a monthly, weekly, yearly, or one-off budget. Nothing is forced into envelopes.</AppText>
+                  <ActionButton title="Create a budget" icon="plus" onPress={() => router.push('/budget')} />
+                </Card>
+              </MotionView>
             )}
           </View>
 
           <View style={{ flex: 1, width: '100%', gap: 14 }}>
             <SectionHeader title="Goals" action="New goal" onAction={() => router.push('/goal')} />
-            {goals.length ? goals.map((goal) => {
+            {goals.length ? goals.map((goal, index) => {
               const progress = repository.getGoalProgress(goal.id);
+              const displayProgress = Math.max(0, progress);
+              const ratio = goal.targetMinor > 0 ? displayProgress / goal.targetMinor : 0;
               return (
-                <Card key={goal.id} style={{ gap: 14 }}>
+                <MotionView key={goal.id} delay={70 + Math.min(index, 5) * 45} animateLayout exit>
+                  <Card style={{ gap: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <View style={{ width: 44, height: 44, borderRadius: radius.control, backgroundColor: goal.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="target" color={readableTextColor(goal.color)} size={21} /></View>
                     <View style={{ flex: 1, gap: 2 }}><AppText variant="headline">{goal.name}</AppText><AppText variant="caption" muted>{goal.kind} goal{goal.targetDate ? ` · by ${goal.targetDate}` : ''}</AppText></View>
                     <ActionButton title="Open" variant="secondary" onPress={() => router.push({ pathname: '/goal', params: { id: goal.id } })} />
                   </View>
-                  <AppText variant="money">{formatMoney(progress, state.settings.baseCurrency, state.settings.locale)}</AppText>
-                  <ProgressBar value={progress / goal.targetMinor} color={goal.color} />
-                  <AppText variant="caption" muted>{Math.min(100, Math.round((progress / goal.targetMinor) * 100))}% of {formatMoney(goal.targetMinor, state.settings.baseCurrency, state.settings.locale)}</AppText>
-                </Card>
+                  <AppText variant="money">{formatMoney(displayProgress, state.settings.baseCurrency, state.settings.locale)}</AppText>
+                  <ProgressBar value={ratio} color={goal.color} />
+                  <AppText variant="caption" muted>{Math.max(0, Math.min(100, Math.round(ratio * 100)))}% of {formatMoney(goal.targetMinor, state.settings.baseCurrency, state.settings.locale)}</AppText>
+                  </Card>
+                </MotionView>
               );
             }) : (
-              <Card style={{ alignItems: 'center', gap: 12, paddingVertical: 34 }}>
-                <View style={{ width: 54, height: 54, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="target" color={theme.onAccentContainer} size={24} /></View>
-                <AppText variant="headline">Save toward something real</AppText>
-                <AppText muted style={{ textAlign: 'center' }}>Track a savings target or a planned purchase with manual or linked progress.</AppText>
-                <ActionButton title="Create a goal" icon="plus" onPress={() => router.push('/goal')} />
-              </Card>
+              <MotionView variant="zoom" delay={70}>
+                <Card style={{ alignItems: 'center', gap: 12, paddingVertical: 34 }}>
+                  <View style={{ width: 54, height: 54, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="target" color={theme.onAccentContainer} size={24} /></View>
+                  <AppText variant="headline">Save toward something real</AppText>
+                  <AppText muted style={{ textAlign: 'center' }}>Track a savings target or a planned purchase with manual or linked progress.</AppText>
+                  <ActionButton title="Create a goal" icon="plus" onPress={() => router.push('/goal')} />
+                </Card>
+              </MotionView>
             )}
           </View>
         </View>

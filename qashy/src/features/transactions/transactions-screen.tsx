@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/card';
 import { ChoiceChip } from '@/components/ui/choice-chip';
 import { FloatingActionButton } from '@/components/ui/floating-action-button';
 import { IconButton } from '@/components/ui/icon-button';
+import { MotionView } from '@/components/ui/motion';
 import { PageHeading } from '@/components/ui/page-heading';
 import { screenContentMetrics } from '@/components/ui/screen-container';
 import { TextButton } from '@/components/ui/text-button';
@@ -102,6 +103,7 @@ export function TransactionsScreen() {
 
   return (
     <View collapsable={false} style={{ flex: 1, backgroundColor: theme.background }}>
+      <MotionView variant="fade" style={{ flex: 1 }}>
       <SectionList
       contentInsetAdjustmentBehavior="automatic"
       style={{ flex: 1, backgroundColor: theme.background }}
@@ -123,7 +125,7 @@ export function TransactionsScreen() {
               onChangeText={setSearch}
               style={{ flex: 1, color: theme.text, fontSize: 16 }}
             />
-            {search ? <IconButton label="Clear search" icon="xmark" iconSize={18} onPress={() => setSearch('')} style={{ marginRight: -10 }} /> : null}
+            {search ? <IconButton label="Clear search" icon="xmark" iconSize={18} enteringVariant="zoom" onPress={() => setSearch('')} style={{ marginRight: -10 }} /> : null}
           </View>
           <View accessibilityLabel="Transaction type filter" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
             {(['all', 'expense', 'income', 'transfer', 'upcoming'] as KindFilter[]).map((item) => (
@@ -147,9 +149,12 @@ export function TransactionsScreen() {
             </View>
           </View>
           {selectionMode ? (
-            <Card style={{ gap: 12, backgroundColor: theme.accentContainer, borderColor: theme.accent }}>
+            <MotionView variant="down" exit animateLayout>
+              <Card style={{ gap: 12, backgroundColor: theme.accentContainer, borderColor: theme.accent }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                <AppText variant="headline">{selectedIds.length} selected</AppText>
+                <MotionView key={selectedIds.length} variant="fade" animateLayout>
+                  <AppText variant="headline">{selectedIds.length} selected</AppText>
+                </MotionView>
                 <TextButton title={selectedIds.length ? 'Clear' : 'Done'} onPress={() => {
                   if (selectedIds.length) setSelectedIds([]);
                   else setSelectionMode(false);
@@ -168,7 +173,8 @@ export function TransactionsScreen() {
                   <ActionButton title="Delete selected" variant="danger" onPress={deleteSelected} />
                 </>
               ) : <AppText variant="caption" muted>Choose one or more transactions below.</AppText>}
-            </Card>
+              </Card>
+            </MotionView>
           ) : null}
         </View>
       }
@@ -178,28 +184,31 @@ export function TransactionsScreen() {
         </View>
       )}
       renderItem={({ item, index, section }) => (
-        <Card style={{ paddingVertical: 0, paddingHorizontal: 14, marginBottom: 4, backgroundColor: selectedIds.includes(item.id) ? theme.accentContainer : theme.surface }}>
-          <TransactionRow
-            transaction={item}
-            selectionMode={selectionMode}
-            selected={selectedIds.includes(item.id)}
-            onLongPress={() => {
-              setSelectionMode(true);
-              toggleSelected(item.id);
-            }}
-            onPress={selectionMode ? () => toggleSelected(item.id) : undefined}
-          />
-        </Card>
+        <MotionView delay={Math.min(index, 5) * 24} animateLayout exit>
+          <Card style={{ paddingVertical: 0, paddingHorizontal: 14, marginBottom: 4, backgroundColor: selectedIds.includes(item.id) ? theme.accentContainer : theme.surface }}>
+            <TransactionRow
+              transaction={item}
+              selectionMode={selectionMode}
+              selected={selectedIds.includes(item.id)}
+              onLongPress={() => {
+                setSelectionMode(true);
+                toggleSelected(item.id);
+              }}
+              onPress={selectionMode ? () => toggleSelected(item.id) : undefined}
+            />
+          </Card>
+        </MotionView>
       )}
       ListEmptyComponent={
-        <View style={{ alignItems: 'center', gap: 12, paddingVertical: 72 }}>
+        <MotionView variant="zoom" style={{ alignItems: 'center', gap: 12, paddingVertical: 72 }}>
           <View style={{ width: 58, height: 58, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="magnifyingglass" color={theme.accent} size={24} /></View>
           <AppText variant="headline">{search || kind !== 'all' ? 'Nothing matches' : 'No transactions yet'}</AppText>
           <AppText muted style={{ textAlign: 'center' }}>{search || kind !== 'all' ? 'Try another search or filter.' : 'Add your first income, expense, or transfer.'}</AppText>
-        </View>
+        </MotionView>
       }
       ListFooterComponent={<View style={{ height: 72 }} />}
       />
+      </MotionView>
       <FloatingActionButton
         label="Add transaction"
         onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/transactions' } })}

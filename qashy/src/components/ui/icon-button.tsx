@@ -1,6 +1,7 @@
-import { Pressable, type PressableProps } from 'react-native';
+import { type PressableProps } from 'react-native';
 
 import { AppIcon } from '@/components/ui/app-icon';
+import { MotionPressable } from '@/components/ui/motion';
 import { useQashyTheme } from '@/theme/theme';
 
 export function IconButton({
@@ -11,6 +12,8 @@ export function IconButton({
   iconSize = 19,
   variant = 'plain',
   disabled = false,
+  enteringVariant,
+  enteringDelay,
   style,
   accessibilityState,
   ...props
@@ -20,6 +23,8 @@ export function IconButton({
   size?: number;
   iconSize?: number;
   variant?: 'plain' | 'surface' | 'accent';
+  enteringVariant?: 'fade' | 'zoom';
+  enteringDelay?: number;
 }) {
   const theme = useQashyTheme();
   const isDisabled = Boolean(disabled);
@@ -30,13 +35,17 @@ export function IconButton({
       : 'transparent';
   const color = variant === 'accent' ? theme.onAccent : theme.textMuted;
   return (
-    <Pressable
+    <MotionPressable
       accessibilityLabel={label}
       accessibilityRole="button"
       accessibilityState={{ ...accessibilityState, disabled: isDisabled }}
       {...props}
       disabled={isDisabled}
+      enteringVariant={enteringVariant}
+      enteringDelay={enteringDelay}
       onPress={onPress}
+      pressedScale={0.93}
+      hoverScale={1.04}
       style={(state) => [
         {
           width: size,
@@ -52,6 +61,6 @@ export function IconButton({
         typeof style === 'function' ? style(state) : style,
       ]}>
       <AppIcon name={icon} color={color} size={iconSize} />
-    </Pressable>
+    </MotionPressable>
   );
 }

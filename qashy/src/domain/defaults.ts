@@ -30,8 +30,9 @@ const CATEGORY_SEEDS = [
 ] as const;
 
 export function createDefaultCategories(): Category[] {
-  return CATEGORY_SEEDS.map(([name, icon, color, kind]) =>
-    createEntity({
+  const firstTimestamp = Date.now() - CATEGORY_SEEDS.length;
+  return CATEGORY_SEEDS.map(([name, icon, color, kind], index) => {
+    const entity = createEntity({
       id: makeId(),
       name,
       icon,
@@ -39,8 +40,10 @@ export function createDefaultCategories(): Category[] {
       kind,
       parentId: null,
       archived: false,
-    }),
-  );
+    });
+    const timestamp = new Date(firstTimestamp + index).toISOString();
+    return { ...entity, createdAt: timestamp, updatedAt: timestamp };
+  });
 }
 
 export function createInitialState(): FinanceState {

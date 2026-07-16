@@ -1,7 +1,11 @@
 import { Dexie, type EntityTable } from 'dexie';
 
 import type { EntityType, FinanceEntity } from '@/domain/models';
-import type { StorageAdapter, StoredEntity } from '@/data/storage-adapter';
+import {
+  compareStoredEntities,
+  type StorageAdapter,
+  type StoredEntity,
+} from '@/data/storage-adapter';
 
 interface DbRecord {
   key: string;
@@ -31,7 +35,8 @@ export class PlatformStorageAdapter implements StorageAdapter {
   }
 
   async readAll(type: EntityType) {
-    const rows = await this.database.records.where('type').equals(type).sortBy('updatedAt');
+    const rows = await this.database.records.where('type').equals(type).toArray();
+    rows.sort((a, b) => compareStoredEntities(a.payload, b.payload));
     return rows.map((row) => row.payload);
   }
 
