@@ -2,6 +2,7 @@ import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { MotionPressable } from '@/components/ui/motion';
 import { useQashyTheme } from '@/theme/theme';
+import { hapticSelection } from '@/utils/haptics';
 
 export type ChoiceChipMode = 'radio' | 'checkbox' | 'button';
 
@@ -30,7 +31,10 @@ export function ChoiceChip({
       aria-checked={selectable ? selected : undefined}
       active={selected}
       disabled={disabled}
-      onPress={onPress}
+      onPress={() => {
+        hapticSelection();
+        onPress();
+      }}
       pressedScale={0.95}
       hoverScale={1.02}
       style={({ pressed }) => ({

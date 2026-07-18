@@ -14,6 +14,7 @@ import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
 import { validateDateInput, validateMoneyInput } from '@/utils/form-validation';
+import { hapticSuccess } from '@/utils/haptics';
 import { minorToLocalizedDecimalString, parseMoney } from '@/utils/money';
 
 export function BudgetFormScreen() {
@@ -81,6 +82,7 @@ export function BudgetFormScreen() {
           .map((categoryId) => ({ categoryId, limitMinor: parseMoney(categoryLimits[categoryId], state.settings.baseCurrency, state.settings.locale) })),
         archived: false,
       }, existing?.id);
+      hapticSuccess();
       router.dismissTo('/plan');
     } catch (reason) {
       showError('Couldn’t save budget', errorMessage(reason, 'Try again.'));

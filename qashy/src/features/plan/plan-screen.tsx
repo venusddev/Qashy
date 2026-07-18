@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { ScrollView, View, useWindowDimensions } from 'react-native';
 
+import { AnimatedMoney } from '@/components/finance/animated-money';
 import { ActionButton } from '@/components/ui/action-button';
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
@@ -14,7 +15,10 @@ import { useFinanceRepository, useFinanceState } from '@/providers/finance-provi
 import { useQashyTheme } from '@/theme/theme';
 import { radius, readableTextColor } from '@/theme/tokens';
 import { todayLocal } from '@/utils/date';
+import { hapticSuccess } from '@/utils/haptics';
 import { formatMoney } from '@/utils/money';
+
+const GOAL_MILESTONES = [0.25, 0.5, 0.75, 1];
 
 export function PlanScreen() {
   const repository = useFinanceRepository();
@@ -51,8 +55,8 @@ export function PlanScreen() {
                     <ActionButton title="Edit" variant="secondary" onPress={() => router.push({ pathname: '/budget', params: { id: budget.id } })} />
                   </View>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
-                    <AppText variant="label">{formatMoney(spentMinor, state.settings.baseCurrency, state.settings.locale)} spent</AppText>
-                    <AppText variant="caption" muted>{formatMoney(Math.max(0, effectiveLimitMinor - spentMinor), state.settings.baseCurrency, state.settings.locale)} left</AppText>
+                    <AppText variant="label"><AnimatedMoney variant="label" minor={spentMinor} currency={state.settings.baseCurrency} locale={state.settings.locale} /> spent</AppText>
+                    <AppText variant="caption" muted><AnimatedMoney variant="caption" muted minor={Math.max(0, effectiveLimitMinor - spentMinor)} currency={state.settings.baseCurrency} locale={state.settings.locale} /> left</AppText>
                   </View>
                   <ProgressBar value={ratio} color={ratio > 1 ? theme.negative as string : budget.color} />
                   {categorySpend.length ? (
@@ -92,8 +96,13 @@ export function PlanScreen() {
                     <View style={{ flex: 1, gap: 2 }}><AppText variant="headline">{goal.name}</AppText><AppText variant="caption" muted>{goal.kind} goal{goal.targetDate ? ` · by ${goal.targetDate}` : ''}</AppText></View>
                     <ActionButton title="Open" variant="secondary" onPress={() => router.push({ pathname: '/goal', params: { id: goal.id } })} />
                   </View>
-                  <AppText variant="money">{formatMoney(displayProgress, state.settings.baseCurrency, state.settings.locale)}</AppText>
-                  <ProgressBar value={ratio} color={goal.color} />
+                  <AnimatedMoney variant="money" minor={displayProgress} currency={state.settings.baseCurrency} locale={state.settings.locale} />
+                  <ProgressBar
+                    value={ratio}
+                    color={goal.color}
+                    milestones={GOAL_MILESTONES}
+                    onMilestone={hapticSuccess}
+                  />
                   <AppText variant="caption" muted>{Math.max(0, Math.min(100, Math.round(ratio * 100)))}% of {formatMoney(goal.targetMinor, state.settings.baseCurrency, state.settings.locale)}</AppText>
                   </Card>
                 </MotionView>

@@ -1,6 +1,13 @@
 import { Link, Slot, usePathname } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, View, useWindowDimensions } from 'react-native';
+import Animated, {
+  ReduceMotion,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/ui/app-icon';
@@ -14,6 +21,45 @@ const NAV_ITEMS = [
   { href: '/plan' as const, label: 'Plan', icon: 'target', match: '/plan' },
   { href: '/more' as const, label: 'More', icon: 'ellipsis.circle', match: '/more' },
 ];
+
+const pressSpring = {
+  damping: 20,
+  stiffness: 380,
+  mass: 0.7,
+  overshootClamping: true,
+  reduceMotion: ReduceMotion.System,
+} as const;
+
+const popSpring = {
+  damping: 14,
+  stiffness: 320,
+  mass: 0.8,
+  reduceMotion: ReduceMotion.System,
+} as const;
+
+function NavIcon({ name, color, size, active }: { name: string; color: string; size: number; active: boolean }) {
+  const reduceMotion = useReducedMotion();
+  const scale = useSharedValue(1);
+  const wasActive = useRef(active);
+
+  useEffect(() => {
+    if (active && !wasActive.current && !reduceMotion) {
+      scale.set(1.2);
+      scale.set(withSpring(1, popSpring));
+    }
+    wasActive.current = active;
+  }, [active, reduceMotion, scale]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  return (
+    <Animated.View style={animatedStyle}>
+      <AppIcon name={name} color={color} size={size} />
+    </Animated.View>
+  );
+}
 
 function NavigationItem({
   item,
@@ -29,11 +75,15 @@ function NavigationItem({
   const theme = useQashyTheme();
   const [showTooltip, setShowTooltip] = useState(false);
   const currentPageProps = active ? { 'aria-current': 'page' as const } : {};
-  const foreground = active ? theme.onAccentContainer : theme.textMuted;
+  const foreground = active ? theme.onAccentContainer : showTooltip ? theme.text : theme.textMuted;
+  const pressScale = useSharedValue(1);
+  const contentStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pressScale.value }],
+  }));
   return (
     <Link href={item.href} asChild>
       {/* Link asChild drops function-form styles on web, so this must stay a
-          plain style object. */}
+          plain style object; animated feedback lives on the inner views. */}
       <Pressable
         {...currentPageProps}
         accessibilityHint={compact && !mobile ? item.label : undefined}
@@ -45,6 +95,8 @@ function NavigationItem({
         onFocus={() => setShowTooltip(true)}
         onHoverIn={() => setShowTooltip(true)}
         onHoverOut={() => setShowTooltip(false)}
+        onPressIn={() => pressScale.set(withSpring(0.95, pressSpring))}
+        onPressOut={() => pressScale.set(withSpring(1, pressSpring))}
         style={{
           minHeight: 48,
           minWidth: mobile ? 64 : compact ? 52 : undefined,
@@ -52,10 +104,6 @@ function NavigationItem({
           paddingHorizontal: mobile ? 4 : compact ? 12 : 16,
           borderRadius: 16,
           borderCurve: 'continuous',
-          flexDirection: mobile ? 'column' : !compact ? 'row' : 'column',
-          alignItems: 'center',
-          justifyContent: mobile ? 'center' : 'flex-start',
-          gap: mobile ? 3 : 10,
           backgroundColor: 'transparent',
           position: 'relative',
           zIndex: showTooltip ? 20 : undefined,
@@ -77,12 +125,43 @@ function NavigationItem({
             }}
           />
         ) : null}
-        <AppIcon name={item.icon} color={foreground} size={mobile ? 22 : 20} />
-        {mobile || !compact ? (
-          <AppText selectable={false} variant="label" numberOfLines={1} style={{ color: foreground, fontSize: mobile ? 11 : 15 }}>
-            {item.label}
-          </AppText>
+        {!active && showTooltip ? (
+          <MotionView
+            variant="fade"
+            duration={120}
+            exit
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: 0,
+              borderRadius: 16,
+              borderCurve: 'continuous',
+              backgroundColor: theme.surfaceMuted,
+            }}
+          />
         ) : null}
+        <Animated.View
+          style={[
+            {
+              flex: 1,
+              alignSelf: 'stretch',
+              flexDirection: mobile ? 'column' : !compact ? 'row' : 'column',
+              alignItems: 'center',
+              justifyContent: mobile ? 'center' : 'flex-start',
+              gap: mobile ? 3 : 10,
+            },
+            contentStyle,
+          ]}>
+          <NavIcon name={item.icon} color={foreground as string} size={mobile ? 22 : 20} active={active} />
+          {mobile || !compact ? (
+            <AppText selectable={false} variant="label" numberOfLines={1} style={{ color: foreground, fontSize: mobile ? 11 : 15 }}>
+              {item.label}
+            </AppText>
+          ) : null}
+        </Animated.View>
         {compact && !mobile && showTooltip ? (
           <MotionView
             variant="right"

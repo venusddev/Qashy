@@ -14,6 +14,7 @@ import { useFinanceRepository, useFinanceState } from '@/providers/finance-provi
 import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { validateCurrencyCode, validateMoneyInput } from '@/utils/form-validation';
+import { hapticSuccess } from '@/utils/haptics';
 import { minorToLocalizedDecimalString, parseMoney } from '@/utils/money';
 
 const COLORS = ['#5966E9', '#007AFF', '#00A58E', '#36A852', '#E7892C', '#E0516B', '#A95BCD'];
@@ -59,6 +60,7 @@ export function AccountFormScreen() {
     setBusy(true);
     try {
       await repository.saveAccount({ name: name.trim() || 'Account', type, currency: currency.toUpperCase(), openingBalanceMinor: parseMoney(opening, currency, state.settings.locale), icon: 'wallet.bifold', color, archived: false }, existing?.id);
+      hapticSuccess();
       if (!existing && returnTo === '/transaction' && router.canGoBack()) router.back();
       else router.dismissTo('/more');
     } catch (reason) {

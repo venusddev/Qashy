@@ -18,6 +18,7 @@ import {
   validateMoneyInput,
   validatePositiveInteger,
 } from '@/utils/form-validation';
+import { hapticSuccess } from '@/utils/haptics';
 import { minorToLocalizedDecimalString, parseMoney } from '@/utils/money';
 
 export function RecurringFormScreen() {
@@ -74,6 +75,7 @@ export function RecurringFormScreen() {
         autoPost,
         active: true,
       }, existing?.id);
+      hapticSuccess();
       router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t save schedule', errorMessage(reason, 'Try again.'));

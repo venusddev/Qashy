@@ -73,7 +73,7 @@ const wrapperStyleKeys = [
   'zIndex',
 ] as const satisfies readonly (keyof ViewStyle)[];
 
-function enteringAnimation(variant: MotionVariant, delay: number) {
+function enteringAnimation(variant: MotionVariant, delay: number, duration = 220) {
   const animation = variant === 'fade'
     ? FadeIn
     : variant === 'down'
@@ -86,7 +86,7 @@ function enteringAnimation(variant: MotionVariant, delay: number) {
             ? ZoomIn
             : FadeInUp;
   return animation
-    .duration(220)
+    .duration(duration)
     .delay(delay)
     .easing(Easing.out(Easing.cubic))
     .reduceMotion(ReduceMotion.System);
@@ -113,16 +113,18 @@ function exitingAnimation(variant: MotionVariant) {
 export function MotionView({
   variant = 'up',
   delay = 0,
+  duration = 220,
   animateLayout = false,
   exit = false,
   ...props
 }: ViewProps & {
   variant?: MotionVariant;
   delay?: number;
+  duration?: number;
   animateLayout?: boolean;
   exit?: boolean;
 }) {
-  const entering = useMemo(() => enteringAnimation(variant, delay), [delay, variant]);
+  const entering = useMemo(() => enteringAnimation(variant, delay, duration), [delay, duration, variant]);
   const exiting = useMemo(() => exit ? exitingAnimation(variant) : undefined, [exit, variant]);
   const layout = useMemo(
     () => animateLayout

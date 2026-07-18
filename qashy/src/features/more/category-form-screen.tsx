@@ -12,6 +12,7 @@ import { FormScreen } from '@/components/ui/form-screen';
 import type { CategoryKind } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
+import { hapticSuccess } from '@/utils/haptics';
 
 const COLORS = ['#5F9F78', '#E08C5A', '#5B8DEF', '#8B76D8', '#E16B75', '#C47ED0', '#6D7885'];
 const ICONS = {
@@ -61,6 +62,7 @@ export function CategoryFormScreen() {
     setBusy(true);
     try {
       await repository.saveCategory({ name: name.trim() || 'Category', kind, color, icon, parentId: selectedParentId || null, archived: false }, existing?.id);
+      hapticSuccess();
       router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t save category', errorMessage(reason, 'Check the form and try again.'));

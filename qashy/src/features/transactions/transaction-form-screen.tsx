@@ -19,6 +19,7 @@ import {
   validateMoneyInput,
   validatePositiveDecimal,
 } from '@/utils/form-validation';
+import { hapticSuccess } from '@/utils/haptics';
 import {
   localizeDecimalString,
   minorToLocalizedDecimalString,
@@ -127,6 +128,7 @@ export function TransactionFormScreen() {
           : undefined,
         status: existing?.status ?? 'posted',
       }, existing?.id);
+      hapticSuccess();
       router.dismissTo(returnTo === '/overview' ? '/overview' : '/transactions');
     } catch (reason) {
       showError('Couldn’t save transaction', errorMessage(reason, 'Check the form and try again.'));

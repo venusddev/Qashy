@@ -17,6 +17,7 @@ import { radius } from '@/theme/tokens';
 import { errorMessage, showError } from '@/utils/confirm';
 import { parseCsvTable } from '@/utils/csv';
 import { todayLocal } from '@/utils/date';
+import { hapticSuccess } from '@/utils/haptics';
 
 type CsvField = Exclude<keyof CsvImportRow, 'rowNumber'>;
 
@@ -113,6 +114,7 @@ export function CsvScreen() {
     setBusy(true);
     try {
       const result = await repository.importCsv(rows, true);
+      hapticSuccess();
       setPreview(result);
       showError('Import complete', `${result.committedIds.length} transactions imported.`);
     } catch (reason) {

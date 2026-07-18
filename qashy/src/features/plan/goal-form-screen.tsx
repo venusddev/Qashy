@@ -14,6 +14,7 @@ import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
 import { validateDateInput, validateMoneyInput } from '@/utils/form-validation';
+import { hapticSuccess } from '@/utils/haptics';
 import { minorToLocalizedDecimalString, parseMoney } from '@/utils/money';
 
 export function GoalFormScreen() {
@@ -78,6 +79,7 @@ export function GoalFormScreen() {
           note: 'Manual contribution',
         }
         : undefined, existing?.id);
+      hapticSuccess();
       router.dismissTo('/plan');
     } catch (reason) {
       showError('Couldn’t save goal', errorMessage(reason, 'Try again.'));

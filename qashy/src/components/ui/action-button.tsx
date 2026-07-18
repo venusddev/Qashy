@@ -1,10 +1,10 @@
-import * as Haptics from 'expo-haptics';
 import { type PressableProps } from 'react-native';
 
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { MotionPressable, MotionView } from '@/components/ui/motion';
 import { useQashyTheme } from '@/theme/theme';
+import { hapticSelection } from '@/utils/haptics';
 
 export function ActionButton({
   title,
@@ -34,7 +34,7 @@ export function ActionButton({
       disabled={isDisabled}
       onPress={(event) => {
         if (isDisabled) return;
-        if (process.env.EXPO_OS === 'ios') Haptics.selectionAsync();
+        hapticSelection();
         onPress?.(event);
       }}
       style={(pressableState) => [

@@ -15,11 +15,13 @@ import { MotionView } from '@/components/ui/motion';
 import { PageHeading } from '@/components/ui/page-heading';
 import { screenContentMetrics } from '@/components/ui/screen-container';
 import { TextButton } from '@/components/ui/text-button';
+import { useScrollHide } from '@/components/ui/use-scroll-hide';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { radius } from '@/theme/tokens';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { shortDate } from '@/utils/date';
+import { hapticImpactLight, hapticSelection, hapticSuccess } from '@/utils/haptics';
 
 type KindFilter = 'all' | 'expense' | 'income' | 'transfer' | 'upcoming';
 
@@ -31,6 +33,7 @@ export function TransactionsScreen() {
   const insets = useSafeAreaInsets();
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
+  const { visibility: fabVisibility, onScroll } = useScrollHide();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
   // Optimistic overlays for batch mutations: context updates from the
@@ -69,7 +72,8 @@ export function TransactionsScreen() {
     return Array.from(groups, ([title, data]) => ({ title, data }));
   }, [transactions]);
 
-  const toggleSelected = (id: string) => {
+  const toggleSelected = (id: string, options?: { silent?: boolean }) => {
+    if (!options?.silent) hapticSelection();
     setSelectedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   };
 
@@ -77,6 +81,7 @@ export function TransactionsScreen() {
     const ids = [...selectedIds];
     try {
       await repository.updateTransactionsCategory(ids, categoryId);
+      hapticSuccess();
       setCategoryOverrides((current) => ({
         ...current,
         ...Object.fromEntries(ids.map((id) => [id, categoryId])),
@@ -93,6 +98,7 @@ export function TransactionsScreen() {
     if (!(await confirmDestructive({ title: ids.length === 1 ? 'Delete 1 transaction?' : `Delete ${ids.length} transactions?`, message: 'They will be removed from your ledger.' }))) return;
     try {
       await repository.deleteEntities('transactions', ids);
+      hapticSuccess();
       setHiddenIds((current) => [...new Set([...current, ...ids])]);
       setSelectedIds([]);
       setSelectionMode(false);
@@ -106,6 +112,8 @@ export function TransactionsScreen() {
       <MotionView variant="fade" style={{ flex: 1 }}>
       <SectionList
       contentInsetAdjustmentBehavior="automatic"
+      onScroll={onScroll}
+      scrollEventThrottle={16}
       style={{ flex: 1, backgroundColor: theme.background }}
       contentContainerStyle={[screenContentMetrics(width, insets.bottom), { gap: 8 }]}
       sections={sections}
@@ -200,8 +208,9 @@ export function TransactionsScreen() {
               selectionMode={selectionMode}
               selected={selectedIds.includes(item.id)}
               onLongPress={() => {
+                if (!selectionMode) hapticImpactLight();
                 setSelectionMode(true);
-                toggleSelected(item.id);
+                toggleSelected(item.id, { silent: !selectionMode });
               }}
               onPress={selectionMode ? () => toggleSelected(item.id) : undefined}
             />
@@ -220,6 +229,7 @@ export function TransactionsScreen() {
       </MotionView>
       <FloatingActionButton
         label="Add transaction"
+        visibility={fabVisibility}
         onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/transactions' } })}
         style={{ position: 'absolute', right: 24, bottom: process.env.EXPO_OS === 'web' && width < 768 ? 92 : 24 }}
       />

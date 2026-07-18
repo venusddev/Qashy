@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { ScrollView, View, useWindowDimensions } from 'react-native';
 
+import { AnimatedMoney } from '@/components/finance/animated-money';
 import { CategoryDonut, SpendLineChart } from '@/components/finance/charts';
 import { TransactionRow } from '@/components/finance/transaction-row';
 import { ActionButton } from '@/components/ui/action-button';
@@ -16,11 +17,13 @@ import { ProgressBar } from '@/components/ui/progress-bar';
 import { ScreenContainer } from '@/components/ui/screen-container';
 import { SectionHeader } from '@/components/ui/section-header';
 import { TextButton } from '@/components/ui/text-button';
+import { useScrollHide } from '@/components/ui/use-scroll-hide';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { radius, readableTextColor } from '@/theme/tokens';
 import { errorMessage, showError } from '@/utils/confirm';
 import { endOfMonth, monthLabel, parseLocalDate, startOfMonth, toLocalDate } from '@/utils/date';
+import { hapticSelection, hapticSuccess } from '@/utils/haptics';
 import { formatMoney } from '@/utils/money';
 
 function moveMonth(value: string, delta: number) {
@@ -35,13 +38,25 @@ export function OverviewScreen() {
   const theme = useQashyTheme();
   const { width } = useWindowDimensions();
   const [month, setMonth] = useState(startOfMonth());
+  // Which way the month content slides: forward months push in from the
+  // right, previous months from the left.
+  const [monthDirection, setMonthDirection] = useState<'left' | 'right'>('right');
   const [pendingUpcomingId, setPendingUpcomingId] = useState<string | null>(null);
+  const { visibility: fabVisibility, onScroll } = useScrollHide();
+
+  const changeMonth = (delta: number) => {
+    hapticSelection();
+    setMonthDirection(delta > 0 ? 'right' : 'left');
+    setMonth((value) => moveMonth(value, delta));
+  };
 
   const resolveUpcoming = async (id: string, action: 'skip' | 'confirm') => {
     if (pendingUpcomingId) return;
     setPendingUpcomingId(id);
     try {
       await (action === 'skip' ? repository.skipUpcoming(id) : repository.confirmUpcoming(id));
+      if (action === 'confirm') hapticSuccess();
+      else hapticSelection();
     } catch (reason) {
       showError(action === 'skip' ? 'Couldn’t skip this item' : 'Couldn’t mark this item paid', errorMessage(reason, 'Try again.'));
     } finally {
@@ -66,7 +81,7 @@ export function OverviewScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.background }}>
-      <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }}>
+      <ScrollView contentInsetAdjustmentBehavior="automatic" onScroll={onScroll} scrollEventThrottle={16} style={{ flex: 1, backgroundColor: theme.background }}>
         <ScreenContainer>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           {process.env.EXPO_OS === 'web' ? (
@@ -80,19 +95,25 @@ export function OverviewScreen() {
             </View>
           )}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: theme.surface, borderRadius: 999, padding: 4, borderWidth: 1, borderColor: theme.border }}>
-            <IconButton label="Previous month" icon="chevron.left" iconSize={16} onPress={() => setMonth((value) => moveMonth(value, -1))} />
-            <AppText variant="label" style={{ minWidth: 116, textAlign: 'center' }}>{monthLabel(month, locale)}</AppText>
-            <IconButton label="Next month" icon="chevron.right" iconSize={16} onPress={() => setMonth((value) => moveMonth(value, 1))} />
+            <IconButton label="Previous month" icon="chevron.left" iconSize={16} onPress={() => changeMonth(-1)} />
+            <MotionView key={month} variant={monthDirection} duration={180} style={{ minWidth: 116 }}>
+              <AppText variant="label" style={{ textAlign: 'center' }}>{monthLabel(month, locale)}</AppText>
+            </MotionView>
+            <IconButton label="Next month" icon="chevron.right" iconSize={16} onPress={() => changeMonth(1)} />
           </View>
         </View>
 
         <Card style={{ padding: 24, backgroundColor: theme.surfaceElevated }}>
-          <MotionView key={month} variant="fade" exit animateLayout style={{ gap: 22 }}>
+          <MotionView key={month} variant={monthDirection} exit animateLayout style={{ gap: 22 }}>
             <View style={{ gap: 6 }}>
               <AppText variant="caption" style={{ color: theme.accent }}>CURRENT NET WORTH</AppText>
-              <AppText variant="money" style={{ fontSize: 34, lineHeight: 40 }}>
-                {formatMoney(summary.netWorthMinor, currency, locale)}
-              </AppText>
+              <AnimatedMoney
+                minor={summary.netWorthMinor}
+                currency={currency}
+                locale={locale}
+                variant="money"
+                style={{ fontSize: 34, lineHeight: 40 }}
+              />
               {summary.missingExchangeRates.length ? (
                 <AppText variant="caption" style={{ color: theme.warning }}>
                   Excludes {summary.missingExchangeRates.map((rate) => rate.fromCurrency).join(', ')} until an effective exchange rate is added.
@@ -107,7 +128,14 @@ export function OverviewScreen() {
               ].map(([label, amount, color]) => (
                 <View key={label as string} style={{ minWidth: 130, flex: 1, gap: 4 }}>
                   <AppText variant="caption" muted>{label as string}</AppText>
-                  <AppText variant="headline" style={{ color: color as never, fontVariant: ['tabular-nums'] }}>{formatMoney(amount as number, currency, locale, { compact: width < 520 })}</AppText>
+                  <AnimatedMoney
+                    minor={amount as number}
+                    currency={currency}
+                    locale={locale}
+                    compact={width < 520}
+                    variant="headline"
+                    style={{ color: color as never, fontVariant: ['tabular-nums'] }}
+                  />
                 </View>
               ))}
             </View>
@@ -117,11 +145,15 @@ export function OverviewScreen() {
         <View style={{ flexDirection: wide ? 'row' : 'column', gap: 18, alignItems: 'stretch' }}>
           <Card style={{ flex: 1, gap: 16 }}>
             <SectionHeader title="Spending rhythm" />
-            <SpendLineChart key={`spend-${month}`} points={summary.dailySpend} currency={currency} locale={locale} />
+            <MotionView key={`spend-${month}`} variant={monthDirection} exit>
+              <SpendLineChart points={summary.dailySpend} currency={currency} locale={locale} />
+            </MotionView>
           </Card>
           <Card style={{ flex: 1, gap: 18 }}>
             <SectionHeader title="By category" />
-            <CategoryDonut key={`categories-${month}`} items={summary.categorySpend} currency={currency} locale={locale} />
+            <MotionView key={`categories-${month}`} variant={monthDirection} exit>
+              <CategoryDonut items={summary.categorySpend} currency={currency} locale={locale} />
+            </MotionView>
           </Card>
         </View>
 
@@ -131,7 +163,7 @@ export function OverviewScreen() {
             {summary.budgetLimitMinor > 0 || summary.budgetSpentMinor > 0 ? (
               <>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
-                  <AppText variant="headline">{formatMoney(summary.budgetSpentMinor, currency, locale)}</AppText>
+                  <AnimatedMoney minor={summary.budgetSpentMinor} currency={currency} locale={locale} variant="headline" />
                   <AppText muted>of {formatMoney(summary.budgetLimitMinor, currency, locale)}</AppText>
                 </View>
                 <ProgressBar value={budgetProgress} color={budgetProgress > 1 ? theme.negative as string : undefined} />
@@ -148,7 +180,7 @@ export function OverviewScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                   <View style={{ width: 38, height: 38, borderRadius: radius.control, backgroundColor: account.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="wallet" color={readableTextColor(account.color)} size={17} /></View>
                   <View style={{ flex: 1 }}><AppText variant="label">{account.name}</AppText><AppText variant="caption" muted>{account.currency} · {account.type}</AppText></View>
-                  <AppText variant="label" style={{ fontVariant: ['tabular-nums'] }}>{formatMoney(balanceMinor, account.currency, locale)}</AppText>
+                  <AnimatedMoney minor={balanceMinor} currency={account.currency} locale={locale} variant="label" style={{ fontVariant: ['tabular-nums'] }} />
                 </View>
               </MotionView>
             ))}
@@ -193,6 +225,7 @@ export function OverviewScreen() {
       </ScrollView>
       <FloatingActionButton
         label="Add transaction"
+        visibility={fabVisibility}
         onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/overview' } })}
         style={{ position: 'absolute', right: width < 768 ? 20 : 32, bottom: process.env.EXPO_OS === 'web' && width < 768 ? 92 : 26 }}
       />

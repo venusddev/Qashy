@@ -10,6 +10,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
+import { useAnimatedMinorAmount } from '@/components/finance/animated-money';
 import { AppText } from '@/components/ui/app-text';
 import { MotionView } from '@/components/ui/motion';
 import type { DashboardSummary } from '@/domain/models';
@@ -122,6 +123,27 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
       .slice(0, index)
       .reduce((sum, previous) => sum + (total ? (previous.amountMinor / total) * circumference : 0), 0),
   }));
+  const reduceMotion = useReducedMotion();
+  // Sweeps a track-colored cover arc away clockwise so the segments appear to
+  // draw themselves in sequence, mirroring the line chart's reveal.
+  const revealed = useSharedValue(reduceMotion ? circumference + 1 : 0);
+  const signature = slices.map((slice) => `${slice.key}:${slice.amountMinor}`).join('|');
+
+  useEffect(() => {
+    revealed.set(reduceMotion ? circumference + 1 : 0);
+    revealed.set(withTiming(circumference + 1, {
+      duration: 640,
+      easing: Easing.out(Easing.cubic),
+      reduceMotion: ReduceMotion.System,
+    }));
+  }, [circumference, reduceMotion, revealed, signature]);
+
+  const coverProps = useAnimatedProps(() => ({
+    // Negative offset walks the cover's gap clockwise from the top so segments
+    // reveal in the same order they are stacked.
+    strokeDashoffset: -revealed.value,
+  }));
+  const animatedTotal = useAnimatedMinorAmount(total);
   return (
     <MotionView variant="zoom" delay={70} style={{ flexDirection: 'row', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
       <View style={{ width: 126, height: 126 }}>
@@ -143,9 +165,22 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
                 origin="63, 63"
               />
           ))}
+          <AnimatedCircle
+            animatedProps={coverProps}
+            cx="63"
+            cy="63"
+            r={radius}
+            fill="none"
+            stroke={theme.surfaceMuted as string}
+            strokeWidth="17"
+            strokeDasharray={`${circumference} ${circumference}`}
+            strokeLinecap="butt"
+            rotation="-90"
+            origin="63, 63"
+          />
           <SvgText x="63" y="59" textAnchor="middle" fill={theme.textMuted as string} fontSize="10">SPENT</SvgText>
           <SvgText x="63" y="77" textAnchor="middle" fill={theme.text as string} fontSize="13" fontWeight="700">
-            {formatMoney(total, currency, locale, { compact: true })}
+            {formatMoney(animatedTotal, currency, locale, { compact: true })}
           </SvgText>
         </Svg>
       </View>

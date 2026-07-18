@@ -13,6 +13,7 @@ import {
   validateDateInput,
   validatePositiveDecimal,
 } from '@/utils/form-validation';
+import { hapticSuccess } from '@/utils/haptics';
 import {
   localizeDecimalString,
   normalizeDecimalString,
@@ -46,6 +47,7 @@ export function ExchangeRateScreen() {
         rate: normalizeDecimalString(rate, state.settings.locale),
         effectiveDate,
       }, existing?.id);
+      hapticSuccess();
       router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t save rate', errorMessage(reason, 'Check the form and try again.'));

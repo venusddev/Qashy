@@ -1,5 +1,7 @@
 import { Alert } from 'react-native';
 
+import { hapticWarning } from '@/utils/haptics';
+
 interface ConfirmOptions {
   title: string;
   message?: string;
@@ -15,7 +17,14 @@ export function confirmDestructive({ title, message, confirmLabel = 'Delete' }: 
   return new Promise<boolean>((resolve) => {
     Alert.alert(title, message, [
       { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-      { text: confirmLabel, style: 'destructive', onPress: () => resolve(true) },
+      {
+        text: confirmLabel,
+        style: 'destructive',
+        onPress: () => {
+          hapticWarning();
+          resolve(true);
+        },
+      },
     ], { cancelable: true, onDismiss: () => resolve(false) });
   });
 }
