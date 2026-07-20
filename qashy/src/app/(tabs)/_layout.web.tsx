@@ -13,12 +13,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { MotionView } from '@/components/ui/motion';
+import { useLocalization } from '@/localization/localization';
 import { useQashyTheme } from '@/theme/theme';
 
+// Icon names mirror the SF Symbols used by the native tabs in `_layout.tsx` so
+// the same section reads the same on every platform.
 const NAV_ITEMS = [
-  { href: '/overview' as const, label: 'Overview', icon: 'wallet', match: '/overview' },
-  { href: '/transactions' as const, label: 'Transactions', icon: 'arrow.left.arrow.right', match: '/transactions' },
-  { href: '/plan' as const, label: 'Plan', icon: 'target', match: '/plan' },
+  { href: '/overview' as const, label: 'Overview', icon: 'house', match: '/overview' },
+  { href: '/transactions' as const, label: 'Transactions', icon: 'list.bullet.rectangle', match: '/transactions' },
+  { href: '/plan' as const, label: 'Plan', icon: 'chart.pie', match: '/plan' },
   { href: '/more' as const, label: 'More', icon: 'ellipsis.circle', match: '/more' },
 ];
 
@@ -66,13 +69,17 @@ function NavigationItem({
   active,
   compact,
   mobile,
+  narrow,
 }: {
   item: typeof NAV_ITEMS[number];
   active: boolean;
   compact: boolean;
   mobile: boolean;
+  /** Viewports where a quarter of the bar is too tight for "Transactions". */
+  narrow: boolean;
 }) {
   const theme = useQashyTheme();
+  const { t } = useLocalization();
   const [showTooltip, setShowTooltip] = useState(false);
   const currentPageProps = active ? { 'aria-current': 'page' as const } : {};
   const foreground = active ? theme.onAccentContainer : showTooltip ? theme.text : theme.textMuted;
@@ -86,8 +93,8 @@ function NavigationItem({
           plain style object; animated feedback lives on the inner views. */}
       <Pressable
         {...currentPageProps}
-        accessibilityHint={compact && !mobile ? item.label : undefined}
-        accessibilityLabel={item.label}
+        accessibilityHint={compact && !mobile ? t(item.label) : undefined}
+        accessibilityLabel={t(item.label)}
         accessibilityRole="link"
         accessibilityState={{ selected: active }}
         aria-selected={active}
@@ -101,7 +108,7 @@ function NavigationItem({
           minHeight: 48,
           minWidth: mobile ? 64 : compact ? 52 : undefined,
           flex: mobile ? 1 : undefined,
-          paddingHorizontal: mobile ? 4 : compact ? 12 : 16,
+          paddingHorizontal: mobile ? (narrow ? 2 : 4) : compact ? 12 : 16,
           borderRadius: 16,
           borderCurve: 'continuous',
           backgroundColor: 'transparent',
@@ -157,7 +164,7 @@ function NavigationItem({
           ]}>
           <NavIcon name={item.icon} color={foreground as string} size={mobile ? 22 : 20} active={active} />
           {mobile || !compact ? (
-            <AppText selectable={false} variant="label" numberOfLines={1} style={{ color: foreground, fontSize: mobile ? 11 : 15 }}>
+            <AppText selectable={false} variant="label" numberOfLines={1} style={{ color: foreground, fontSize: mobile ? (narrow ? 10 : 11) : 15, letterSpacing: mobile && narrow ? -0.2 : undefined }}>
               {item.label}
             </AppText>
           ) : null}
@@ -196,10 +203,11 @@ export default function WebTabsLayout() {
   const theme = useQashyTheme();
   const compact = width < 1200;
   const mobile = width < 768;
+  const narrow = width < 360;
 
   const renderNavigation = (targetMobile: boolean) => NAV_ITEMS.map((item) => {
     const active = pathname === item.match || pathname.startsWith(`${item.match}/`) || (item.match === '/overview' && pathname === '/');
-    return <NavigationItem key={item.label} item={item} active={active} compact={targetMobile ? false : compact} mobile={targetMobile} />;
+    return <NavigationItem key={item.label} item={item} active={active} compact={targetMobile ? false : compact} mobile={targetMobile} narrow={narrow} />;
   });
 
   return (
@@ -210,7 +218,12 @@ export default function WebTabsLayout() {
         style={{
           display: mobile ? 'none' : 'flex',
           width: compact ? 84 : 244,
-          padding: 18,
+          // `viewport-fit=cover` means an installed PWA draws under the status
+          // bar and the display cutouts, so the rail has to pad by real insets.
+          paddingTop: 18 + insets.top,
+          paddingBottom: 18 + insets.bottom,
+          paddingLeft: 18 + insets.left,
+          paddingRight: 18,
           borderRightWidth: 1,
           borderRightColor: theme.border,
           gap: 28,
@@ -243,7 +256,8 @@ export default function WebTabsLayout() {
           backgroundColor: theme.surfaceElevated,
           flexDirection: 'row',
           alignItems: 'center',
-          paddingHorizontal: 8,
+          paddingLeft: 8 + insets.left,
+          paddingRight: 8 + insets.right,
           paddingTop: 6,
           paddingBottom: Math.max(6, insets.bottom),
           borderTopWidth: 1,

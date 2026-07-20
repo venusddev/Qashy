@@ -2,6 +2,7 @@ import { type PressableProps } from 'react-native';
 
 import { AppIcon } from '@/components/ui/app-icon';
 import { MotionPressable } from '@/components/ui/motion';
+import { useLocalization } from '@/localization/localization';
 import { useQashyTheme } from '@/theme/theme';
 
 export function IconButton({
@@ -27,6 +28,7 @@ export function IconButton({
   enteringDelay?: number;
 }) {
   const theme = useQashyTheme();
+  const { t } = useLocalization();
   const isDisabled = Boolean(disabled);
   const backgroundColor = variant === 'accent'
     ? theme.accent
@@ -36,7 +38,7 @@ export function IconButton({
   const color = variant === 'accent' ? theme.onAccent : theme.textMuted;
   return (
     <MotionPressable
-      accessibilityLabel={label}
+      accessibilityLabel={t(label)}
       accessibilityRole="button"
       accessibilityState={{ ...accessibilityState, disabled: isDisabled }}
       {...props}
@@ -59,6 +61,10 @@ export function IconButton({
           opacity: isDisabled ? 0.4 : state.pressed ? 0.66 : 1,
         },
         typeof style === 'function' ? style(state) : style,
+        // Applied last so a caller style (for example the floating action
+        // button's shadow layer) can never paint a disabled control at full
+        // opacity.
+        isDisabled ? { opacity: 0.4 } : null,
       ]}>
       <AppIcon name={icon} color={color} size={iconSize} />
     </MotionPressable>

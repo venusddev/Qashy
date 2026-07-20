@@ -1,13 +1,21 @@
-name: Create Production Builds
+name: Create Development Builds
 
+# Development clients are needed on demand — a new native module, a new
+# teammate, an expired build — not on every push to a working branch.
 on:
-  push:
-    branches:
-      - agentic-experiment
+  workflow_dispatch:
 
 jobs:
-  build_android:
-    type: build # This job type creates a production build for Android
+  build_ios_development:
+    name: Build iOS development client
+    type: build
+    params:
+      platform: ios
+      profile: development
+
+  build_android_development:
+    name: Build Android development client
+    type: build
     params:
       platform: android
       profile: development

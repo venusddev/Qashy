@@ -107,9 +107,9 @@ export function RecurringFormScreen() {
         <FormField label="Title" value={title} onChangeText={setTitle} placeholder="Rent, salary, subscription…" />
         <FormField label={`Amount (${account?.currency ?? state.settings.baseCurrency})`} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" error={amountError} required />
         <AppText variant="label">Account</AppText>
-        <View accessibilityLabel="Recurring account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{accountChoices.map((item) => <ChoiceChip key={item.id} label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={accountId === item.id} onPress={() => setAccountId(item.id)} />)}</View>
+        <View accessibilityLabel="Recurring account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{accountChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={accountId === item.id} onPress={() => setAccountId(item.id)} />)}</View>
         <AppText variant="label">Category</AppText>
-        <View accessibilityLabel="Recurring category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{categories.map((item) => <ChoiceChip key={item.id} label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}</View>
+        <View accessibilityLabel="Recurring category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{categories.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}</View>
         {referencesArchivedEntity ? <AppText variant="caption" muted>This schedule stays paused until its archived account and category are restored.</AppText> : null}
       </Card>
 

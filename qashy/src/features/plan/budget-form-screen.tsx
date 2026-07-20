@@ -127,11 +127,11 @@ export function BudgetFormScreen() {
         <AppText variant="headline">Categories and caps</AppText>
         <AppText muted>Leave every category unselected to count all expenses.</AppText>
         <View accessibilityLabel="Included categories" role="group" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-          {expenseCategories.map((category) => <ChoiceChip mode="checkbox" key={category.id} label={`${category.name}${category.archived ? ' (archived)' : ''}`} selected={selectedCategories.includes(category.id)} onPress={() => toggleCategory(category.id)} />)}
+          {expenseCategories.map((category) => <ChoiceChip mode="checkbox" key={category.id} literal label={`${category.name}${category.archived ? ' (archived)' : ''}`} selected={selectedCategories.includes(category.id)} onPress={() => toggleCategory(category.id)} />)}
         </View>
         {selectedCategories.map((categoryId) => {
           const category = expenseCategories.find((item) => item.id === categoryId);
-          return category ? <FormField key={category.id} label={`${category.name} cap (optional)`} value={categoryLimits[category.id] ?? ''} onChangeText={(value) => setCategoryLimits((current) => ({ ...current, [category.id]: value }))} keyboardType="decimal-pad" placeholder="No cap" error={categoryLimitErrors[category.id]} /> : null;
+          return category ? <FormField key={category.id} literalLabel label={`${category.name} cap (optional)`} value={categoryLimits[category.id] ?? ''} onChangeText={(value) => setCategoryLimits((current) => ({ ...current, [category.id]: value }))} keyboardType="decimal-pad" placeholder="No cap" error={categoryLimitErrors[category.id]} /> : null;
         })}
       </Card>
 

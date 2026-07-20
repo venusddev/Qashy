@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 
 import { QASHY_ACCENT } from '@/domain/defaults';
+import { useLocalization } from '@/localization/localization';
 import { useFinanceState } from '@/providers/finance-provider';
 import {
   accessibleAccentColor,
@@ -98,6 +99,7 @@ function systemTokens(dark: boolean): ThemeTokens {
 
 export function QashyThemeProvider({ children }: { children: ReactNode }) {
   const { settings } = useFinanceState();
+  const { isRtl } = useLocalization();
   const systemScheme = useColorScheme();
   const mode = settings.themeMode === 'system' ? (systemScheme === 'dark' ? 'dark' : 'light') : settings.themeMode;
   const usesSystemAccent = settings.accentSource === 'system';
@@ -109,9 +111,7 @@ export function QashyThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (process.env.EXPO_OS !== 'web' && typeof Appearance.setColorScheme === 'function') {
-      (Appearance.setColorScheme as (scheme: 'light' | 'dark' | null) => void)(
-        settings.themeMode === 'system' ? null : settings.themeMode,
-      );
+      Appearance.setColorScheme(settings.themeMode === 'system' ? 'unspecified' : settings.themeMode);
     }
   }, [settings.themeMode]);
 
@@ -131,7 +131,7 @@ export function QashyThemeProvider({ children }: { children: ReactNode }) {
   return (
     <ThemeContext value={tokens}>
       <Host
-        style={{ flex: 1 }}
+        style={{ flex: 1, direction: isRtl ? 'rtl' : 'ltr' }}
         colorScheme={mode}
         seedColor={usesSystemAccent && Platform.OS === 'android' ? undefined : tokens.staticAccent}>
         <NavigationThemeProvider value={navigationTheme}>{children}</NavigationThemeProvider>

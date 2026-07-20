@@ -5,6 +5,7 @@ import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { MotionPressable, MotionView } from '@/components/ui/motion';
 import type { TransactionRecord } from '@/domain/models';
+import { useLocalization } from '@/localization/localization';
 import { useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { radius, readableTextColor } from '@/theme/tokens';
@@ -29,6 +30,7 @@ export function TransactionRow({
 }) {
   const { settings, accounts, categories } = useFinanceState();
   const theme = useQashyTheme();
+  const { t } = useLocalization();
   const account = accounts.find((item) => item.id === transaction.accountId);
   const category = categories.find((item) => item.id === transaction.categoryId);
   const destination = accounts.find((item) => item.id === transaction.destinationAccountId);
@@ -47,6 +49,12 @@ export function TransactionRow({
     ? `${account?.name ?? 'Unknown account'} to ${destination?.name ?? 'Unknown account'}`
     : account?.name ?? 'Unknown account';
   const rowLabel = `${direction}, ${transaction.title}, ${signedAmount}, ${category?.name ?? (isTransfer ? 'transfer' : 'uncategorized')}, ${accountContext}, ${transaction.localDate}`;
+  // The fallbacks are the only translatable parts of the caption, so they are
+  // resolved here and the whole line renders verbatim. Otherwise a category or
+  // account the user named "Savings" would be rewritten by the dictionary.
+  const categoryLabel = category?.name ?? t(isTransfer ? 'Transfer' : 'Uncategorized');
+  const accountLabel = account?.name ?? t('Unknown account');
+  const amountText = `${isIncome ? '+' : isTransfer ? '' : '-'}${formatMoney(transaction.amountMinor, transaction.currency, settings.locale)}`;
 
   return (
     <MotionPressable
@@ -80,20 +88,20 @@ export function TransactionRow({
       </View>
       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
         <View style={{ flexDirection: 'row', gap: 7, alignItems: 'center' }}>
-          <AppText variant="label" numberOfLines={1} style={{ flexShrink: 1 }}>{transaction.title}</AppText>
+          <AppText literal variant="label" numberOfLines={1} style={{ flexShrink: 1 }}>{transaction.title}</AppText>
           {transaction.status === 'upcoming' ? (
             <View style={{ borderRadius: 99, paddingHorizontal: 7, paddingVertical: 2, backgroundColor: theme.accentContainer }}>
               <AppText selectable={false} variant="caption" style={{ color: theme.onAccentContainer, fontSize: 11 }}>UPCOMING</AppText>
             </View>
           ) : null}
         </View>
-        <AppText variant="caption" muted numberOfLines={1}>{category?.name ?? (isTransfer ? 'Transfer' : 'Uncategorized')} · {account?.name ?? 'Unknown account'}</AppText>
+        <AppText literal variant="caption" muted numberOfLines={1}>{`${categoryLabel} · ${accountLabel}`}</AppText>
       </View>
       <View style={{ alignItems: 'flex-end', gap: 2 }}>
-        <AppText variant="label" style={{ color, fontVariant: ['tabular-nums'] }}>
-          {isIncome ? '+' : isTransfer ? '' : '-'}{formatMoney(transaction.amountMinor, transaction.currency, settings.locale)}
+        <AppText literal variant="label" style={{ color, fontVariant: ['tabular-nums'] }}>
+          {amountText}
         </AppText>
-        {!compact ? <AppText variant="caption" muted>{transaction.localDate}</AppText> : null}
+        {!compact ? <AppText literal variant="caption" muted>{transaction.localDate}</AppText> : null}
       </View>
     </MotionPressable>
   );

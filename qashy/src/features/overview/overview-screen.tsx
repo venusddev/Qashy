@@ -18,6 +18,7 @@ import { ScreenContainer } from '@/components/ui/screen-container';
 import { SectionHeader } from '@/components/ui/section-header';
 import { TextButton } from '@/components/ui/text-button';
 import { useScrollHide } from '@/components/ui/use-scroll-hide';
+import { useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { radius, readableTextColor } from '@/theme/tokens';
@@ -36,6 +37,7 @@ export function OverviewScreen() {
   const repository = useFinanceRepository();
   const state = useFinanceState();
   const theme = useQashyTheme();
+  const { t } = useLocalization();
   const { width } = useWindowDimensions();
   const [month, setMonth] = useState(startOfMonth());
   // Which way the month content slides: forward months push in from the
@@ -97,7 +99,7 @@ export function OverviewScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: theme.surface, borderRadius: 999, padding: 4, borderWidth: 1, borderColor: theme.border }}>
             <IconButton label="Previous month" icon="chevron.left" iconSize={16} onPress={() => changeMonth(-1)} />
             <MotionView key={month} variant={monthDirection} duration={180} style={{ minWidth: 116 }}>
-              <AppText variant="label" style={{ textAlign: 'center' }}>{monthLabel(month, locale)}</AppText>
+              <AppText literal variant="label" style={{ textAlign: 'center' }}>{monthLabel(month, locale)}</AppText>
             </MotionView>
             <IconButton label="Next month" icon="chevron.right" iconSize={16} onPress={() => changeMonth(1)} />
           </View>
@@ -115,8 +117,8 @@ export function OverviewScreen() {
                 style={{ fontSize: 34, lineHeight: 40 }}
               />
               {summary.missingExchangeRates.length ? (
-                <AppText variant="caption" style={{ color: theme.warning }}>
-                  Excludes {summary.missingExchangeRates.map((rate) => rate.fromCurrency).join(', ')} until an effective exchange rate is added.
+                <AppText literal variant="caption" style={{ color: theme.warning }}>
+                  {`Excludes ${summary.missingExchangeRates.map((rate) => rate.fromCurrency).join(', ')} until an effective exchange rate is added.`}
                 </AppText>
               ) : null}
             </View>
@@ -164,7 +166,7 @@ export function OverviewScreen() {
               <>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
                   <AnimatedMoney minor={summary.budgetSpentMinor} currency={currency} locale={locale} variant="headline" />
-                  <AppText muted>of {formatMoney(summary.budgetLimitMinor, currency, locale)}</AppText>
+                  <AppText literal muted>{`of ${formatMoney(summary.budgetLimitMinor, currency, locale)}`}</AppText>
                 </View>
                 <ProgressBar value={budgetProgress} color={budgetProgress > 1 ? theme.negative as string : undefined} />
                 <AppText variant="caption" muted>{budgetProgress > 1 ? 'Over budget — review the categories driving it.' : `${Math.max(0, Math.round((1 - budgetProgress) * 100))}% remains in this period.`}</AppText>
@@ -179,7 +181,7 @@ export function OverviewScreen() {
               <MotionView key={account.id} delay={Math.min(index, 5) * 35} variant="right">
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                   <View style={{ width: 38, height: 38, borderRadius: radius.control, backgroundColor: account.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="wallet" color={readableTextColor(account.color)} size={17} /></View>
-                  <View style={{ flex: 1 }}><AppText variant="label">{account.name}</AppText><AppText variant="caption" muted>{account.currency} · {account.type}</AppText></View>
+                  <View style={{ flex: 1 }}><AppText literal variant="label">{account.name}</AppText><AppText literal variant="caption" muted>{`${account.currency} · ${t(account.type)}`}</AppText></View>
                   <AnimatedMoney minor={balanceMinor} currency={account.currency} locale={locale} variant="label" style={{ fontVariant: ['tabular-nums'] }} />
                 </View>
               </MotionView>

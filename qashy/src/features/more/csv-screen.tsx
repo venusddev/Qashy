@@ -12,6 +12,7 @@ import { ChoiceChip } from '@/components/ui/choice-chip';
 import type { CsvImportRow, ImportResult, TransactionKind, TransactionStatus } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { FormScreen } from '@/components/ui/form-screen';
+import { useLocalization } from '@/localization/localization';
 import { useQashyTheme } from '@/theme/theme';
 import { radius } from '@/theme/tokens';
 import { errorMessage, showError } from '@/utils/confirm';
@@ -49,6 +50,7 @@ export function CsvScreen() {
   const repository = useFinanceRepository();
   const state = useFinanceState();
   const theme = useQashyTheme();
+  const { t } = useLocalization();
   const [sourceRows, setSourceRows] = useState<Record<string, string | number>[]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
   const [mapping, setMapping] = useState<Record<CsvField, string>>(() => inferMapping([]));
@@ -78,6 +80,15 @@ export function CsvScreen() {
       setSourceRows(table.rows);
       setHeaders(table.headers);
       setMapping(inferMapping(table.headers));
+      // Malformed rows no longer abort the file, but they must not disappear
+      // quietly either — the user needs to know what was left behind.
+      if (table.rowErrors.length) {
+        const lines = table.rowErrors.map((item) => item.lineNumber).join(', ');
+        showError(
+          `Skipped ${table.rowErrors.length} unreadable ${table.rowErrors.length === 1 ? 'row' : 'rows'}`,
+          `The rest of the file was read. Check ${table.rowErrors.length === 1 ? 'line' : 'lines'} ${lines} for stray quotes.`,
+        );
+      }
     } catch (reason) {
       showError('Couldn’t read CSV', errorMessage(reason, 'Choose another UTF-8 CSV file.'));
     }
@@ -185,7 +196,7 @@ export function CsvScreen() {
                       setPreview(null);
                     }}
                     testID={`mapping-${field.key}`}>
-                    <Picker.Item label="Not mapped" value="" />
+                    <Picker.Item label={t('Not mapped')} value="" />
                     {headers.map((header) => <Picker.Item key={header} label={header} value={header} />)}
                   </Picker>
                 </View>
@@ -194,14 +205,14 @@ export function CsvScreen() {
             <AppText variant="label">Default account</AppText>
             <View accessibilityLabel="Default account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               {state.accounts.filter((item) => !item.archived).map((account) => (
-                <ChoiceChip key={account.id} label={account.name} selected={defaultAccountId === account.id} onPress={() => { setDefaultAccountId(account.id); setPreview(null); }} />
+                <ChoiceChip key={account.id} literal label={account.name} selected={defaultAccountId === account.id} onPress={() => { setDefaultAccountId(account.id); setPreview(null); }} />
               ))}
             </View>
             <AppText variant="label">Default category</AppText>
             <View accessibilityLabel="Default category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               <ChoiceChip label="None" selected={!defaultCategoryId} onPress={() => { setDefaultCategoryId(''); setPreview(null); }} />
               {state.categories.filter((item) => !item.archived).map((category) => (
-                <ChoiceChip key={category.id} label={category.name} selected={defaultCategoryId === category.id} onPress={() => { setDefaultCategoryId(category.id); setPreview(null); }} />
+                <ChoiceChip key={category.id} literal label={category.name} selected={defaultCategoryId === category.id} onPress={() => { setDefaultCategoryId(category.id); setPreview(null); }} />
               ))}
             </View>
             {missingRequiredFields.length ? (
@@ -219,7 +230,10 @@ export function CsvScreen() {
               <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: radius.card, backgroundColor: theme.surfaceMuted }}><AppText variant="headline">{preview.duplicateRows.length}</AppText><AppText variant="caption" muted>Duplicates</AppText></View>
               <View style={{ flex: 1, minWidth: 120, padding: 14, borderRadius: radius.card, backgroundColor: theme.surfaceMuted }}><AppText variant="headline" style={{ color: preview.rejectedRows.length ? theme.negative : theme.text }}>{preview.rejectedRows.length}</AppText><AppText variant="caption" muted>Rejected</AppText></View>
             </View>
-            {preview.rejectedRows.slice(0, 4).map((row) => <AppText key={row.rowNumber} variant="caption" style={{ color: theme.negative }}>Row {row.rowNumber}: {row.reason}</AppText>)}
+            {/* Built as one string: the dictionary matches "Row N: reason" as a
+                whole and copies the reason through untouched. Split children
+                would translate the reason on its own. */}
+            {preview.rejectedRows.slice(0, 4).map((row) => <AppText key={row.rowNumber} literal variant="caption" style={{ color: theme.negative }}>{t(`Row ${row.rowNumber}: ${row.reason}`)}</AppText>)}
             {preview.validRows.length && !preview.committedIds.length ? <ActionButton title={busy ? 'Importing…' : `Import ${preview.validRows.length} transactions`} icon="checkmark" onPress={commit} disabled={busy} /> : null}
           </View>
         ) : null}

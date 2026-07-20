@@ -11,9 +11,7 @@ export const ACCENT_PRESETS = [
   '#6D7885',
 ] as const;
 
-export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const;
-
-export const radius = { card: 16, control: 10, pill: 999 } as const;
+export const radius = { card: 16, control: 10 } as const;
 
 export interface BaseTokens {
   background: string;

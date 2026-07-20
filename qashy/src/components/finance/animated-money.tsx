@@ -80,6 +80,8 @@ export function AnimatedMoney({
     <AppText
       // Assistive tech should read the settled amount, not the mid-count value.
       accessibilityLabel={formatMoney(minor, currency, locale, { compact, sign })}
+      // Always a formatted amount, never dictionary copy.
+      literal
       {...props}>
       {formatMoney(display, currency, locale, { compact, sign })}
     </AppText>

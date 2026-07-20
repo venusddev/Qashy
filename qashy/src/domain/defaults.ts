@@ -2,16 +2,35 @@ import { getLocales } from 'expo-localization';
 
 import type { AppSettings, Category, FinanceState } from '@/domain/models';
 import { createEntity, makeId } from '@/utils/entity';
+import { validateLocale } from '@/utils/form-validation';
+import { isSupportedCurrencyCode } from '@/utils/money';
 
 export const QASHY_ACCENT = '#5966E9';
 
+export function initialLocalePreferences(
+  saved?: Pick<AppSettings, 'locale' | 'baseCurrency'>,
+) {
+  const deviceLocale = getLocales()[0];
+  const detectedLocale = validateLocale(deviceLocale?.languageTag ?? '')
+    ? 'en-US'
+    : deviceLocale.languageTag;
+  const detectedCurrency = deviceLocale?.currencyCode?.toUpperCase() ?? '';
+  const fallbackCurrency = isSupportedCurrencyCode(detectedCurrency) ? detectedCurrency : 'USD';
+  const savedLocale = saved?.locale.trim() ?? '';
+  const savedCurrency = saved?.baseCurrency.trim().toUpperCase() ?? '';
+  return {
+    locale: validateLocale(savedLocale) ? detectedLocale : savedLocale,
+    baseCurrency: isSupportedCurrencyCode(savedCurrency) ? savedCurrency : fallbackCurrency,
+  };
+}
+
 export const initialSettings = (): AppSettings => {
-  const locale = getLocales()[0];
+  const { locale, baseCurrency } = initialLocalePreferences();
   return createEntity({
     id: 'settings',
     onboardingComplete: false,
-    locale: locale?.languageTag ?? 'en-US',
-    baseCurrency: locale?.currencyCode ?? 'USD',
+    locale,
+    baseCurrency,
     themeMode: 'system',
     accentSource: 'system',
     accentHex: QASHY_ACCENT,

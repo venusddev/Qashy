@@ -23,7 +23,10 @@ const HEADER_ALIASES: Record<string, string> = {
 };
 
 export function unescapeCsvFormula(value: string) {
-  return value.replace(/^'(?=[=+@\t\r-])/, '');
+  // Strip the single guard apostrophe `escapeCsv` adds. The `'` in the lookahead
+  // covers a value that already began with one: it is exported doubled, and only
+  // the guard may come back off.
+  return value.replace(/^'(?=['=+@\t\r-])/, '');
 }
 
 export function parseCsvText(input: string) {
@@ -37,8 +40,40 @@ export function parseCsvText(input: string) {
   });
 }
 
-export function parseCsvTable(input: string) {
-  const rows: { cells: string[]; quotedCells: boolean[]; lineNumber: number }[] = [];
+export type CsvRowError = { lineNumber: number; message: string };
+
+const DELIMITERS = [',', ';', '\t'] as const;
+
+// Spreadsheet exports in locales that use the comma as a decimal separator are
+// semicolon-delimited, and some tools emit TSV. Guessing from the header line
+// beats parsing the whole file as a single column.
+function detectDelimiter(input: string) {
+  const header = input.split(/\r?\n/, 1)[0] ?? '';
+  let best: string = DELIMITERS[0];
+  let bestCount = 0;
+  for (const candidate of DELIMITERS) {
+    let count = 0;
+    let quoted = false;
+    for (let index = 0; index < header.length; index += 1) {
+      const character = header[index];
+      if (character === '"') quoted = !quoted;
+      else if (character === candidate && !quoted) count += 1;
+    }
+    if (count > bestCount) {
+      best = candidate;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+type ScannedRow = { cells: string[]; quotedCells: boolean[]; lineNumber: number; error?: string };
+
+// Quote errors are scoped to the row that contains them. Aborting the whole
+// file meant one stray quote threw away every valid row alongside it, with no
+// way for the user to see which line was at fault.
+function scanRows(input: string, delimiter: string) {
+  const rows: ScannedRow[] = [];
   let cells: string[] = [];
   let quotedCells: boolean[] = [];
   let field = '';
@@ -47,6 +82,7 @@ export function parseCsvTable(input: string) {
   let quoteClosed = false;
   let line = 1;
   let rowLine = 1;
+  let rowError: string | undefined;
 
   const endField = () => {
     cells.push(field);
@@ -57,13 +93,29 @@ export function parseCsvTable(input: string) {
   };
   const endRow = () => {
     endField();
-    if (cells.some((cell) => cell.trim())) rows.push({ cells, quotedCells, lineNumber: rowLine });
+    if (rowError || cells.some((cell) => cell.trim())) {
+      rows.push({ cells, quotedCells, lineNumber: rowLine, error: rowError });
+    }
     cells = [];
     quotedCells = [];
+    quoted = false;
+    quoteClosed = false;
+    rowError = undefined;
   };
 
   for (let index = 0; index < input.length; index += 1) {
     const character = input[index];
+    if (rowError) {
+      // Discard the remainder of a broken row and resynchronise at the next
+      // line break, so the rows after it still parse.
+      if (character === '\n' || character === '\r') {
+        if (character === '\r' && input[index + 1] === '\n') index += 1;
+        endRow();
+        line += 1;
+        rowLine = line;
+      }
+      continue;
+    }
     if (character === '"' && quoted && input[index + 1] === '"') {
       field += '"';
       index += 1;
@@ -75,8 +127,8 @@ export function parseCsvTable(input: string) {
       quoted = true;
       fieldQuoted = true;
     } else if (character === '"') {
-      throw new Error(`Malformed CSV quote on line ${line}.`);
-    } else if (character === ',' && !quoted) {
+      rowError = `Malformed CSV quote on line ${line}.`;
+    } else if (character === delimiter && !quoted) {
       endField();
     } else if ((character === '\n' || character === '\r') && !quoted) {
       if (character === '\r' && input[index + 1] === '\n') index += 1;
@@ -85,19 +137,32 @@ export function parseCsvTable(input: string) {
       rowLine = line;
     } else {
       if (quoteClosed && !/\s/.test(character)) {
-        throw new Error(`Malformed CSV quote on line ${line}.`);
+        rowError = `Malformed CSV quote on line ${line}.`;
+        continue;
       }
       if (character === '\n') line += 1;
       if (!quoteClosed) field += character;
     }
   }
-  if (quoted) throw new Error(`Unclosed quoted CSV field starting on line ${rowLine}.`);
+  if (quoted) rowError = `Unclosed quoted CSV field starting on line ${rowLine}.`;
   endRow();
+  return rows;
+}
 
-  if (!rows.length) return { headers: [], rows: [] as Record<string, string | number>[] };
-  const headers = rows[0].cells.map((header) => header.trim().toLowerCase().replace(/[\s-]+/g, '_'));
+export function parseCsvTable(input: string) {
+  const scanned = scanRows(input, detectDelimiter(input));
+  const empty = { headers: [] as string[], rows: [] as Record<string, string | number>[], rowErrors: [] as CsvRowError[] };
+  if (!scanned.length) return empty;
+  // Without a usable header row there is nothing to map columns onto, so this
+  // one failure is still fatal for the file.
+  if (scanned[0].error) throw new Error(scanned[0].error);
+  const headers = scanned[0].cells.map((header) => header.trim().toLowerCase().replace(/[\s-]+/g, '_'));
 
-  const records = rows.slice(1).map((source) => {
+  const body = scanned.slice(1);
+  const rowErrors = body
+    .filter((source): source is ScannedRow & { error: string } => Boolean(source.error))
+    .map((source) => ({ lineNumber: source.lineNumber, message: source.error }));
+  const records = body.filter((source) => !source.error).map((source) => {
     // rowNumber is the physical line in the source file, so error messages
     // stay accurate even when blank lines are skipped.
     const record: Record<string, string | number> = { rowNumber: source.lineNumber };
@@ -107,13 +172,18 @@ export function parseCsvTable(input: string) {
     });
     return record;
   });
-  return { headers, rows: records };
+  return { headers, rows: records, rowErrors };
 }
 
 export function escapeCsv(value: unknown) {
   let text = String(value ?? '');
   // Neutralize spreadsheet formula injection; plain numbers stay untouched.
-  if (/^[=+@\t\r-]/.test(text) && !/^-?\d+(\.\d+)?$/.test(text)) text = `'${text}`;
+  // A value that already starts with an apostrophe followed by a dangerous
+  // character has to be escaped too: the importer strips one leading
+  // apostrophe, so exporting a literal `'=SUM(A1)` unchanged would re-import it
+  // as the live formula `=SUM(A1)`.
+  const dangerous = /^[=+@\t\r-]/.test(text) && !/^-?\d+(\.\d+)?$/.test(text);
+  if (dangerous || /^'[=+@\t\r-]/.test(text)) text = `'${text}`;
   if (!/[",\r\n]/.test(text)) return text;
   return `"${text.replace(/"/g, '""')}"`;
 }

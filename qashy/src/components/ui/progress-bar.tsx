@@ -13,6 +13,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { useQashyTheme } from '@/theme/theme';
+import { QASHY_INDIGO } from '@/theme/tokens';
 
 const fillSpring = {
   damping: 16,
@@ -24,22 +25,38 @@ const fillSpring = {
 export function ProgressBar({
   value,
   color,
+  label,
   milestones = [1],
   onMilestone,
 }: {
   value: number;
   color?: ColorValue;
+  /** Describes what this bar measures for assistive technology. */
+  label?: string;
   /** Ratios that trigger a celebratory pulse when crossed upward after mount. */
   milestones?: number[];
   onMilestone?: (milestone: number) => void;
 }) {
   const theme = useQashyTheme();
-  const clamped = Math.max(0, Math.min(1, value));
+  // Math.min(1, NaN) is NaN, so a non-finite ratio would otherwise reach
+  // withSpring() and accessibilityValue.
+  const safeValue = Number.isFinite(value) ? value : 0;
+  const clamped = Math.max(0, Math.min(1, safeValue));
   const reduceMotion = useReducedMotion();
   const progress = useSharedValue(reduceMotion ? clamped : 0);
   const pulse = useSharedValue(1);
   const colorMix = useSharedValue(1);
-  const fillColor = String(color ?? theme.accent);
+  // theme.accent is an opaque PlatformColor object under Material You, and
+  // String() on it yields "[object Object]", which paints nothing. Reanimated's
+  // interpolateColor needs a real parsable color, so keep a hex on both sides.
+  const staticFallback = typeof theme.staticAccent === 'string' && theme.staticAccent
+    ? theme.staticAccent
+    : QASHY_INDIGO;
+  const fillColor = typeof color === 'string'
+    ? color
+    : color === undefined && typeof theme.accent === 'string'
+      ? theme.accent
+      : staticFallback;
   // Render-phase pair swap (same pattern as the transactions overlay state) so
   // a color change crossfades from the previously shown color.
   const [colorPair, setColorPair] = useState({ from: fillColor, to: fillColor });
@@ -47,7 +64,7 @@ export function ProgressBar({
     setColorPair({ from: colorPair.to, to: fillColor });
   }
   const mountedRef = useRef(false);
-  const previousValueRef = useRef(value);
+  const previousValueRef = useRef(safeValue);
   const milestoneRef = useRef({ milestones, onMilestone });
 
   // Runs before the value effect below, so crossings always see the latest
@@ -68,7 +85,7 @@ export function ProgressBar({
 
   useEffect(() => {
     const previous = previousValueRef.current;
-    previousValueRef.current = value;
+    previousValueRef.current = safeValue;
     if (!mountedRef.current) {
       mountedRef.current = true;
       progress.set(withTiming(clamped, {
@@ -80,7 +97,7 @@ export function ProgressBar({
     }
     progress.set(withSpring(clamped, fillSpring));
     const crossed = milestoneRef.current.milestones.filter(
-      (milestone) => previous < milestone && value >= milestone,
+      (milestone) => previous < milestone && safeValue >= milestone,
     );
     if (!crossed.length) return;
     milestoneRef.current.onMilestone?.(Math.max(...crossed));
@@ -89,7 +106,7 @@ export function ProgressBar({
       withTiming(1.45, { duration: 150, easing: Easing.out(Easing.cubic) }),
       withTiming(1, { duration: 240, easing: Easing.inOut(Easing.cubic) }),
     ));
-  }, [clamped, progress, pulse, reduceMotion, value]);
+  }, [clamped, progress, pulse, reduceMotion, safeValue]);
 
   const trackStyle = useAnimatedStyle(() => ({
     transform: [{ scaleY: pulse.value }],
@@ -106,6 +123,7 @@ export function ProgressBar({
   return (
     <Animated.View
       accessibilityRole="progressbar"
+      accessibilityLabel={label}
       accessibilityValue={{ min: 0, max: 100, now: Math.round(clamped * 100) }}
       style={[
         { height: 9, borderRadius: 99, overflow: 'hidden', backgroundColor: theme.surfaceMuted },

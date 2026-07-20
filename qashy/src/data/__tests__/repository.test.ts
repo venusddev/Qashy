@@ -787,6 +787,39 @@ describe('FinanceRepository contract', () => {
     expect(repository.getSnapshot().categories).toHaveLength(before.categories.length);
   });
 
+  it('resets every persisted entity and returns to pre-onboarding settings', async () => {
+    const storage = new MemoryStorageAdapter();
+    const { repository } = await createRepository(storage);
+    const account = repository.getSnapshot().accounts[0];
+    await repository.saveTransaction({
+      kind: 'expense',
+      title: 'Erase me',
+      localDate: '2026-07-15',
+      accountId: account.id,
+      amountMinor: 500,
+    });
+
+    await repository.resetAllData();
+
+    expect(repository.getSnapshot()).toMatchObject({
+      ready: true,
+      settings: { onboardingComplete: false },
+      accounts: [],
+      categories: [],
+      transactions: [],
+    });
+
+    const reloaded = new LocalFinanceRepository(storage);
+    await reloaded.initialize();
+    expect(reloaded.getSnapshot()).toMatchObject({
+      ready: true,
+      settings: { onboardingComplete: false },
+      accounts: [],
+      categories: [],
+      transactions: [],
+    });
+  });
+
   it('keeps a deleted recurring occurrence deleted across regeneration and reload', async () => {
     jest.useFakeTimers();
     try {
@@ -1100,5 +1133,300 @@ describe('FinanceRepository contract', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('rejects an exchange rate that contradicts its existing reciprocal', async () => {
+    const { repository } = await createRepository();
+    await repository.saveExchangeRate({ fromCurrency: 'USD', toCurrency: 'EUR', rate: '0.5', effectiveDate: '2026-01-01' });
+    // 1 / 0.5 === 2, so the opposite direction agrees exactly.
+    const reciprocal = await repository.saveExchangeRate({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '2', effectiveDate: '2026-01-01' });
+    expect(reciprocal.rate).toBe('2');
+
+    await expect(repository.saveExchangeRate({
+      fromCurrency: 'EUR',
+      toCurrency: 'USD',
+      rate: '2.5',
+      effectiveDate: '2026-02-01',
+    })).rejects.toThrow('contradicts');
+    expect(repository.getSnapshot().exchangeRates).toHaveLength(2);
+
+    // Editing a stored rate compares against the opposite direction only, so an
+    // in-place edit that stays inside the tolerance must not trip the check.
+    await expect(repository.saveExchangeRate({ ...reciprocal, rate: '2.02' }, reciprocal.id))
+      .resolves.toMatchObject({ id: reciprocal.id, rate: '2.02' });
+    await expect(repository.saveExchangeRate({ ...reciprocal, rate: '2.5' }, reciprocal.id))
+      .rejects.toThrow('contradicts');
+  });
+
+  it('retires goal contributions funded by a deleted transaction', async () => {
+    const storage = new MemoryStorageAdapter();
+    const { repository } = await createRepository(storage);
+    const account = repository.getSnapshot().accounts[0];
+    const goal = await repository.saveGoal({
+      name: 'Fund',
+      kind: 'saving',
+      icon: 'target',
+      color: '#5966E9',
+      targetMinor: 10000,
+      initialMinor: 0,
+      targetDate: null,
+      linkedAccountId: null,
+      linkedCategoryId: null,
+      archived: false,
+    });
+    const funding = await repository.saveTransaction({
+      kind: 'income',
+      title: 'Bonus',
+      localDate: '2026-07-15',
+      accountId: account.id,
+      amountMinor: 500,
+    });
+    await repository.saveContribution({ goalId: goal.id, amountMinor: 500, localDate: '2026-07-15', transactionId: funding.id, note: '' });
+    const unrelated = await repository.saveContribution({ goalId: goal.id, amountMinor: 250, localDate: '2026-07-16', transactionId: null, note: '' });
+    expect(repository.getGoalProgress(goal.id)).toBe(750);
+
+    await repository.deleteEntities('transactions', [funding.id]);
+    expect(repository.getSnapshot().contributions.map((item) => item.id)).toEqual([unrelated.id]);
+    expect(repository.getGoalProgress(goal.id)).toBe(250);
+
+    const reloaded = new LocalFinanceRepository(storage);
+    await reloaded.initialize();
+    expect(reloaded.getSnapshot().contributions.map((item) => item.id)).toEqual([unrelated.id]);
+  });
+
+  it('releases generated transactions when their recurring rule is deleted', async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-07-15T09:00:00Z'));
+      const storage = new MemoryStorageAdapter();
+      const { repository } = await createRepository(storage);
+      const account = repository.getSnapshot().accounts[0];
+      const rule = await repository.saveRecurringRule({
+        template: { kind: 'expense', title: 'Streaming', note: '', accountId: account.id, categoryId: null, tagIds: [], amountMinor: 100, currency: 'USD' },
+        unit: 'month', interval: 1, startDate: '2026-07-20', endDate: null, nextDueDate: '2026-07-20', autoPost: false, active: true,
+      });
+      const generated = repository.getSnapshot().transactions.find((item) => item.recurringRuleId === rule.id)!;
+      expect(generated).toBeDefined();
+
+      await repository.deleteEntities('recurringRules', [rule.id]);
+      expect(repository.getSnapshot().recurringRules).toHaveLength(0);
+      expect(repository.getSnapshot().transactions.find((item) => item.id === generated.id)).toMatchObject({
+        id: generated.id,
+        recurringRuleId: null,
+      });
+
+      const reloaded = new LocalFinanceRepository(storage);
+      await reloaded.initialize();
+      expect(reloaded.getSnapshot().transactions.find((item) => item.id === generated.id)?.recurringRuleId).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('strips a deleted tag from the transactions that carried it', async () => {
+    const storage = new MemoryStorageAdapter();
+    const { repository } = await createRepository(storage);
+    const account = repository.getSnapshot().accounts[0];
+    const doomed = await repository.saveTag({ name: 'Work', color: '#5966E9' });
+    const kept = await repository.saveTag({ name: 'Travel', color: '#5966E9' });
+    const transaction = await repository.saveTransaction({
+      kind: 'expense',
+      title: 'Taxi',
+      localDate: '2026-07-15',
+      accountId: account.id,
+      tagIds: [doomed.id, kept.id],
+      amountMinor: 500,
+    });
+
+    await repository.deleteEntities('tags', [doomed.id]);
+    expect(repository.getSnapshot().transactions.find((item) => item.id === transaction.id)?.tagIds).toEqual([kept.id]);
+
+    const reloaded = new LocalFinanceRepository(storage);
+    await reloaded.initialize();
+    const current = reloaded.getSnapshot().transactions.find((item) => item.id === transaction.id)!;
+    expect(current.tagIds).toEqual([kept.id]);
+    // A leftover tag id would fail tag validation the next time the row is saved.
+    await expect(reloaded.saveTransaction({
+      kind: current.kind,
+      title: current.title,
+      localDate: current.localDate,
+      accountId: current.accountId,
+      tagIds: current.tagIds,
+      amountMinor: current.amountMinor,
+    }, current.id)).resolves.toMatchObject({ tagIds: [kept.id] });
+  });
+
+  it('clears a deleted category from the transactions that used it', async () => {
+    const storage = new MemoryStorageAdapter();
+    const { repository } = await createRepository(storage);
+    const account = repository.getSnapshot().accounts[0];
+    const categories = repository.getSnapshot().categories.filter((item) => item.kind === 'expense');
+    const doomed = categories[0];
+    const kept = categories[1];
+    const affected = await repository.saveTransaction({
+      kind: 'expense',
+      title: 'Taxi',
+      localDate: '2026-07-15',
+      accountId: account.id,
+      categoryId: doomed.id,
+      amountMinor: 500,
+    });
+    const untouched = await repository.saveTransaction({
+      kind: 'expense',
+      title: 'Coffee',
+      localDate: '2026-07-15',
+      accountId: account.id,
+      categoryId: kept.id,
+      amountMinor: 300,
+    });
+
+    await repository.deleteEntities('categories', [doomed.id]);
+    const snapshot = repository.getSnapshot().transactions;
+    expect(snapshot.find((item) => item.id === affected.id)?.categoryId).toBeNull();
+    expect(snapshot.find((item) => item.id === untouched.id)?.categoryId).toBe(kept.id);
+
+    const reloaded = new LocalFinanceRepository(storage);
+    await reloaded.initialize();
+    const current = reloaded.getSnapshot().transactions.find((item) => item.id === affected.id)!;
+    expect(current.categoryId).toBeNull();
+    // A leftover category id made every later save throw "Choose a valid
+    // expense category.", which the UI gave no way to recover from.
+    await expect(reloaded.saveTransaction({
+      kind: current.kind,
+      title: current.title,
+      localDate: current.localDate,
+      accountId: current.accountId,
+      categoryId: current.categoryId,
+      amountMinor: current.amountMinor,
+    }, current.id)).resolves.toMatchObject({ categoryId: null });
+  });
+
+  it('clamps a carried budget deficit at a single period limit', async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-06-15T09:00:00Z'));
+      const { repository } = await createRepository();
+      const heavy = await repository.saveAccount({ name: 'Heavy', type: 'checking', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
+      const mild = await repository.saveAccount({ name: 'Mild', type: 'checking', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
+      const saver = await repository.saveAccount({ name: 'Saver', type: 'checking', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
+      const saveBudget = (name: string, accountId: string) => repository.saveBudget({
+        name, icon: 'chart', color: '#5966E9', limitMinor: 1000,
+        period: { unit: 'month', interval: 1, anchorDate: '2026-06-01', endDate: null },
+        rollover: true, filters: { accountIds: [accountId], categoryIds: [], tagIds: [] },
+        categoryLimits: [], archived: false,
+      });
+      await saveBudget('Heavy deficit', heavy.id);
+      await saveBudget('Mild deficit', mild.id);
+      await saveBudget('Surplus', saver.id);
+      await repository.saveTransaction({ kind: 'expense', title: 'Heavy June', localDate: '2026-06-20', accountId: heavy.id, amountMinor: 5000 });
+      await repository.saveTransaction({ kind: 'expense', title: 'Mild June', localDate: '2026-06-20', accountId: mild.id, amountMinor: 1500 });
+      await repository.saveTransaction({ kind: 'expense', title: 'Saver June', localDate: '2026-06-20', accountId: saver.id, amountMinor: 400 });
+
+      jest.setSystemTime(new Date('2026-07-15T09:00:00Z'));
+      const statuses = repository.getBudgetStatuses('2026-07-15');
+      const status = (name: string) => statuses.find((item) => item.budget.name === name)!;
+      // 1000 limit minus 5000 spent carries -4000, floored at one period limit.
+      expect(status('Heavy deficit').snapshot.rolloverMinor).toBe(-1000);
+      expect(status('Heavy deficit').effectiveLimitMinor).toBe(0);
+      // -500 sits inside the floor and passes through untouched.
+      expect(status('Mild deficit').snapshot.rolloverMinor).toBe(-500);
+      expect(status('Mild deficit').effectiveLimitMinor).toBe(500);
+      // A surplus is never clamped.
+      expect(status('Surplus').snapshot.rolloverMinor).toBe(600);
+      expect(status('Surplus').effectiveLimitMinor).toBe(1600);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('pauses a recurring rule whose generation fails instead of retrying it forever', async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-07-15T09:00:00Z'));
+      const storage = new MemoryStorageAdapter();
+      const { repository } = await createRepository(storage);
+      const usd = repository.getSnapshot().accounts[0];
+      const eur = await repository.saveAccount({ name: 'Euro', type: 'checking', currency: 'EUR', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
+      const rate = await repository.saveExchangeRate({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '2', effectiveDate: '2026-01-01' });
+      const poisoned = await repository.saveRecurringRule({
+        template: { kind: 'expense', title: 'Foreign', note: '', accountId: eur.id, categoryId: null, tagIds: [], amountMinor: 100, currency: 'EUR' },
+        unit: 'month', interval: 1, startDate: '2026-09-01', endDate: null, nextDueDate: '2026-09-01', autoPost: false, active: true,
+      });
+      const healthy = await repository.saveRecurringRule({
+        template: { kind: 'expense', title: 'Healthy', note: '', accountId: usd.id, categoryId: null, tagIds: [], amountMinor: 100, currency: 'USD' },
+        unit: 'month', interval: 1, startDate: '2026-09-01', endDate: null, nextDueDate: '2026-09-01', autoPost: false, active: true,
+      });
+      // Removing the rate leaves the EUR rule unable to build its occurrence.
+      await repository.deleteEntities('exchangeRates', [rate.id]);
+
+      await expect(repository.generateRecurring('2026-09-30')).resolves.toBe(1);
+      const rules = repository.getSnapshot().recurringRules;
+      expect(rules.find((item) => item.id === poisoned.id)).toMatchObject({ active: false, nextDueDate: '2026-09-01' });
+      expect(rules.find((item) => item.id === healthy.id)).toMatchObject({ active: true, nextDueDate: '2026-10-01' });
+      expect(repository.getSnapshot().transactions.map((item) => item.title)).toEqual(['Healthy']);
+
+      const reloaded = new LocalFinanceRepository(storage);
+      await reloaded.initialize();
+      expect(reloaded.getSnapshot().recurringRules.find((item) => item.id === poisoned.id)?.active).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('serialises a reset behind recurring generation that is already in flight', async () => {
+    class PausableStorage extends MemoryStorageAdapter {
+      pauseNext = false;
+      private release: (() => void) | null = null;
+
+      override async putMany(records: Parameters<MemoryStorageAdapter['putMany']>[0]) {
+        if (this.pauseNext) {
+          this.pauseNext = false;
+          await new Promise<void>((resolve) => { this.release = resolve; });
+        }
+        await super.putMany(records);
+      }
+
+      releasePaused() {
+        this.release?.();
+        this.release = null;
+      }
+    }
+
+    const storage = new PausableStorage();
+    const { repository } = await createRepository(storage);
+    const account = repository.getSnapshot().accounts[0];
+    await repository.saveRecurringRule({
+      template: { kind: 'expense', title: 'Rent', note: '', accountId: account.id, categoryId: null, tagIds: [], amountMinor: 1000, currency: 'USD' },
+      unit: 'month', interval: 1, startDate: '2099-01-01', endDate: '2099-01-31', nextDueDate: '2099-01-01', autoPost: false, active: true,
+    });
+
+    const settled: string[] = [];
+    storage.pauseNext = true;
+    const generation = repository.generateRecurring('2099-01-31').then(() => { settled.push('generation'); });
+    await Promise.resolve();
+    await Promise.resolve();
+    const reset = repository.resetAllData().then(() => { settled.push('reset'); });
+    storage.releasePaused();
+    await Promise.all([generation, reset]);
+
+    expect(settled).toEqual(['generation', 'reset']);
+    expect(repository.getSnapshot()).toMatchObject({
+      ready: true,
+      settings: { onboardingComplete: false },
+      accounts: [],
+      categories: [],
+      transactions: [],
+      recurringRules: [],
+    });
+
+    const reloaded = new LocalFinanceRepository(storage);
+    await reloaded.initialize();
+    expect(reloaded.getSnapshot()).toMatchObject({
+      ready: true,
+      settings: { onboardingComplete: false },
+      accounts: [],
+      transactions: [],
+      recurringRules: [],
+    });
   });
 });

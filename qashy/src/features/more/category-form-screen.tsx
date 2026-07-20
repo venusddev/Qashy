@@ -100,7 +100,7 @@ export function CategoryFormScreen() {
         <AppText variant="label">Color</AppText>
         <View accessibilityLabel="Category color" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>{COLORS.map((item) => <ColorSwatch key={item} color={item} selected={color === item} label={`Use ${item} category color`} onPress={() => setColor(item)} />)}</View>
         <AppText variant="label">Parent category</AppText>
-        <View accessibilityLabel="Parent category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!selectedParentId} onPress={() => setParentId('')} />{parentChoices.map((item) => <ChoiceChip key={item.id} label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={selectedParentId === item.id} onPress={() => setParentId(item.id)} />)}</View>
+        <View accessibilityLabel="Parent category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!selectedParentId} onPress={() => setParentId('')} />{parentChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={selectedParentId === item.id} onPress={() => setParentId(item.id)} />)}</View>
       </Card>
       <ActionButton title={busy ? 'Saving…' : existing ? 'Save category' : 'Create category'} icon="checkmark" onPress={save} disabled={busy} busy={busy} />
       {existing ? <ActionButton title="Archive category" variant="danger" onPress={archive} disabled={busy} /> : null}

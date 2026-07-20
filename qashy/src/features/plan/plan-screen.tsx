@@ -11,6 +11,7 @@ import { PageHeading } from '@/components/ui/page-heading';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { ScreenContainer } from '@/components/ui/screen-container';
 import { SectionHeader } from '@/components/ui/section-header';
+import { useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { radius, readableTextColor } from '@/theme/tokens';
@@ -24,6 +25,7 @@ export function PlanScreen() {
   const repository = useFinanceRepository();
   const state = useFinanceState();
   const theme = useQashyTheme();
+  const { t } = useLocalization();
   const { width } = useWindowDimensions();
   const wide = width >= 860;
   const today = todayLocal();
@@ -36,22 +38,26 @@ export function PlanScreen() {
         <PageHeading title="Plan" subtitle="Set flexible limits and track progress toward meaningful goals." />
         <View style={{ flexDirection: wide ? 'row' : 'column', gap: 18, alignItems: 'flex-start' }}>
           <View style={{ flex: 1, width: '100%', gap: 14 }}>
-            <SectionHeader title="Budgets" action="New budget" onAction={() => router.push('/budget')} />
+            <SectionHeader title="Budgets" />
             {budgets.length ? budgets.map(({ budget, snapshot, spentMinor, effectiveLimitMinor, categorySpend }, index) => {
               const ratio = effectiveLimitMinor > 0 ? spentMinor / effectiveLimitMinor : spentMinor > 0 ? 1 : 0;
               const customState = budget.period.unit === 'custom'
                 ? today > snapshot.periodEnd
-                  ? 'Ended · '
+                  ? `${t('Ended')} · `
                   : today < snapshot.periodStart
-                    ? 'Upcoming · '
+                    ? `${t('Upcoming')} · `
                     : ''
                 : '';
+              // Dates and the rollover amount are data, so the caption is
+              // assembled with its translatable words already resolved and
+              // then rendered verbatim.
+              const periodSummary = `${customState}${t(budget.period.unit)} · ${snapshot.periodStart} to ${snapshot.periodEnd}${budget.rollover ? ` · rollover ${formatMoney(snapshot.rolloverMinor, state.settings.baseCurrency, state.settings.locale, { sign: true })}` : ''}`;
               return (
                 <MotionView key={budget.id} delay={Math.min(index, 5) * 45} animateLayout exit>
                   <Card style={{ gap: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <View style={{ width: 44, height: 44, borderRadius: radius.control, backgroundColor: budget.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="chart" color={readableTextColor(budget.color)} size={20} /></View>
-                    <View style={{ flex: 1, gap: 2 }}><AppText variant="headline">{budget.name}</AppText><AppText variant="caption" muted>{customState}{budget.period.unit} · {snapshot.periodStart} to {snapshot.periodEnd}{budget.rollover ? ` · rollover ${formatMoney(snapshot.rolloverMinor, state.settings.baseCurrency, state.settings.locale, { sign: true })}` : ''}</AppText></View>
+                    <View style={{ flex: 1, gap: 2 }}><AppText literal variant="headline">{budget.name}</AppText><AppText literal variant="caption" muted>{periodSummary}</AppText></View>
                     <ActionButton title="Edit" variant="secondary" onPress={() => router.push({ pathname: '/budget', params: { id: budget.id } })} />
                   </View>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
@@ -63,7 +69,7 @@ export function PlanScreen() {
                     <View style={{ gap: 10, paddingTop: 4 }}>
                       {categorySpend.slice(0, 3).map((limit) => {
                         const category = state.categories.find((item) => item.id === limit.categoryId);
-                        return category ? <View key={limit.categoryId} style={{ gap: 5 }}><View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><AppText variant="caption">{category.name}</AppText><AppText variant="caption" muted>{formatMoney(limit.amountMinor, state.settings.baseCurrency, state.settings.locale)} / {formatMoney(limit.limitMinor, state.settings.baseCurrency, state.settings.locale)}</AppText></View><ProgressBar value={limit.amountMinor / limit.limitMinor} color={category.color} /></View> : null;
+                        return category ? <View key={limit.categoryId} style={{ gap: 5 }}><View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><AppText literal variant="caption">{category.name}</AppText><AppText literal variant="caption" muted>{`${formatMoney(limit.amountMinor, state.settings.baseCurrency, state.settings.locale)} / ${formatMoney(limit.limitMinor, state.settings.baseCurrency, state.settings.locale)}`}</AppText></View><ProgressBar value={limit.amountMinor / limit.limitMinor} color={category.color} /></View> : null;
                       })}
                     </View>
                   ) : null}
@@ -83,7 +89,7 @@ export function PlanScreen() {
           </View>
 
           <View style={{ flex: 1, width: '100%', gap: 14 }}>
-            <SectionHeader title="Goals" action="New goal" onAction={() => router.push('/goal')} />
+            <SectionHeader title="Goals" />
             {goals.length ? goals.map((goal, index) => {
               const progress = repository.getGoalProgress(goal.id);
               const displayProgress = Math.max(0, progress);
@@ -93,7 +99,7 @@ export function PlanScreen() {
                   <Card style={{ gap: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <View style={{ width: 44, height: 44, borderRadius: radius.control, backgroundColor: goal.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="target" color={readableTextColor(goal.color)} size={21} /></View>
-                    <View style={{ flex: 1, gap: 2 }}><AppText variant="headline">{goal.name}</AppText><AppText variant="caption" muted>{goal.kind} goal{goal.targetDate ? ` · by ${goal.targetDate}` : ''}</AppText></View>
+                    <View style={{ flex: 1, gap: 2 }}><AppText literal variant="headline">{goal.name}</AppText><AppText literal variant="caption" muted>{`${goal.kind} goal${goal.targetDate ? ` · by ${goal.targetDate}` : ''}`}</AppText></View>
                     <ActionButton title="Open" variant="secondary" onPress={() => router.push({ pathname: '/goal', params: { id: goal.id } })} />
                   </View>
                   <AnimatedMoney variant="money" minor={displayProgress} currency={state.settings.baseCurrency} locale={state.settings.locale} />
@@ -103,7 +109,7 @@ export function PlanScreen() {
                     milestones={GOAL_MILESTONES}
                     onMilestone={hapticSuccess}
                   />
-                  <AppText variant="caption" muted>{Math.max(0, Math.min(100, Math.round(ratio * 100)))}% of {formatMoney(goal.targetMinor, state.settings.baseCurrency, state.settings.locale)}</AppText>
+                  <AppText literal variant="caption" muted>{`${Math.max(0, Math.min(100, Math.round(ratio * 100)))}% of ${formatMoney(goal.targetMinor, state.settings.baseCurrency, state.settings.locale)}`}</AppText>
                   </Card>
                 </MotionView>
               );

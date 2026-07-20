@@ -2,9 +2,10 @@ import { Decimal } from 'decimal.js';
 
 import type { CurrencyCode } from '@/domain/models';
 
-const SUPPORTED_CURRENCIES = new Set(
-  'AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BRL BSD BTN BWP BYN BZD CAD CDF CHF CLP CNY COP CRC CUC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HRK HTG HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLE SLL SOS SRD SSP STN SVC SYP SZL THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV WST XAF XCD XCG XDR XOF XPF XSU YER ZAR ZMW ZWG ZWL'.split(' '),
-);
+export const SUPPORTED_CURRENCY_CODES =
+  'AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BRL BSD BTN BWP BYN BZD CAD CDF CHF CLP CNY COP CRC CUC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HRK HTG HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLE SLL SOS SRD SSP STN SVC SYP SZL THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV WST XAF XCD XCG XDR XOF XPF XSU YER ZAR ZMW ZWG ZWL'.split(' ');
+
+const SUPPORTED_CURRENCIES = new Set(SUPPORTED_CURRENCY_CODES);
 
 function localeNumberParts(locale: string) {
   const formatter = new Intl.NumberFormat(locale);
@@ -150,7 +151,12 @@ export function formatMoney(
 ) {
   const digits = currencyDigits(currency, locale);
   if (!isSafeMinor(minor)) throw new Error('Amount is outside the supported range.');
-  if (!options?.compact) {
+  // Compact notation only starts abbreviating at a thousand. Below that it would
+  // render the exact same magnitude while silently dropping minor units
+  // ($12.50 -> "$12.5", $0.00 -> "$0"), so fall through to the exact formatter.
+  const compact = options?.compact === true
+    && Math.abs(new Decimal(minor).div(new Decimal(10).pow(digits)).toNumber()) >= 1000;
+  if (!compact) {
     const fixed = minorToDecimalString(Math.abs(minor), currency, locale);
     const [integer, fraction = ''] = fixed.split('.');
     const numberParts = new Intl.NumberFormat(locale, {

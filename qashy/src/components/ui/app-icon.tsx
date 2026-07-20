@@ -12,6 +12,8 @@ const IONICON_BY_SF_NAME: Record<string, IoniconName> = {
   'arrow.left.arrow.right': 'swap-horizontal',
   'chevron.right': 'chevron-forward',
   'chevron.left': 'chevron-back',
+  'chevron.down': 'chevron-down',
+  'list.bullet.rectangle': 'receipt-outline',
   magnifyingglass: 'search',
   calendar: 'calendar-outline',
   wallet: 'wallet-outline',
@@ -25,6 +27,7 @@ const IONICON_BY_SF_NAME: Record<string, IoniconName> = {
   'ellipsis.circle': 'ellipsis-horizontal-circle',
   repeat: 'repeat',
   tray: 'download-outline',
+  trash: 'trash-outline',
   paintbrush: 'color-palette-outline',
   cart: 'cart-outline',
   'fork.knife': 'restaurant-outline',
@@ -39,6 +42,8 @@ export function AppIcon({ name, color, size = 20 }: { name: string; color: Color
   if (process.env.EXPO_OS === 'ios') {
     return (
       <Image
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
         source={`sf:${name}`}
         tintColor={color as string}
         style={{ width: size, height: size }}

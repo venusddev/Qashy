@@ -2,6 +2,7 @@ import { StyleSheet, type PressableProps, type StyleProp, type ViewStyle } from 
 import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 
 import { IconButton } from '@/components/ui/icon-button';
+import { useQashyTheme } from '@/theme/theme';
 import { hapticImpactLight } from '@/utils/haptics';
 
 export function FloatingActionButton({
@@ -10,6 +11,7 @@ export function FloatingActionButton({
   visibility,
   onPress,
   style,
+  disabled = false,
   ...props
 }: Omit<PressableProps, 'children' | 'style'> & {
   label: string;
@@ -18,6 +20,13 @@ export function FloatingActionButton({
   visibility?: SharedValue<number>;
   style?: StyleProp<ViewStyle>;
 }) {
+  const theme = useQashyTheme();
+  const isDisabled = Boolean(disabled);
+  // A near-black drop shadow disappears on dark surfaces, so deepen and spread
+  // it instead of tinting the button itself.
+  const shadow = theme.mode === 'dark'
+    ? '0 6px 18px rgba(0,0,0,0.58)'
+    : '0 4px 14px rgba(25,27,32,0.28)';
   const visibilityStyle = useAnimatedStyle(() => {
     if (!visibility) return {};
     const shown = visibility.value;
@@ -32,6 +41,7 @@ export function FloatingActionButton({
     <Animated.View style={[StyleSheet.flatten(style), visibilityStyle]}>
       <IconButton
         {...props}
+        disabled={isDisabled}
         onPress={(event) => {
           hapticImpactLight();
           onPress?.(event);
@@ -44,8 +54,8 @@ export function FloatingActionButton({
         enteringVariant="zoom"
         enteringDelay={140}
         style={(state) => ({
-          boxShadow: '0 4px 14px rgba(25,27,32,0.28)',
-          opacity: state.pressed ? 0.82 : 1,
+          boxShadow: shadow,
+          opacity: isDisabled ? 0.4 : state.pressed ? 0.82 : 1,
         })}
       />
     </Animated.View>

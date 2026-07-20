@@ -7,6 +7,17 @@ import {
   parseMoney,
 } from '@/utils/money';
 
+export function validateLocale(value: string) {
+  const locale = value.trim();
+  if (!locale) return 'Use a valid locale such as en-US.';
+  try {
+    new Intl.NumberFormat(locale).format(1);
+    return undefined;
+  } catch {
+    return 'Use a valid locale such as en-US.';
+  }
+}
+
 export function validateCurrencyCode(value: string, locale: string) {
   const currency = value.trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) return 'Use a three-letter currency code such as USD.';

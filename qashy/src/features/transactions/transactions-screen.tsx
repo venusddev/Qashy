@@ -16,6 +16,7 @@ import { PageHeading } from '@/components/ui/page-heading';
 import { screenContentMetrics } from '@/components/ui/screen-container';
 import { TextButton } from '@/components/ui/text-button';
 import { useScrollHide } from '@/components/ui/use-scroll-hide';
+import { useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { radius } from '@/theme/tokens';
@@ -29,6 +30,7 @@ export function TransactionsScreen() {
   const repository = useFinanceRepository();
   const state = useFinanceState();
   const theme = useQashyTheme();
+  const { isRtl, t } = useLocalization();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [search, setSearch] = useState('');
@@ -115,7 +117,7 @@ export function TransactionsScreen() {
       onScroll={onScroll}
       scrollEventThrottle={16}
       style={{ flex: 1, backgroundColor: theme.background }}
-      contentContainerStyle={[screenContentMetrics(width, insets.bottom), { gap: 8 }]}
+      contentContainerStyle={[screenContentMetrics(width, insets), { gap: 8 }]}
       sections={sections}
       extraData={`${selectedIds.join(',')}|${JSON.stringify(categoryOverrides)}|${hiddenIds.join(',')}|${repository.getSnapshot().transactions.map((item) => `${item.id}:${item.revision}`).join(',')}`}
       keyExtractor={(item) => `${item.id}:${item.revision}`}
@@ -126,15 +128,15 @@ export function TransactionsScreen() {
           <View style={{ minHeight: 50, borderRadius: radius.control, borderCurve: 'continuous', backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 10 }}>
             <AppIcon name="magnifyingglass" color={theme.textMuted} size={19} />
             <TextInput
-              accessibilityLabel="Search transactions"
-              placeholder="Search title or note"
+              accessibilityLabel={t('Search transactions')}
+              placeholder={t('Search title or note')}
               placeholderTextColor={theme.textMuted}
               value={search}
               onChangeText={(value) => {
                 setSearch(value);
                 setSelectedIds([]);
               }}
-              style={{ flex: 1, color: theme.text, fontSize: 16 }}
+              style={{ flex: 1, color: theme.text, fontSize: 16, writingDirection: isRtl ? 'rtl' : 'ltr', textAlign: isRtl ? 'right' : 'left' }}
             />
             {search ? <IconButton label="Clear search" icon="xmark" iconSize={18} enteringVariant="zoom" onPress={() => {
               setSearch('');
@@ -150,7 +152,9 @@ export function TransactionsScreen() {
             ))}
           </View>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
-            <AppText variant="caption" muted>{transactions.length} {transactions.length === 1 ? 'transaction' : 'transactions'}</AppText>
+            {/* One string so the dictionary's count patterns can match; split
+                children would leave "transactions" on its own with no key. */}
+            <AppText literal variant="caption" muted>{t(`${transactions.length} ${transactions.length === 1 ? 'transaction' : 'transactions'}`)}</AppText>
             <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               {transactions.length ? (
                 <TextButton
@@ -170,7 +174,7 @@ export function TransactionsScreen() {
               <Card style={{ gap: 12, backgroundColor: theme.accentContainer, borderColor: theme.accent }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                 <MotionView key={selectedIds.length} variant="fade" animateLayout>
-                  <AppText variant="headline">{selectedIds.length} selected</AppText>
+                  <AppText literal variant="headline">{t(`${selectedIds.length} selected`)}</AppText>
                 </MotionView>
                 <TextButton title={selectedIds.length ? 'Clear' : 'Done'} onPress={() => {
                   if (selectedIds.length) setSelectedIds([]);
@@ -184,7 +188,7 @@ export function TransactionsScreen() {
                   <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                     <ChoiceChip mode="button" label="Uncategorized" selected={false} onPress={() => changeCategory(null)} />
                     {state.categories.filter((item) => item.kind === compatibleCategoryKind && !item.archived).map((category) => (
-                      <ChoiceChip mode="button" key={category.id} label={category.name} selected={false} onPress={() => changeCategory(category.id)} />
+                      <ChoiceChip mode="button" key={category.id} literal label={category.name} selected={false} onPress={() => changeCategory(category.id)} />
                     ))}
                   </View>
                   <ActionButton title="Delete selected" variant="danger" onPress={deleteSelected} />
@@ -197,7 +201,7 @@ export function TransactionsScreen() {
       }
       renderSectionHeader={({ section }) => (
         <View style={{ paddingTop: 12, paddingBottom: 5, paddingHorizontal: 6 }}>
-          <AppText variant="caption" muted>{shortDate(section.title, state.settings.locale).toUpperCase()}</AppText>
+          <AppText literal variant="caption" muted>{shortDate(section.title, state.settings.locale).toUpperCase()}</AppText>
         </View>
       )}
       renderItem={({ item, index, section }) => (

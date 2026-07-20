@@ -1,7 +1,7 @@
 let uuid = 0;
 
 jest.mock('expo-localization', () => ({
-  getLocales: () => [{ languageTag: 'en-US', currencyCode: 'USD' }],
+  getLocales: jest.fn(() => [{ languageTag: 'en-US', currencyCode: 'USD' }]),
 }));
 
 jest.mock('expo-crypto', () => ({

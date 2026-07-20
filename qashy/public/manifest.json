@@ -1,8 +1,10 @@
 {
+  "id": "/",
   "name": "Qashy — Calm Budgeting",
   "short_name": "Qashy",
   "description": "A private, local-first budget tracker for accounts, spending, budgets, and goals.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#F7F7FB",
   "theme_color": "#5966E9",
@@ -10,6 +12,7 @@
   "categories": ["finance", "productivity"],
   "icons": [
     { "src": "/qashy-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/qashy-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/qashy-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }

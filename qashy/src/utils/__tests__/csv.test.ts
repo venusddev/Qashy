@@ -1,4 +1,4 @@
-import { escapeCsv, parseCsvText } from '@/utils/csv';
+import { escapeCsv, parseCsvTable, parseCsvText } from '@/utils/csv';
 
 describe('CSV utilities', () => {
   it('parses quoted fields and aliases common headers', () => {
@@ -37,12 +37,35 @@ describe('CSV utilities', () => {
     expect(rows[1].title).toBe('loose');
   });
 
-  it('rejects unclosed quoted fields', () => {
-    expect(() => parseCsvText('date,title\n2026-07-01,"unclosed')).toThrow('Unclosed quoted CSV field');
+  it('rejects only the offending row for unclosed quoted fields', () => {
+    const table = parseCsvTable('date,title\n2026-07-01,"unclosed');
+    expect(table.rows).toHaveLength(0);
+    expect(table.rowErrors).toMatchObject([{ lineNumber: 2, message: expect.stringContaining('Unclosed quoted CSV field') }]);
   });
 
-  it('rejects quotes inside unquoted fields and trailing text after a closing quote', () => {
-    expect(() => parseCsvText('date,title\n2026-07-01,bad"quote')).toThrow('Malformed CSV quote');
-    expect(() => parseCsvText('date,title\n2026-07-01,"closed"tail')).toThrow('Malformed CSV quote');
+  it('rejects only the offending row for quotes inside unquoted fields and trailing text', () => {
+    const bad = parseCsvTable('date,title\n2026-07-01,bad"quote');
+    expect(bad.rows).toHaveLength(0);
+    expect(bad.rowErrors).toMatchObject([{ lineNumber: 2, message: expect.stringContaining('Malformed CSV quote') }]);
+
+    const tail = parseCsvTable('date,title\n2026-07-01,"closed"tail');
+    expect(tail.rows).toHaveLength(0);
+    expect(tail.rowErrors).toMatchObject([{ lineNumber: 2, message: expect.stringContaining('Malformed CSV quote') }]);
+  });
+
+  it('keeps valid rows when one row has a stray quote', () => {
+    const table = parseCsvTable('date,title\n2026-07-01,Good\n2026-07-02,bad"quote\n2026-07-03,Also good');
+    expect(table.rows.map((row) => row.title)).toEqual(['Good', 'Also good']);
+    expect(table.rowErrors).toMatchObject([{ lineNumber: 3 }]);
+  });
+
+  it('detects semicolon and tab delimited files', () => {
+    expect(parseCsvTable('date;title\n2026-07-01;Coffee').rows[0]).toMatchObject({ date: '2026-07-01', title: 'Coffee' });
+    expect(parseCsvTable('date\ttitle\n2026-07-01\tCoffee').rows[0]).toMatchObject({ date: '2026-07-01', title: 'Coffee' });
+  });
+
+  it('survives an export/import round trip for a literal leading apostrophe', () => {
+    const table = parseCsvTable(`title\n${escapeCsv("'=SUM(A1:A9)")}`);
+    expect(table.rows[0].title).toBe("'=SUM(A1:A9)");
   });
 });

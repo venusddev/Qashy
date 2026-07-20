@@ -1,12 +1,20 @@
 import {
   validateCurrencyCode,
   validateDateInput,
+  validateLocale,
   validateMoneyInput,
   validatePositiveDecimal,
   validatePositiveInteger,
 } from '@/utils/form-validation';
 
 describe('form validation', () => {
+  it('validates locales using the formatter available on native runtimes', () => {
+    expect(validateLocale('he-IL')).toBeUndefined();
+    expect(validateLocale(' en-US ')).toBeUndefined();
+    expect(validateLocale('en_US')).toContain('valid locale');
+    expect(validateLocale('')).toContain('valid locale');
+  });
+
   it('matches positive and non-negative money rules', () => {
     expect(validateMoneyInput('0', 'USD', 'en-US', { label: 'Limit', positive: true })).toContain('greater than zero');
     expect(validateMoneyInput('-1', 'USD', 'en-US', { label: 'Progress', nonNegative: true })).toContain('cannot be negative');

@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, View, useWindowDimensions, type ColorValue } from 'react-native';
 import Animated, {
   Easing,
@@ -8,31 +8,41 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ActionButton } from '@/components/ui/action-button';
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
+import { ChoiceListField, type ChoiceListOption } from '@/components/ui/choice-list-field';
 import { ChoiceChip } from '@/components/ui/choice-chip';
 import { ColorSwatch } from '@/components/ui/color-swatch';
 import { FormField } from '@/components/ui/form-field';
 import { MotionView } from '@/components/ui/motion';
-import { QASHY_ACCENT } from '@/domain/defaults';
+import { initialLocalePreferences, QASHY_ACCENT } from '@/domain/defaults';
 import type { AccountType, AccentSource, ThemeMode } from '@/domain/models';
+import { APP_LANGUAGE_OPTIONS, languageFromLocale } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { ACCENT_PRESETS, radius } from '@/theme/tokens';
 import { errorMessage, showError } from '@/utils/confirm';
-import { validateCurrencyCode, validateMoneyInput } from '@/utils/form-validation';
-import { parseMoney } from '@/utils/money';
+import { validateCurrencyCode, validateLocale, validateMoneyInput } from '@/utils/form-validation';
+import { parseMoney, SUPPORTED_CURRENCY_CODES } from '@/utils/money';
 
-function isValidLocale(value: string) {
+const LOCALE_OPTIONS: ChoiceListOption[] = [...APP_LANGUAGE_OPTIONS];
+
+const FEATURED_CURRENCIES = ['ILS', 'USD', 'EUR', 'GBP', 'JPY'];
+
+function currencyLabel(currency: string, locale: string) {
   try {
-    new Intl.Locale(value);
-    new Intl.NumberFormat(value).format(1);
-    return true;
+    const name = new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+      currencyDisplay: 'name',
+    }).formatToParts(1).find((part) => part.type === 'currency')?.value;
+    return name ? name[0].toLocaleUpperCase() + name.slice(1) : currency;
   } catch {
-    return false;
+    return currency;
   }
 }
 
@@ -67,18 +77,47 @@ export function OnboardingScreen() {
   const { settings } = useFinanceState();
   const theme = useQashyTheme();
   const { width } = useWindowDimensions();
+  const [startingPreferences] = useState(() => initialLocalePreferences(settings));
   const [step, setStep] = useState(0);
   const [direction, setDirection] = useState<'forward' | 'back'>('forward');
-  const [locale, setLocale] = useState(settings.locale);
-  const [currency, setCurrency] = useState(settings.baseCurrency);
+  const [locale, setLocale] = useState(
+    languageFromLocale(startingPreferences.locale) === 'he' ? 'he-IL' : 'en-US',
+  );
+  const [currency, setCurrency] = useState(startingPreferences.baseCurrency);
   const [accountName, setAccountName] = useState('Everyday');
   const [accountType, setAccountType] = useState<AccountType>('checking');
   const [openingBalance, setOpeningBalance] = useState('0');
-  const [themeMode, setThemeMode] = useState<ThemeMode>('system');
-  const [accentSource, setAccentSource] = useState<AccentSource>('system');
-  const [accentHex, setAccentHex] = useState(QASHY_ACCENT);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(settings.themeMode);
+  const [accentSource, setAccentSource] = useState<AccentSource>(settings.accentSource);
+  const [accentHex, setAccentHex] = useState(settings.accentHex || QASHY_ACCENT);
   const [saving, setSaving] = useState(false);
-  const localeValid = isValidLocale(locale);
+  const pendingSettingsWrite = useRef<Promise<void>>(Promise.resolve());
+  const localeOptions = LOCALE_OPTIONS;
+  const currencyOptions = useMemo(() => {
+    const featured = new Set(FEATURED_CURRENCIES);
+    const toOption = (code: string): ChoiceListOption => ({
+      value: code,
+      label: currencyLabel(code, locale),
+      description: code,
+    });
+    return [
+      ...FEATURED_CURRENCIES.map(toOption),
+      ...SUPPORTED_CURRENCY_CODES
+        .filter((code) => !featured.has(code))
+        .map(toOption)
+        .sort((a, b) => a.label.localeCompare(b.label, locale)),
+    ];
+  }, [locale]);
+  const applySetupSettings = (patch: Parameters<typeof repository.updateSettings>[0]) => {
+    pendingSettingsWrite.current = pendingSettingsWrite.current
+      .then(() => repository.updateSettings(patch))
+      .then(() => undefined)
+      .catch((reason) => {
+        showError('Couldn’t apply this setting', errorMessage(reason, 'Try again.'));
+      });
+  };
+  const localeError = validateLocale(locale);
+  const localeValid = !localeError;
   const currencyError = validateCurrencyCode(currency, localeValid ? locale : 'en-US');
   const currencyValid = !currencyError;
   const openingError = localeValid && currencyValid
@@ -97,6 +136,7 @@ export function OnboardingScreen() {
     if (saving || !localeValid || !currencyValid || openingError) return;
     setSaving(true);
     try {
+      await pendingSettingsWrite.current;
       await repository.completeOnboarding({
         locale,
         baseCurrency: currency.toUpperCase(),
@@ -118,11 +158,17 @@ export function OnboardingScreen() {
     }
   };
 
-  return (
+  const content = (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
       style={{ flex: 1, backgroundColor: theme.background }}
-      contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      contentContainerStyle={{
+        flexGrow: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 20,
+        paddingVertical: 20,
+      }}>
       <View style={{ width: '100%', maxWidth: 720, gap: 22 }}>
         <View style={{ alignItems: 'center', gap: 12 }}>
           <MotionView variant="zoom">
@@ -136,7 +182,7 @@ export function OnboardingScreen() {
             exit
             animateLayout
             style={{ alignItems: 'center', gap: 4 }}>
-            <AppText variant="title">{step === 0 ? 'Money, made calmer.' : ['Your home currency', 'Create your first account', 'Make it yours'][step - 1]}</AppText>
+            <AppText variant="title">{step === 0 ? 'Money, made calmer.' : ['Language and currency', 'Create your first account', 'Make it yours'][step - 1]}</AppText>
             <AppText muted style={{ textAlign: 'center', maxWidth: 520 }}>
               {step === 0
                 ? 'Qashy is a private, local-first place for everyday spending, flexible budgets, and goals.'
@@ -181,11 +227,27 @@ export function OnboardingScreen() {
 
             {step === 1 ? (
               <View style={{ gap: 16 }}>
-                <FormField label="Locale" value={locale} onChangeText={setLocale} placeholder="en-US" autoCapitalize="none" hint={locale.trim() && !localeValid ? 'Use a valid locale such as en-US.' : undefined} />
-                <FormField label="Base currency" value={currency} onChangeText={setCurrency} placeholder="USD" autoCapitalize="characters" maxLength={3} hint={currency.trim() && currencyError ? currencyError : 'Budgets, goals, and reports use this currency.'} />
-                <View accessibilityLabel="Base currency" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                  {['USD', 'EUR', 'GBP', 'ILS', 'JPY'].map((item) => <ChoiceChip key={item} label={item} selected={currency === item} onPress={() => setCurrency(item)} />)}
-                </View>
+                <ChoiceListField
+                  label="Language"
+                  value={locale}
+                  options={localeOptions}
+                  onChange={(value) => {
+                    setLocale(value);
+                    applySetupSettings({ locale: value });
+                  }}
+                />
+                <ChoiceListField
+                  label="Base currency"
+                  value={currency}
+                  options={currencyOptions}
+                  onChange={setCurrency}
+                  hint="Budgets, goals, and reports use this currency."
+                  searchable
+                  // Currency names come from Intl for the chosen locale and the
+                  // descriptions are ISO codes; neither belongs in the dictionary.
+                  literalOptions
+                  searchPlaceholder="Search by currency name or code"
+                />
               </View>
             ) : null}
 
@@ -206,11 +268,11 @@ export function OnboardingScreen() {
               <View style={{ gap: 18 }}>
                 <AppText variant="label">Appearance</AppText>
                 <View accessibilityLabel="Appearance" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                  {(['system', 'light', 'dark'] as ThemeMode[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={themeMode === item} onPress={() => setThemeMode(item)} />)}
+                  {(['system', 'light', 'dark'] as ThemeMode[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={themeMode === item} onPress={() => { setThemeMode(item); applySetupSettings({ themeMode: item }); }} />)}
                 </View>
                 <AppText variant="label">Accent</AppText>
                 <View accessibilityLabel="Accent color" accessibilityRole="radiogroup" style={{ gap: 12 }}>
-                  <ChoiceChip label="System accent" selected={accentSource === 'system'} onPress={() => setAccentSource('system')} icon="paintbrush" />
+                  <ChoiceChip label="System accent" selected={accentSource === 'system'} onPress={() => { setAccentSource('system'); applySetupSettings({ accentSource: 'system' }); }} icon="paintbrush" />
                   <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
                     {ACCENT_PRESETS.map((color) => (
                       <ColorSwatch
@@ -218,7 +280,7 @@ export function OnboardingScreen() {
                         color={color}
                         selected={accentSource === 'preset' && accentHex === color}
                         label={`Use ${color} accent`}
-                        onPress={() => { setAccentSource('preset'); setAccentHex(color); }}
+                        onPress={() => { setAccentSource('preset'); setAccentHex(color); applySetupSettings({ accentSource: 'preset', accentHex: color }); }}
                       />
                     ))}
                   </View>
@@ -244,5 +306,11 @@ export function OnboardingScreen() {
         </Card>
       </View>
     </ScrollView>
+  );
+  if (process.env.EXPO_OS !== 'android') return content;
+  return (
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: theme.background }}>
+      {content}
+    </SafeAreaView>
   );
 }

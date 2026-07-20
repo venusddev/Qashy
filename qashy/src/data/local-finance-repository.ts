@@ -48,6 +48,7 @@ import {
 } from '@/utils/date';
 import { createEntity, makeId, nowIso, updateEntity } from '@/utils/entity';
 import { escapeCsv } from '@/utils/csv';
+import { validateLocale } from '@/utils/form-validation';
 import {
   addMinor,
   convertMinor,
@@ -71,6 +72,9 @@ const RECURRENCE_UNITS = ['day', 'week', 'month', 'year'] as const;
 const THEME_MODES = ['system', 'light', 'dark'] as const;
 const ACCENT_SOURCES = ['system', 'preset', 'custom'] as const;
 const MAX_RECURRING_OCCURRENCES_PER_RUN = 100_000;
+// How far a manually entered rate may sit from the reciprocal of an existing
+// opposite-direction rate before the pair is treated as contradictory (2%).
+const RECIPROCAL_RATE_TOLERANCE = 0.02;
 const csvRowSchema = z.object({
   rowNumber: z.number(),
   date: z.string().regex(DATE_PATTERN).refine(isLocalDate, 'Enter a real calendar date.'),
@@ -380,7 +384,16 @@ export class LocalFinanceRepository implements FinanceRepository {
         ? [{ type: 'contributions' as const, entity: contributionEntity }]
         : []),
     ]);
-    this.state = { ...this.state, goals, contributions };
+    // Re-derive from the post-await snapshot rather than reusing the `goals` /
+    // `contributions` copies taken before the write. Another mutation can land
+    // while the persist is in flight, and rebuilding from the stale copy drops
+    // it from the in-memory state while it stays on disk — the UI then shows a
+    // goal total that disagrees with the database until the next reload.
+    this.state = {
+      ...this.state,
+      goals: this.withEntity(this.state.goals, goal),
+      contributions: contributionEntity ? this.withEntity(this.state.contributions, contributionEntity) : this.state.contributions,
+    };
     this.emit();
     return goal;
   }
@@ -499,6 +512,7 @@ export class LocalFinanceRepository implements FinanceRepository {
       item.effectiveDate === input.effectiveDate,
     );
     if (duplicate) throw new Error('A rate already exists for this currency pair and date.');
+    this.assertReciprocalRate(fromCurrency, toCurrency, rate, input.effectiveDate, id);
     return await this.saveListEntity<ExchangeRate>('exchangeRates', {
       ...input,
       fromCurrency,
@@ -789,6 +803,12 @@ export class LocalFinanceRepository implements FinanceRepository {
           ruleChanges.push(updateEntity(rule, { nextDueDate: due, active }));
         }
       } catch {
+        // Generation for this rule failed — most often a missing exchange rate
+        // for its currency pair. Swallowing it silently left `nextDueDate`
+        // frozen forever with no error, no flag, and nothing for the user to
+        // act on. Pause the rule instead so it surfaces as "Paused" in the
+        // Automation list and the user can fix the cause and re-enable it.
+        if (rule.active) ruleChanges.push(updateEntity(rule, { active: false }));
         continue;
       }
     }
@@ -883,11 +903,45 @@ export class LocalFinanceRepository implements FinanceRepository {
         .filter((item) => deletedIds.has(item.budgetId))
         .map((item) => updateEntity(item, { deletedAt: nowIso() }))
       : [];
+    // Deleting a transaction must retire the goal contribution it funded,
+    // otherwise the goal keeps counting money that no longer exists.
+    const orphanedContributions = type === 'transactions'
+      ? this.state.contributions
+        .filter((item) => !item.deletedAt && item.transactionId !== null && deletedIds.has(item.transactionId))
+        .map((item) => updateEntity(item, { deletedAt: nowIso() }))
+      : [];
+    // Deleting a rule must release the transactions it already generated, or they
+    // keep pointing at a rule that is gone.
+    const releasedTransactions = type === 'recurringRules'
+      ? this.state.transactions
+        .filter((item) => !item.deletedAt && item.recurringRuleId !== null && deletedIds.has(item.recurringRuleId))
+        .map((item) => updateEntity(item, { recurringRuleId: null }))
+      : [];
+    // Deleting a tag must strip it from every transaction. Leaving the id behind
+    // makes the transaction fail its own tag validation the next time the user
+    // saves it — a dead end with no way out from the UI.
+    const untaggedTransactions = type === 'tags'
+      ? this.state.transactions
+        .filter((item) => !item.deletedAt && item.tagIds.some((tagId) => deletedIds.has(tagId)))
+        .map((item) => updateEntity(item, { tagIds: item.tagIds.filter((tagId) => !deletedIds.has(tagId)) }))
+      : [];
+    // Same dead end as tags, one level up: `buildTransaction` rejects a
+    // categoryId with no matching category, so a transaction left pointing at a
+    // deleted category throws "Choose a valid expense category." on every
+    // subsequent save and cannot be repaired from the UI.
+    const uncategorisedTransactions = type === 'categories'
+      ? this.state.transactions
+        .filter((item) => !item.deletedAt && item.categoryId !== null && deletedIds.has(item.categoryId))
+        .map((item) => updateEntity(item, { categoryId: null }))
+      : [];
+    const transactionChanges = [...releasedTransactions, ...untaggedTransactions, ...uncategorisedTransactions];
     await this.storage.putMany([
       ...deleted.map((entity) => ({ type: type as EntityType, entity })),
       ...rules.map((entity) => ({ type: 'recurringRules' as const, entity })),
       ...contributions.map((entity) => ({ type: 'contributions' as const, entity })),
+      ...orphanedContributions.map((entity) => ({ type: 'contributions' as const, entity })),
       ...budgetPeriods.map((entity) => ({ type: 'budgetPeriods' as const, entity })),
+      ...transactionChanges.map((entity) => ({ type: 'transactions' as const, entity })),
     ]);
     if (type === 'transactions') {
       deleted.forEach((entity) => {
@@ -901,6 +955,14 @@ export class LocalFinanceRepository implements FinanceRepository {
       [type]: (this.state[type] as FinanceEntity[]).filter((entity) => !deletedIds.has(entity.id)),
     } as FinanceState;
     nextState.recurringRules = nextState.recurringRules.map((rule) => ruleChanges.get(rule.id) ?? rule);
+    if (transactionChanges.length) {
+      const edits = new Map(transactionChanges.map((item) => [item.id, item]));
+      nextState.transactions = nextState.transactions.map((item) => edits.get(item.id) ?? item);
+    }
+    if (orphanedContributions.length) {
+      const retired = new Set(orphanedContributions.map((item) => item.id));
+      nextState.contributions = nextState.contributions.filter((item) => !retired.has(item.id));
+    }
     if (type === 'goals') {
       nextState.contributions = nextState.contributions.filter((item) => !deletedIds.has(item.goalId));
     }
@@ -1032,12 +1094,30 @@ export class LocalFinanceRepository implements FinanceRepository {
     return `\uFEFF${[headers, ...rows].map((row) => row.map(escapeCsv).join(',')).join('\n')}`;
   }
 
-  async resetAllData() {
+  resetAllData() {
+    // Share the recurring queue so a generation run that is already in flight
+    // settles before the wipe. Otherwise its `putMany` lands after `clear()` and
+    // resurrects transactions and rules against an account list that no longer
+    // exists — the provider kicks off `generateRecurring()` on every foreground,
+    // so the interleaving is genuinely reachable.
+    const run = this.recurringQueue.then(() => this.resetAllDataNow());
+    this.recurringQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private async resetAllDataNow() {
+    // Nothing below this line may touch `this.state` until the disk wipe has
+    // succeeded, so a failing `clear()` leaves the snapshot intact.
     await this.storage.clear();
+    const next = { ...createInitialState(), ready: true };
     this.deletedOccurrenceKeys.clear();
-    this.state = { ...createInitialState(), ready: true };
-    await this.persist('settings', [this.state.settings]);
+    this.state = next;
     this.emit();
+    // The wipe is already the source of truth at this point: an empty store
+    // rehydrates to exactly `createInitialState()` on next launch. Re-seeding the
+    // settings row is an optimisation, so a failure here must not be reported as
+    // a failed reset.
+    await this.persist('settings', [next.settings]).catch(() => undefined);
   }
 
   private async saveListEntity<T extends FinanceEntity>(type: ListKey, input: Omit<T, keyof import('@/domain/models').SyncEntity>, id?: string) {
@@ -1189,6 +1269,27 @@ export class LocalFinanceRepository implements FinanceRepository {
     throw new Error(`Missing exchange rate for ${fromCurrency} → ${toCurrency} on ${localDate}.`);
   }
 
+  // A pair may be entered in either direction. If both directions exist and they
+  // disagree, a transfer converts out through one and back in through the other,
+  // so the two legs no longer describe the same amount and the difference is
+  // conjured into (or out of) the base-currency totals. Reject the contradiction
+  // at entry rather than letting it silently corrupt every later conversion.
+  private assertReciprocalRate(fromCurrency: string, toCurrency: string, rate: string, effectiveDate: string, id?: string) {
+    const reciprocal = this.active(this.state.exchangeRates)
+      .filter((item) => item.id !== id && item.fromCurrency === toCurrency && item.toCurrency === fromCurrency && item.effectiveDate <= effectiveDate)
+      .sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate) || b.updatedAt.localeCompare(a.updatedAt))[0];
+    if (!reciprocal) return;
+    const implied = new Decimal(1).div(this.normalizeRate(reciprocal.rate));
+    const entered = new Decimal(rate);
+    // Manually entered rates carry real spread and rounding, so compare with a
+    // tolerance instead of demanding an exact reciprocal.
+    const drift = entered.minus(implied).abs().div(implied);
+    if (drift.lessThanOrEqualTo(RECIPROCAL_RATE_TOLERANCE)) return;
+    throw new Error(
+      `This contradicts the existing ${toCurrency} → ${fromCurrency} rate of ${reciprocal.rate}, which implies ${implied.toSignificantDigits(8)}. Update or remove that rate first.`,
+    );
+  }
+
   private directOrInverseRate(fromCurrency: string, toCurrency: string, localDate: string) {
     const direct = this.latestRate(fromCurrency, toCurrency, localDate);
     if (direct) return this.normalizeRate(direct.rate);
@@ -1201,6 +1302,16 @@ export class LocalFinanceRepository implements FinanceRepository {
     return this.active(this.state.exchangeRates)
       .filter((item) => item.fromCurrency === fromCurrency && item.toCurrency === toCurrency && item.effectiveDate <= localDate)
       .sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate) || b.updatedAt.localeCompare(a.updatedAt))[0];
+  }
+
+  // A deficit compounds across every period it is carried through, so a few
+  // months of overspending can drive the rollover far enough negative that the
+  // effective limit turns permanently unreachable and the budget becomes
+  // useless. Cap the carried deficit at a single period's limit — one period of
+  // debt is a meaningful signal, ten is noise.
+  private clampRollover(rolloverMinor: number, limitMinor: number) {
+    const floor = -Math.abs(limitMinor);
+    return rolloverMinor < floor ? floor : rolloverMinor;
   }
 
   private budgetSpend(filters: BudgetFilters, fromDate: string, toDate: string) {
@@ -1246,11 +1357,11 @@ export class LocalFinanceRepository implements FinanceRepository {
         periodEnd,
         limitMinor: budget.limitMinor,
         rolloverMinor: budget.rollover && previous
-          ? subtractMinor(
+          ? this.clampRollover(subtractMinor(
             addMinor(previous.rolloverMinor, previous.limitMinor, `${budget.name} rollover`),
             this.budgetSpend(previous.filters, previous.periodStart, previous.periodEnd),
             `${budget.name} rollover`,
-          )
+          ), budget.limitMinor)
           : 0,
         filters: budget.filters,
         categoryLimits: budget.categoryLimits,
@@ -1716,12 +1827,8 @@ export class LocalFinanceRepository implements FinanceRepository {
   }
 
   private assertLocale(value: string) {
-    try {
-      new Intl.Locale(value);
-      new Intl.NumberFormat(value).format(1);
-    } catch {
-      throw new Error('Use a valid locale such as en-US.');
-    }
+    const error = validateLocale(value);
+    if (error) throw new Error(error);
   }
 
   private assertColor(value: string) {

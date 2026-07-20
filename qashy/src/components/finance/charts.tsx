@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { View, useWindowDimensions } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import Animated, {
   Easing,
   ReduceMotion,
@@ -14,6 +14,7 @@ import { useAnimatedMinorAmount } from '@/components/finance/animated-money';
 import { AppText } from '@/components/ui/app-text';
 import { MotionView } from '@/components/ui/motion';
 import type { DashboardSummary } from '@/domain/models';
+import { useLocalization } from '@/localization/localization';
 import { useQashyTheme } from '@/theme/theme';
 import { shortDate } from '@/utils/date';
 import { formatMoney } from '@/utils/money';
@@ -25,14 +26,30 @@ export function SpendLineChart({ points, currency, locale }: { points: Dashboard
   const theme = useQashyTheme();
   const { width } = useWindowDimensions();
   const reduceMotion = useReducedMotion();
-  const chartWidth = Math.min(Math.max(width - 72, 260), 520);
+  // The SVG is laid out at 100% width, so the viewBox has to match the real
+  // parent width. Guessing from the window magnified strokes and label text by
+  // up to ~1.6x inside a wider column.
+  const [measuredWidth, setMeasuredWidth] = useState(0);
+  const estimatedWidth = Math.min(Math.max(width - 72, 260), 520);
+  const chartWidth = Math.max(measuredWidth || estimatedWidth, 1);
+  const onLayout = (event: LayoutChangeEvent) => {
+    const next = event.nativeEvent.layout.width;
+    setMeasuredWidth((current) => (Math.abs(current - next) > 0.5 ? next : current));
+  };
   const height = 174;
-  const actualMax = Math.max(...points.map((item) => item.amountMinor), 0);
-  const scaleMax = Math.max(actualMax, 1);
-  const hasSpending = actualMax > 0;
+  const amounts = points.map((item) => item.amountMinor);
+  const actualMax = amounts.length ? Math.max(...amounts) : 0;
+  const actualMin = amounts.length ? Math.min(...amounts) : 0;
+  // Refunds make a day negative. Keep zero inside the domain so the baseline
+  // stays meaningful, and scale across the full range so nothing is drawn
+  // outside the viewBox.
+  const domainMax = Math.max(actualMax, 0);
+  const domainMin = Math.min(actualMin, 0);
+  const domainSpan = Math.max(domainMax - domainMin, 1);
+  const hasSpending = amounts.some((amount) => amount !== 0);
   const coordinates = points.map((point, index) => ({
     x: 8 + (index / Math.max(points.length - 1, 1)) * (chartWidth - 16),
-    y: height - 32 - (point.amountMinor / scaleMax) * (height - 54),
+    y: height - 32 - ((point.amountMinor - domainMin) / domainSpan) * (height - 54),
   }));
   const path = coordinates.map(({ x, y }, index) => `${index ? 'L' : 'M'} ${x} ${y}`).join(' ');
   const pathLength = Math.max(1, coordinates.slice(1).reduce((length, point, index) => {
@@ -58,16 +75,35 @@ export function SpendLineChart({ points, currency, locale }: { points: Dashboard
   }));
   const firstDate = points.at(0)?.date;
   const lastDate = points.at(-1)?.date;
+  const refundNote = actualMin < 0
+    ? ` Largest refund day ${formatMoney(actualMin, currency, locale)}.`
+    : '';
   const label = hasSpending
-    ? `Daily spending from ${firstDate} to ${lastDate}. Highest day ${formatMoney(actualMax, currency, locale)}.`
+    ? `Daily spending from ${firstDate} to ${lastDate}. Highest day ${formatMoney(actualMax, currency, locale)}.${refundNote}`
     : `No spending from ${firstDate ?? 'the start of this period'} to ${lastDate ?? 'the end of this period'}.`;
   return (
-    <MotionView variant="fade" accessibilityRole="image" accessibilityLabel={label} style={{ minHeight: height }}>
+    <MotionView
+      variant="fade"
+      accessibilityRole="image"
+      accessibilityLabel={label}
+      onLayout={onLayout}
+      style={{ minHeight: height }}>
       {hasSpending ? (
         <Svg width="100%" height={height} viewBox={`0 0 ${chartWidth} ${height}`}>
           {[0.25, 0.5, 0.75].map((ratio) => (
             <Line key={ratio} x1="8" x2={chartWidth - 8} y1={(height - 24) * ratio} y2={(height - 24) * ratio} stroke={theme.border as string} strokeWidth="1" />
           ))}
+          {domainMin < 0 ? (
+            <Line
+              x1="8"
+              x2={chartWidth - 8}
+              y1={height - 32 - (-domainMin / domainSpan) * (height - 54)}
+              y2={height - 32 - (-domainMin / domainSpan) * (height - 54)}
+              stroke={theme.textMuted as string}
+              strokeWidth="1"
+              strokeDasharray="3 3"
+            />
+          ) : null}
           <AnimatedPath
             animatedProps={pathProps}
             d={path}
@@ -89,7 +125,11 @@ export function SpendLineChart({ points, currency, locale }: { points: Dashboard
       ) : (
         <View style={{ minHeight: height, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
           <AppText variant="label">No spending in this period</AppText>
-          <AppText variant="caption" muted>{firstDate && lastDate ? `${shortDate(firstDate, locale)} – ${shortDate(lastDate, locale)}` : 'Add an expense to start the rhythm.'}</AppText>
+          {firstDate && lastDate ? (
+            <AppText literal variant="caption" muted>{`${shortDate(firstDate, locale)} – ${shortDate(lastDate, locale)}`}</AppText>
+          ) : (
+            <AppText variant="caption" muted>Add an expense to start the rhythm.</AppText>
+          )}
         </View>
       )}
     </MotionView>
@@ -100,6 +140,7 @@ const DONUT_TOP_COUNT = 5;
 
 export function CategoryDonut({ items, currency, locale }: { items: DashboardSummary['categorySpend']; currency: string; locale: string }) {
   const theme = useQashyTheme();
+  const { t } = useLocalization();
   const total = items.reduce((sum, item) => sum + item.amountMinor, 0);
   const radius = 46;
   const circumference = 2 * Math.PI * radius;
@@ -107,14 +148,17 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
   // top entries aggregated into "Other" so both always account for 100%.
   const top = items.slice(0, DONUT_TOP_COUNT);
   const otherMinor = items.slice(DONUT_TOP_COUNT).reduce((sum, item) => sum + item.amountMinor, 0);
+  // Only the two synthetic slices are translatable. Resolving them here lets
+  // the legend render every name verbatim, so a category the user actually
+  // named "Other" or "Savings" is never swapped for the dictionary's word.
   const slices = [
     ...top.map((item) => ({
       key: item.category?.id ?? 'uncategorized',
-      name: item.category?.name ?? 'Uncategorized',
+      name: item.category?.name ?? t('Uncategorized'),
       color: item.category?.color ?? theme.textMuted as string,
       amountMinor: item.amountMinor,
     })),
-    ...(otherMinor > 0 ? [{ key: 'other', name: 'Other', color: theme.textMuted as string, amountMinor: otherMinor }] : []),
+    ...(otherMinor > 0 ? [{ key: 'other', name: t('Other'), color: theme.textMuted as string, amountMinor: otherMinor }] : []),
   ];
   const segments = slices.map((slice, index, source) => ({
     slice,
@@ -144,8 +188,21 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
     strokeDashoffset: -revealed.value,
   }));
   const animatedTotal = useAnimatedMinorAmount(total);
+  const share = (amountMinor: number) => (total ? Math.round((amountMinor / total) * 100) : 0);
+  // The ring and the legend are matched by an ordinal as well as a color, so
+  // the pairing survives color blindness and monochrome rendering.
+  const label = slices.length
+    ? `Spending by category. Total ${formatMoney(total, currency, locale)}. ${slices
+      .map((slice, index) => `${index + 1}. ${slice.name}, ${share(slice.amountMinor)} percent`)
+      .join('. ')}.`
+    : 'Spending by category. No spending yet.';
   return (
-    <MotionView variant="zoom" delay={70} style={{ flexDirection: 'row', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+    <MotionView
+      variant="zoom"
+      delay={70}
+      accessibilityRole="image"
+      accessibilityLabel={label}
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
       <View style={{ width: 126, height: 126 }}>
         <Svg width="126" height="126" viewBox="0 0 126 126">
           <Circle cx="63" cy="63" r={radius} fill="none" stroke={theme.surfaceMuted as string} strokeWidth="16" />
@@ -185,11 +242,12 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
         </Svg>
       </View>
       <View style={{ flex: 1, minWidth: 160, gap: 9 }}>
-        {slices.map((slice) => (
+        {slices.map((slice, index) => (
           <View key={slice.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <AppText variant="caption" muted style={{ minWidth: 14, fontVariant: ['tabular-nums'] }}>{`${index + 1}.`}</AppText>
             <View style={{ width: 9, height: 9, borderRadius: 99, backgroundColor: slice.color }} />
-            <AppText variant="caption" style={{ flex: 1 }}>{slice.name}</AppText>
-            <AppText variant="caption" muted>{total ? Math.round((slice.amountMinor / total) * 100) : 0}%</AppText>
+            <AppText literal variant="caption" style={{ flex: 1 }} numberOfLines={1}>{slice.name}</AppText>
+            <AppText variant="caption" muted>{`${share(slice.amountMinor)}%`}</AppText>
           </View>
         ))}
         {!items.length ? <AppText muted>No spending yet</AppText> : null}
