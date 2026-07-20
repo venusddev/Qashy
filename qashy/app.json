@@ -48,6 +48,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e7487171-c787-48dc-aea9-736d63f07042"
+      }
+    },
+    "owner": "venusddev"
   }
 }
