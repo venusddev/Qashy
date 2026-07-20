@@ -1,2 +1,0 @@
-- name: Expo GitHub Action
-  uses: expo/expo-github-action@9.0.0
