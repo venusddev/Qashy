@@ -87,9 +87,15 @@ describe('FinanceRepository contract', () => {
     class FailingStorage extends MemoryStorageAdapter {
       fail = false;
 
-      override async putMany(records: Parameters<MemoryStorageAdapter['putMany']>[0]) {
+      override async putMany(
+        records: Parameters<MemoryStorageAdapter['putMany']>[0],
+        source?: object,
+      ) {
         if (this.fail) throw new Error('simulated disk failure');
-        await super.putMany(records);
+        // `source` identifies the writer so a repository ignores its own change
+        // notification. Dropping it here made every local write look like it
+        // came from another window.
+        await super.putMany(records, source);
       }
     }
 
@@ -196,9 +202,15 @@ describe('FinanceRepository contract', () => {
     class FailingStorage extends MemoryStorageAdapter {
       fail = false;
 
-      override async putMany(records: Parameters<MemoryStorageAdapter['putMany']>[0]) {
+      override async putMany(
+        records: Parameters<MemoryStorageAdapter['putMany']>[0],
+        source?: object,
+      ) {
         if (this.fail) throw new Error('simulated disk failure');
-        await super.putMany(records);
+        // `source` identifies the writer so a repository ignores its own change
+        // notification. Dropping it here made every local write look like it
+        // came from another window.
+        await super.putMany(records, source);
       }
     }
     const storage = new FailingStorage();
@@ -319,12 +331,18 @@ describe('FinanceRepository contract', () => {
       pauseNext = false;
       private release: (() => void) | null = null;
 
-      override async putMany(records: Parameters<MemoryStorageAdapter['putMany']>[0]) {
+      override async putMany(
+        records: Parameters<MemoryStorageAdapter['putMany']>[0],
+        source?: object,
+      ) {
         if (this.pauseNext) {
           this.pauseNext = false;
           await new Promise<void>((resolve) => { this.release = resolve; });
         }
-        await super.putMany(records);
+        // `source` identifies the writer so a repository ignores its own change
+        // notification. Dropping it here made every local write look like it
+        // came from another window.
+        await super.putMany(records, source);
       }
 
       releasePaused() {
@@ -642,12 +660,18 @@ describe('FinanceRepository contract', () => {
       pauseNext = false;
       private release: (() => void) | null = null;
 
-      override async putMany(records: Parameters<MemoryStorageAdapter['putMany']>[0]) {
+      override async putMany(
+        records: Parameters<MemoryStorageAdapter['putMany']>[0],
+        source?: object,
+      ) {
         if (this.pauseNext) {
           this.pauseNext = false;
           await new Promise<void>((resolve) => { this.release = resolve; });
         }
-        await super.putMany(records);
+        // `source` identifies the writer so a repository ignores its own change
+        // notification. Dropping it here made every local write look like it
+        // came from another window.
+        await super.putMany(records, source);
       }
 
       releasePaused() {
@@ -1151,9 +1175,15 @@ describe('FinanceRepository contract', () => {
     class FailingStorage extends MemoryStorageAdapter {
       fail = false;
 
-      override async putMany(records: Parameters<MemoryStorageAdapter['putMany']>[0]) {
+      override async putMany(
+        records: Parameters<MemoryStorageAdapter['putMany']>[0],
+        source?: object,
+      ) {
         if (this.fail) throw new Error('simulated disk failure');
-        await super.putMany(records);
+        // `source` identifies the writer so a repository ignores its own change
+        // notification. Dropping it here made every local write look like it
+        // came from another window.
+        await super.putMany(records, source);
       }
     }
     const storage = new FailingStorage();
@@ -1524,12 +1554,18 @@ describe('FinanceRepository contract', () => {
       pauseNext = false;
       private release: (() => void) | null = null;
 
-      override async putMany(records: Parameters<MemoryStorageAdapter['putMany']>[0]) {
+      override async putMany(
+        records: Parameters<MemoryStorageAdapter['putMany']>[0],
+        source?: object,
+      ) {
         if (this.pauseNext) {
           this.pauseNext = false;
           await new Promise<void>((resolve) => { this.release = resolve; });
         }
-        await super.putMany(records);
+        // `source` identifies the writer so a repository ignores its own change
+        // notification. Dropping it here made every local write look like it
+        // came from another window.
+        await super.putMany(records, source);
       }
 
       releasePaused() {
@@ -1639,12 +1675,18 @@ describe('FinanceRepository contract', () => {
       pauseNext = false;
       private release: (() => void) | null = null;
 
-      override async putMany(records: Parameters<MemoryStorageAdapter['putMany']>[0]) {
+      override async putMany(
+        records: Parameters<MemoryStorageAdapter['putMany']>[0],
+        source?: object,
+      ) {
         if (this.pauseNext) {
           this.pauseNext = false;
           await new Promise<void>((resolve) => { this.release = resolve; });
         }
-        await super.putMany(records);
+        // `source` identifies the writer so a repository ignores its own change
+        // notification. Dropping it here made every local write look like it
+        // came from another window.
+        await super.putMany(records, source);
       }
 
       releasePaused() {
@@ -1910,5 +1952,117 @@ describe('FinanceRepository contract', () => {
     await repository.deleteEntities('accounts', [account.id]);
     expect(repository.getSnapshot().accounts.find((item) => item.id === account.id)?.archived).toBe(true);
     expect(repository.getSnapshot().transactions.find((item) => item.id === transaction.id)?.accountId).toBe(account.id);
+  });
+
+  it('edits a foreign-currency transaction using its own rate snapshot after the rate is deleted', async () => {
+    const { repository } = await createRepository();
+    const euro = await repository.saveAccount({ name: 'Euro', type: 'savings', currency: 'EUR', openingBalanceMinor: 0, icon: 'wallet', color: '#00A58E', archived: false });
+    const rate = await repository.saveExchangeRate({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '1.10', effectiveDate: '2026-01-01' });
+    const original = await repository.saveTransaction({ kind: 'expense', title: 'Cheese', localDate: '2026-07-01', accountId: euro.id, amountMinor: 10000 });
+    expect(original).toMatchObject({ exchangeRate: '1.1', baseAmountMinor: 11000 });
+
+    await repository.deleteEntities('exchangeRates', [rate.id]);
+
+    const renamed = await repository.saveTransaction(
+      { kind: 'expense', title: 'Fromage', localDate: '2026-07-01', accountId: euro.id, amountMinor: 10000 },
+      original.id,
+    );
+    expect(renamed).toMatchObject({ title: 'Fromage', exchangeRate: '1.1', baseAmountMinor: 11000 });
+
+    // Moving the transaction to a date the rate table can no longer price must
+    // still fail rather than silently reusing an unrelated day's rate.
+    await expect(repository.saveTransaction(
+      { kind: 'expense', title: 'Fromage', localDate: '2026-07-02', accountId: euro.id, amountMinor: 10000 },
+      original.id,
+    )).rejects.toThrow('Missing exchange rate');
+  });
+
+  it('applies a change from another window that arrives while a local mutation is in flight', async () => {
+    const storage = new MemoryStorageAdapter();
+    const { repository: windowA } = await createRepository(storage);
+    const windowB = new LocalFinanceRepository(storage);
+    await windowB.initialize();
+    const account = windowA.getSnapshot().accounts[0];
+
+    const localWrite = windowB.saveTransaction({ kind: 'expense', title: 'From B', localDate: '2026-07-02', accountId: account.id, amountMinor: 500 });
+    await windowA.saveTransaction({ kind: 'expense', title: 'From A', localDate: '2026-07-01', accountId: account.id, amountMinor: 1000 });
+    await localWrite;
+    // The dropped refresh used to leave window B stale indefinitely, so assert
+    // it reconciles without any further local activity to nudge it.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(windowB.queryTransactions().map((item) => item.title).sort()).toEqual(['From A', 'From B']);
+    expect(windowB.getDashboard('2026-07-01', '2026-07-31').accountBalances[0].balanceMinor).toBe(-1500);
+  });
+
+  it('keeps an archived account funded in net worth until it is emptied', async () => {
+    const { repository } = await createRepository();
+    const account = repository.getSnapshot().accounts[0];
+    await repository.saveTransaction({ kind: 'income', title: 'Salary', localDate: '2026-07-01', accountId: account.id, amountMinor: 50000 });
+    expect(repository.getDashboard('2026-07-01', '2026-07-31').netWorthMinor).toBe(50000);
+
+    await repository.deleteEntities('accounts', [account.id]);
+    const archived = repository.getDashboard('2026-07-01', '2026-07-31');
+    expect(archived.netWorthMinor).toBe(50000);
+    expect(archived.accountBalances).toHaveLength(1);
+    expect(archived.incomeMinor).toBe(50000);
+
+    // An archived account holding nothing carries no balance to strand, so it
+    // stays hidden exactly as before.
+    const spare = await repository.saveAccount({ name: 'Spare', type: 'checking', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#00A58E', archived: false });
+    await repository.saveAccount({ name: 'Spare', type: 'checking', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#00A58E', archived: true }, spare.id);
+    const emptied = repository.getDashboard('2026-07-01', '2026-07-31');
+    expect(emptied.netWorthMinor).toBe(50000);
+    expect(emptied.accountBalances.map((item) => item.account.id)).toEqual([account.id]);
+  });
+
+  it('returns a stable identity for a budget period that is not persisted yet', async () => {
+    const { repository } = await createRepository();
+    await repository.saveBudget({
+      name: 'Food', icon: 'chart', color: '#5966E9', limitMinor: 10000,
+      period: { unit: 'month', interval: 1, anchorDate: '2026-07-01', endDate: null }, rollover: false,
+      filters: { accountIds: [], categoryIds: [], tagIds: [] }, categoryLimits: [], archived: false,
+    });
+
+    const [first] = repository.getBudgetStatuses('2026-09-15');
+    const [second] = repository.getBudgetStatuses('2026-09-15');
+    expect(first.snapshot.periodStart).toBe('2026-09-01');
+    expect(second.snapshot.id).toBe(first.snapshot.id);
+    expect(second.snapshot).toEqual(first.snapshot);
+    // A transient snapshot must never be mistaken for a stored one.
+    expect(repository.getSnapshot().budgetPeriods.some((item) => item.id === first.snapshot.id)).toBe(false);
+  });
+
+  it('rejects a dashboard range too wide to chart instead of truncating it', async () => {
+    const { repository } = await createRepository();
+    expect(repository.getDashboard('2026-01-01', '2026-12-31').dailySpend).toHaveLength(365);
+    expect(() => repository.getDashboard('1900-01-01', '2026-07-22')).toThrow('no longer than a century');
+  });
+
+  it('rejects a mistyped manual transfer amount but keeps existing transfers editable', async () => {
+    const { repository } = await createRepository();
+    const usd = repository.getSnapshot().accounts[0];
+    const euro = await repository.saveAccount({ name: 'Euro', type: 'savings', currency: 'EUR', openingBalanceMinor: 0, icon: 'wallet', color: '#00A58E', archived: false });
+    await repository.saveExchangeRate({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '1.10', effectiveDate: '2026-01-01' });
+    await repository.saveTransaction({ kind: 'income', title: 'Salary', localDate: '2026-07-01', accountId: usd.id, amountMinor: 1000000 });
+
+    // $110.00 is worth about €100.00; a misplaced decimal point is not spread.
+    await expect(repository.saveTransaction({
+      kind: 'transfer', title: 'Move', localDate: '2026-07-02', accountId: usd.id,
+      destinationAccountId: euro.id, amountMinor: 11000, destinationAmountMinor: 1,
+    })).rejects.toThrow('far from the known USD → EUR rate');
+
+    // Real spread and fees stay acceptable.
+    const transfer = await repository.saveTransaction({
+      kind: 'transfer', title: 'Move', localDate: '2026-07-02', accountId: usd.id,
+      destinationAccountId: euro.id, amountMinor: 11000, destinationAmountMinor: 9700,
+    });
+    expect(transfer.destinationAmountMinor).toBe(9700);
+
+    const retitled = await repository.saveTransaction({
+      kind: 'transfer', title: 'Moved', localDate: '2026-07-02', accountId: usd.id,
+      destinationAccountId: euro.id, amountMinor: 11000, destinationAmountMinor: 9700,
+    }, transfer.id);
+    expect(retitled.title).toBe('Moved');
   });
 });

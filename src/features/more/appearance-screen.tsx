@@ -10,15 +10,8 @@ import { FormField } from '@/components/ui/form-field';
 import { MotionView } from '@/components/ui/motion';
 import type { AccentSource, ThemeMode } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
-import { useQashyTheme } from '@/theme/theme';
-import {
-  ACCENT_PRESETS,
-  accessibleAccentColor,
-  darkTokens,
-  lightTokens,
-  mixHex,
-  readableTextColor,
-} from '@/theme/tokens';
+import { previewAccentTokens, useQashyTheme } from '@/theme/theme';
+import { ACCENT_PRESETS, mixHex } from '@/theme/tokens';
 import { errorMessage, showError } from '@/utils/confirm';
 
 export function AppearanceScreen() {
@@ -34,11 +27,14 @@ export function AppearanceScreen() {
   const [saved, setSaved] = useState(false);
   const validHex = /^#[0-9A-Fa-f]{6}$/.test(hex);
   const previewMode = mode === 'system' ? (systemScheme === 'dark' ? 'dark' : 'light') : mode;
-  const modeTokens = previewMode === 'dark' ? darkTokens : lightTokens;
-  const requestedPreview = source === 'system' ? '#5966E9' : validHex ? hex : theme.staticAccent;
-  const previewHex = accessibleAccentColor(requestedPreview, modeTokens.surface, modeTokens.text);
-  const previewText = readableTextColor(previewHex);
-  const previewMuted = mixHex(previewText, previewHex, 0.25);
+  const preview = previewAccentTokens(source, validHex ? hex : theme.staticAccent, previewMode === 'dark');
+  // Android's Material You accent is a dynamic platform color, so it cannot be
+  // blended in JS the way a hex accent can. Fade the secondary lines instead.
+  const dynamicAccent = typeof preview.accent !== 'string' || typeof preview.onAccent !== 'string';
+  const previewMuted = dynamicAccent
+    ? preview.onAccent
+    : mixHex(preview.onAccent as string, preview.accent as string, 0.25);
+  const previewMutedStyle = { color: previewMuted, opacity: dynamicAccent ? 0.75 : 1 };
   const customError = source === 'custom' && !validHex
     ? 'Use a six-digit hex color such as #5966E9.'
     : undefined;
@@ -83,11 +79,11 @@ export function AppearanceScreen() {
           <FormField label="Custom accent" value={hex} onChangeText={(value) => { setSource('custom'); setHex(value); setSaved(false); }} autoCapitalize="characters" maxLength={7} error={customError} hint="Only the accent changes. Qashy gently adjusts unsafe colors to preserve contrast." />
         </Card>
       </MotionView>
-      <MotionView key={`${mode}-${source}-${previewHex}`} variant="zoom" exit animateLayout>
-        <Card style={{ backgroundColor: previewHex, gap: 6 }}>
-          <AppText variant="caption" style={{ color: previewMuted }}>PREVIEW</AppText>
-          <AppText variant="headline" style={{ color: previewText }}>Color, contrast, and clarity</AppText>
-          <AppText style={{ color: previewMuted }}>Qashy adapts the same hierarchy across iOS, Android, and desktop.</AppText>
+      <MotionView key={`${mode}-${source}-${hex}`} variant="zoom" exit animateLayout>
+        <Card style={{ backgroundColor: preview.accent, gap: 6 }}>
+          <AppText variant="caption" style={previewMutedStyle}>PREVIEW</AppText>
+          <AppText variant="headline" style={{ color: preview.onAccent }}>Color, contrast, and clarity</AppText>
+          <AppText style={previewMutedStyle}>Qashy adapts the same hierarchy across iOS, Android, and desktop.</AppText>
         </Card>
       </MotionView>
       <MotionView delay={90}>

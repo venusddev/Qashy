@@ -45,6 +45,7 @@ import {
   addRecurrence,
   firstRecurrenceOnOrAfter,
   isLocalDate,
+  parseLocalDate,
   todayLocal,
 } from '@/utils/date';
 import { createEntity, makeId, nowIso, updateEntity } from '@/utils/entity';
@@ -76,6 +77,13 @@ const MAX_RECURRING_OCCURRENCES_PER_RUN = 100_000;
 // How far a manually entered rate may sit from the reciprocal of an existing
 // opposite-direction rate before the pair is treated as contradictory (2%).
 const RECIPROCAL_RATE_TOLERANCE = 0.02;
+// How far a manually entered transfer destination amount may sit from the
+// rate-derived amount before it reads as a typo rather than spread (one order
+// of magnitude either way).
+const MANUAL_TRANSFER_AMOUNT_TOLERANCE = 10;
+// Roughly a century of daily points. A dashboard range wider than this used to
+// truncate the daily series silently and return a chart that was simply wrong.
+const MAX_DASHBOARD_DAYS = 36_600;
 const csvRowSchema = z.object({
   rowNumber: z.number(),
   date: z.string().regex(DATE_PATTERN).refine(isLocalDate, 'Enter a real calendar date.'),
@@ -114,11 +122,21 @@ export class LocalFinanceRepository implements FinanceRepository {
   private listeners = new Set<() => void>();
   private mutationQueue: Promise<void> = Promise.resolve();
   private mutationActive = false;
+  private pendingExternalRefresh = false;
   private deletedOccurrenceKeys = new Set<string>();
 
   constructor(private storage: StorageAdapter = new PlatformStorageAdapter()) {
     this.storage.subscribe?.((source) => {
-      if (source !== this && !this.mutationActive && this.state.ready) void this.refresh();
+      if (source === this || !this.state.ready) return;
+      if (this.mutationActive) {
+        // A refresh cannot run while a mutation holds the queue, but dropping it
+        // left this window permanently stale: later local writes rebuild from the
+        // stale snapshot, so nothing self-healed until the tab regained focus.
+        // Remember it instead and drain once the queue settles.
+        this.pendingExternalRefresh = true;
+        return;
+      }
+      void this.refresh();
     });
   }
 
@@ -654,9 +672,12 @@ export class LocalFinanceRepository implements FinanceRepository {
     this.assertDate(fromDate);
     this.assertDate(toDate);
     if (fromDate > toDate) throw new Error('Dashboard start date must not be after its end date.');
+    if (this.daySpan(fromDate, toDate) > MAX_DASHBOARD_DAYS) {
+      throw new Error('Choose a dashboard range no longer than a century.');
+    }
     const posted = this.queryTransactions({ fromDate, toDate, statuses: ['posted'] });
     const allPosted = this.queryTransactions({ statuses: ['posted'], sort: 'oldest' });
-    const accounts = this.active(this.state.accounts).filter((account) => !account.archived);
+    const accounts = this.active(this.state.accounts);
     const accountBalances = accounts.map((account) => {
       let balanceMinor = account.openingBalanceMinor;
       for (const transaction of allPosted) {
@@ -677,7 +698,14 @@ export class LocalFinanceRepository implements FinanceRepository {
         }
       }
       return { account, balanceMinor };
-    });
+    })
+      // An archived account still holds real money. Dropping it here removed its
+      // balance from net worth while its transactions kept counting toward the
+      // income and expense totals, so the summary contradicted itself: deleting
+      // a referenced account (which archives it) zeroed net worth and left no
+      // account on screen to explain where the money went. Hide an archived
+      // account only once it is actually empty.
+      .filter(({ account, balanceMinor }) => !account.archived || balanceMinor !== 0);
     const incomeMinor = sumMinor(
       posted.filter((item) => item.kind === 'income').map((item) => item.baseAmountMinor),
       'Income total',
@@ -732,7 +760,7 @@ export class LocalFinanceRepository implements FinanceRepository {
     const dailySpend: DashboardSummary['dailySpend'] = [];
     let spendDate = fromDate;
     let spendGuard = 0;
-    while (spendDate <= toDate && spendGuard < 36600) {
+    while (spendDate <= toDate && spendGuard < MAX_DASHBOARD_DAYS) {
       dailySpend.push({ date: spendDate, amountMinor: dayTotals.get(spendDate) ?? 0 });
       spendDate = addRecurrence(spendDate, 'day', 1);
       spendGuard += 1;
@@ -803,7 +831,7 @@ export class LocalFinanceRepository implements FinanceRepository {
         // the app stayed open; the next generateRecurring run persists it.
         const snapshot = this.state.budgetPeriods.find((item) =>
           item.budgetId === budget.id && item.periodStart === bounds.start,
-        ) ?? this.buildBudgetSnapshots(budget, false, onDate).find((item) => item.periodStart === bounds.start);
+        ) ?? this.buildBudgetSnapshots(budget, false, onDate, true).find((item) => item.periodStart === bounds.start);
         if (!snapshot) return [];
         const spentMinor = this.budgetSpend(snapshot.filters, snapshot.periodStart, snapshot.periodEnd);
         const categorySpend = snapshot.categoryLimits.map((limit) => ({
@@ -1330,9 +1358,28 @@ export class LocalFinanceRepository implements FinanceRepository {
         this.mutationActive = false;
       }
     });
-    this.mutationQueue = run.then(() => undefined, () => undefined);
+    // Draining inside the queue chain keeps the reload ordered against the next
+    // mutation, and calling `hydrateFromStorage` directly avoids re-entering
+    // `enqueueMutation` on the very promise being assigned here.
+    this.mutationQueue = run.then(this.drainExternalRefresh, this.drainExternalRefresh);
     return run;
   }
+
+  // Deliberately synchronous when there is nothing to drain: returning a promise
+  // unconditionally would add microtask latency to every mutation handoff, which
+  // is observable to callers that interleave work between queued mutations.
+  private drainExternalRefresh = () => {
+    if (!this.pendingExternalRefresh || !this.state.ready) return undefined;
+    this.pendingExternalRefresh = false;
+    return this.hydrateFromStorage().then(
+      () => this.emit(),
+      () => {
+        // Leave the snapshot untouched and retry after the next mutation rather
+        // than rejecting, which would wedge the queue for every later call.
+        this.pendingExternalRefresh = true;
+      },
+    );
+  };
 
   private async hydrateFromStorage() {
     const settingsRecords = await this.storage.readAll('settings');
@@ -1411,11 +1458,22 @@ export class LocalFinanceRepository implements FinanceRepository {
     if (tagIds.some((tagId) => !knownTagIds.has(tagId))) {
       throw new Error('Choose valid tags.');
     }
+    // The applied rate is a transaction snapshot, exactly like the destination
+    // leg below. While the account and date are unchanged, re-resolving it
+    // through the live rate table let a since-deleted rate block edits to a
+    // record that already carries its own rate — renaming a transaction failed
+    // with "Missing exchange rate". Reuse the stored rate unless the caller
+    // supplies one or the currency pair or date actually moved.
+    const preservesRateSnapshot = existing?.accountId === account.id &&
+      existing.localDate === input.localDate &&
+      existing.currency === account.currency;
     const rate = account.currency === this.state.settings.baseCurrency
       ? '1'
       : input.exchangeRate
         ? this.normalizeRate(input.exchangeRate)
-        : this.resolveRate(account.currency, this.state.settings.baseCurrency, input.localDate);
+        : preservesRateSnapshot
+          ? existing.exchangeRate
+          : this.resolveRate(account.currency, this.state.settings.baseCurrency, input.localDate);
     const baseAmountMinor = convertMinor(
       input.amountMinor,
       account.currency,
@@ -1430,6 +1488,20 @@ export class LocalFinanceRepository implements FinanceRepository {
         destinationAmountMinor = input.amountMinor;
       } else if (input.destinationAmountMinor !== undefined && input.destinationAmountMinor !== null) {
         this.assertPositiveMinor(input.destinationAmountMinor, 'Destination amount');
+        // Re-saving a historical transfer must never be blocked by a value that
+        // is already on the record, so only a new or changed amount is checked.
+        const unchangedDestinationAmount = existing?.kind === 'transfer' &&
+          existing.destinationAccountId === destination!.id &&
+          existing.destinationAmountMinor === input.destinationAmountMinor;
+        if (!unchangedDestinationAmount) {
+          this.assertManualTransferAmount(
+            input.amountMinor,
+            account.currency,
+            input.destinationAmountMinor,
+            destination!.currency,
+            input.localDate,
+          );
+        }
         destinationAmountMinor = input.destinationAmountMinor;
       } else {
         destinationAmountMinor = convertMinor(
@@ -1650,7 +1722,12 @@ export class LocalFinanceRepository implements FinanceRepository {
     return periods.length;
   }
 
-  private buildBudgetSnapshots(budget: Budget, updateCurrent: boolean, onDate = todayLocal()) {
+  private buildBudgetSnapshots(
+    budget: Budget,
+    updateCurrent: boolean,
+    onDate = todayLocal(),
+    transient = false,
+  ) {
     const bounds = resolvePeriod(budget.period, onDate);
     const existing = this.state.budgetPeriods.find((item) => item.budgetId === budget.id && item.periodStart === bounds.start);
     if (existing) {
@@ -1667,9 +1744,8 @@ export class LocalFinanceRepository implements FinanceRepository {
       .filter((item) => item.budgetId === budget.id && item.periodStart < bounds.start)
       .sort((a, b) => a.periodStart.localeCompare(b.periodStart));
     const latest = history.at(-1);
-    const makePeriod = (periodStart: string, periodEnd: string, previous?: BudgetPeriodSnapshot) =>
-      createEntity({
-        id: makeId(),
+    const makePeriod = (periodStart: string, periodEnd: string, previous?: BudgetPeriodSnapshot) => {
+      const values = {
         budgetId: budget.id,
         periodStart,
         periodEnd,
@@ -1683,7 +1759,22 @@ export class LocalFinanceRepository implements FinanceRepository {
           : 0,
         filters: budget.filters,
         categoryLimits: budget.categoryLimits,
-      }) as BudgetPeriodSnapshot;
+      };
+      if (!transient) return createEntity({ id: makeId(), ...values }) as BudgetPeriodSnapshot;
+      // A period that has not rolled over yet is rebuilt on every read. Minting
+      // a fresh UUID and timestamps each time made the snapshot identity churn
+      // between two identical reads, so any list key or memo derived from it
+      // changed on every render. Derive a stable identity instead; only a
+      // snapshot that gets persisted needs a real UUID.
+      return {
+        ...values,
+        id: `${budget.id}:${periodStart}`,
+        revision: 1,
+        createdAt: budget.createdAt,
+        updatedAt: budget.updatedAt,
+        deletedAt: null,
+      } satisfies BudgetPeriodSnapshot;
+    };
     if (!latest || updateCurrent || budget.period.unit === 'custom') {
       return [makePeriod(bounds.start, bounds.end, latest)];
     }
@@ -2108,7 +2199,9 @@ export class LocalFinanceRepository implements FinanceRepository {
       this.assertGoalProgressSafe(goal.id, this.state.goals, this.state.contributions, transactions);
     });
     let netWorth = 0;
-    for (const account of accounts.filter((item) => !item.deletedAt && !item.archived)) {
+    // Archived accounts are included so this overflow guard covers exactly the
+    // set `getDashboard` now sums, rather than a narrower one.
+    for (const account of accounts.filter((item) => !item.deletedAt)) {
       let rate: string;
       try {
         rate = this.resolveRate(
@@ -2132,6 +2225,51 @@ export class LocalFinanceRepository implements FinanceRepository {
         'Net worth',
       );
     }
+  }
+
+  // A manual destination amount carries real spread and fees, so it is never
+  // required to agree with the stored rate. A misplaced decimal point, though,
+  // lands orders of magnitude away and silently conjures value into (or out of)
+  // every later base-currency total, with nothing on screen to show for it.
+  // Reject only that, and only when a rate for the pair is actually known.
+  private assertManualTransferAmount(
+    amountMinor: number,
+    fromCurrency: string,
+    destinationAmountMinor: number,
+    toCurrency: string,
+    localDate: string,
+  ) {
+    let expected: number;
+    try {
+      expected = convertMinor(
+        amountMinor,
+        fromCurrency,
+        toCurrency,
+        this.resolveRate(fromCurrency, toCurrency, localDate),
+        this.state.settings.locale,
+      );
+    } catch {
+      return;
+    }
+    if (expected <= 0) return;
+    const ratio = destinationAmountMinor / expected;
+    if (
+      ratio >= 1 / MANUAL_TRANSFER_AMOUNT_TOLERANCE &&
+      ratio <= MANUAL_TRANSFER_AMOUNT_TOLERANCE
+    ) return;
+    throw new Error(
+      `Destination amount is far from the known ${fromCurrency} → ${toCurrency} rate for ${localDate}. Check the amount, or update the rate first.`,
+    );
+  }
+
+  // Inclusive whole-day count. Compared through UTC midnights so a daylight
+  // saving transition inside the range cannot shift the total by a day.
+  private daySpan(fromDate: string, toDate: string) {
+    const from = parseLocalDate(fromDate);
+    const to = parseLocalDate(toDate);
+    const fromUtc = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
+    const toUtc = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate());
+    return Math.round((toUtc - fromUtc) / 86_400_000) + 1;
   }
 
   private parseMinorInteger(value: string, label: string) {

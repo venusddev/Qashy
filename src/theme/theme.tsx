@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 
 import { QASHY_ACCENT } from '@/domain/defaults';
+import type { AccentSource } from '@/domain/models';
 import { useLocalization } from '@/localization/localization';
 import { useFinanceState } from '@/providers/finance-provider';
 import {
@@ -95,6 +96,20 @@ function systemTokens(dark: boolean): ThemeTokens {
     textMuted: Color.android.dynamic.onSurfaceVariant,
     border: Color.android.dynamic.outlineVariant,
   };
+}
+
+// The appearance preview has to show the accent the provider will actually
+// apply. It used to rebuild its own swatch from a hard-coded indigo literal, so
+// Android's Material You accent previewed as plain blue no matter what the
+// wallpaper produced. Reusing the same two builders is what keeps the preview
+// and the applied theme from drifting apart again.
+//
+// Android's dynamic accent is an opaque platform color with no JS-readable hex,
+// so callers must render these values directly and must not pass them through
+// the hex helpers in `@/theme/tokens`.
+export function previewAccentTokens(source: AccentSource, accentHex: string, dark: boolean) {
+  const tokens = source === 'system' ? systemTokens(dark) : accentTokens(accentHex, dark);
+  return { accent: tokens.accent, onAccent: tokens.onAccent };
 }
 
 export function QashyThemeProvider({ children }: { children: ReactNode }) {
