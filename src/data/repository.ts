@@ -35,7 +35,7 @@ export type BudgetInput = Omit<Budget, 'id' | 'revision' | 'createdAt' | 'update
 export type GoalInput = Omit<Goal, 'id' | 'revision' | 'createdAt' | 'updatedAt' | 'deletedAt'>;
 export type ContributionInput = Omit<GoalContribution, 'id' | 'revision' | 'createdAt' | 'updatedAt' | 'deletedAt'>;
 export type GoalContributionInput = Omit<ContributionInput, 'goalId'>;
-export type RecurringInput = Omit<RecurringRule, 'id' | 'revision' | 'createdAt' | 'updatedAt' | 'deletedAt'>;
+export type RecurringInput = Omit<RecurringRule, 'id' | 'revision' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'pausedByDependency'>;
 export type RateInput = Omit<ExchangeRate, 'id' | 'revision' | 'createdAt' | 'updatedAt' | 'deletedAt'>;
 
 export interface TransactionInput {

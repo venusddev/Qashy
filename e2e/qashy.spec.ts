@@ -44,6 +44,30 @@ test('chooses readable locale and currency options during onboarding', async ({ 
   await expect(page).toHaveURL(/\/overview$/);
   await expect(page.getByText('מבט רגוע יותר על הכספים שלכם.')).toBeVisible();
   await expect(page.getByRole('link', { name: 'סקירה' })).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'he-IL');
+  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+
+  await page.getByLabel('הוספת תנועה').first().click();
+  await expect(page.getByRole('radio', { name: 'מסעדות' })).toBeVisible();
+
+  await page.goto('/goal');
+  await expect(page.getByLabel('שם היעד')).toHaveValue('קרן ליום גשום');
+  await page.getByRole('button', { name: 'יצירת יעד' }).click();
+  await expect(page).toHaveURL(/\/plan$/);
+  await expect(page.getByText('יעד חיסכון')).toBeVisible();
+  await expect(page.getByText('saving goal')).toHaveCount(0);
+
+  await page.goto('/budget');
+  await expect(page.getByLabel('שם התקציב')).toHaveValue('הוצאות יומיומיות');
+  await page.getByRole('button', { name: 'יצירת תקציב' }).click();
+  await expect(page).toHaveURL(/\/plan$/);
+  await expect(page.getByText(/ to /)).toHaveCount(0);
+
+  await page.getByRole('link', { name: 'עוד' }).click();
+  await page.getByRole('button', { name: 'מחזורית חדשה' }).click();
+  await expect(page.getByText('רישום אוטומטי')).toBeVisible();
+  await expect(page.getByText('כבוי כברירת מחדל. תנועות עתידיות ממתינות לבדיקה שלכם.')).toBeVisible();
+  await expect(page.getByText('כל 1 חודש')).toBeVisible();
 });
 
 test('applies an onboarding theme choice immediately', async ({ page }) => {
@@ -101,6 +125,75 @@ test('completes onboarding and records an expense', async ({ page }) => {
   await expect(page.getByText(/Groceries · Everyday/)).toBeVisible();
 });
 
+test('preserves a selected transaction type and lets an edit clear its category', async ({ page }) => {
+  await completeOnboarding(page);
+  await page.getByLabel('Add transaction').first().click();
+  await page.getByLabel('Amount (USD)').fill('12.50');
+  await page.getByLabel('Title').fill('Category edit');
+  await page.getByRole('radio', { name: 'Dining' }).click();
+  await page.getByRole('radio', { name: 'Expense' }).click();
+  await expect(page.getByRole('radio', { name: 'Dining' })).toBeChecked();
+  await page.getByRole('button', { name: 'Add transaction' }).click();
+
+  await page.getByRole('link', { name: /Transactions/ }).click();
+  await page.getByRole('button', { name: /Category edit/ }).click();
+  await page.getByRole('radio', { name: 'Expense' }).click();
+  await expect(page.getByRole('radio', { name: 'Dining' })).toBeChecked();
+  const uncategorized = page.getByRole('radio', { name: 'Uncategorized' });
+  await uncategorized.click();
+  await expect(uncategorized).toBeChecked();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+
+  await expect(page).toHaveURL(/\/transactions$/);
+  await expect(page.getByText(/Uncategorized · Everyday/)).toBeVisible();
+});
+
+test('edits and deletes manual goal contributions', async ({ page }) => {
+  await completeOnboarding(page);
+  await page.goto('/goal');
+  await page.getByRole('button', { name: 'Create goal' }).click();
+  await page.getByRole('button', { name: 'Open' }).click();
+
+  await page.getByLabel('Add a manual contribution').fill('25');
+  await page.getByLabel('Contribution date').fill('2026-07-10');
+  await page.getByLabel('Contribution note').fill('First amount');
+  await page.getByRole('button', { name: 'Add contribution' }).click();
+  await expect(page.getByText(/First amount/)).toBeVisible();
+
+  await page.getByRole('button', { name: /Edit contribution/ }).click();
+  await page.getByLabel('Contribution amount').fill('30');
+  await page.getByLabel('Contribution note').fill('Corrected amount');
+  await page.getByRole('button', { name: 'Save contribution' }).click();
+  await expect(page.getByText(/Corrected amount/)).toBeVisible();
+  await expect(page.getByText(/First amount/)).toHaveCount(0);
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: /Delete contribution/ }).click();
+  await expect(page.getByText('No manual contributions yet.')).toBeVisible();
+});
+
+test('shows every category cap and the actual recurring interval', async ({ page }) => {
+  await completeOnboarding(page);
+  await page.goto('/budget');
+  for (const category of ['Groceries', 'Dining', 'Transport', 'Home']) {
+    await page.getByRole('checkbox', { name: category }).click();
+    await page.getByLabel(`${category} cap (optional)`).fill('100');
+  }
+  await page.getByRole('button', { name: 'Create budget' }).click();
+  for (const category of ['Groceries', 'Dining', 'Transport', 'Home']) {
+    await expect(page.getByText(category, { exact: true })).toBeVisible();
+  }
+
+  await page.getByRole('link', { name: 'More' }).click();
+  await page.getByRole('button', { name: 'New recurring' }).click();
+  await page.getByLabel('Title').fill('Quarterly bill');
+  await page.getByLabel('Amount (USD)').fill('10');
+  await page.getByRole('textbox', { name: 'Every, required' }).fill('3');
+  await page.getByRole('textbox', { name: 'Starts, required' }).fill('2099-01-01');
+  await page.getByRole('button', { name: 'Create schedule' }).click();
+  await expect(page.getByText(/Every 3 months\. · Next 2099-01-01/)).toBeVisible();
+});
+
 test('keeps Plan creation actions inside their empty sections', async ({ page }) => {
   await completeOnboarding(page);
   await page.getByRole('link', { name: 'Plan' }).click();
@@ -128,7 +221,16 @@ test('labels compact navigation and recovers a one-account transfer draft', asyn
   await page.getByLabel('Account name').fill('Savings');
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page).toHaveURL(/\/transaction/);
-  await expect(page.getByRole('radiogroup', { name: 'To account' }).getByRole('radio', { name: /Savings · USD/ })).toBeVisible();
+  const destination = page.getByRole('radiogroup', { name: 'To account' }).getByRole('radio', { name: /Savings · USD/ });
+  await expect(destination).toBeVisible();
+  await page.getByLabel('Amount (USD)').fill('10');
+  await destination.click();
+  await page.getByRole('button', { name: 'Add transaction' }).click();
+  await page.getByRole('link', { name: /Transactions/ }).click();
+  await page.getByRole('button', { name: 'Select' }).click();
+  await page.getByRole('checkbox', { name: /Transfer/ }).click();
+  await expect(page.getByText('Transfers do not have categories. Select only income or expense transactions to change categories.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Uncategorized' })).toHaveCount(0);
 });
 
 test('can leave an invalid custom accent by returning to the default source', async ({ page }) => {

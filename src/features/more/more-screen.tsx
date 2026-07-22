@@ -101,10 +101,12 @@ export function MoreScreen() {
               {recurring.length ? recurring.map((rule) => {
                 const ended = Boolean(rule.endDate && rule.nextDueDate > rule.endDate);
                 const status = ended ? 'Ended' : rule.active ? `Next ${rule.nextDueDate}` : 'Paused';
-                const frequency = rule.unit === 'month'
-                  ? 'Monthly'
-                  : `${rule.unit[0].toUpperCase()}${rule.unit.slice(1)}`;
-                return <SettingsRow key={rule.id} literal title={rule.template.title} subtitle={`${t(frequency)} · ${t(status)}`} value={formatMoney(rule.template.amountMinor, rule.template.currency, state.settings.locale)} icon="repeat" onPress={() => router.push({ pathname: '/recurring', params: { id: rule.id } })} />;
+                const frequency = rule.interval === 1
+                  ? rule.unit === 'month'
+                    ? t('Monthly')
+                    : t(`${rule.unit[0].toUpperCase()}${rule.unit.slice(1)}`)
+                  : t(`Every ${rule.interval} ${rule.unit}s.`);
+                return <SettingsRow key={rule.id} literal title={rule.template.title} subtitle={`${frequency} · ${t(status)}`} value={formatMoney(rule.template.amountMinor, rule.template.currency, state.settings.locale)} icon="repeat" onPress={() => router.push({ pathname: '/recurring', params: { id: rule.id } })} />;
               }) : <View style={{ padding: 16 }}><AppText muted>Subscriptions and scheduled income will appear here.</AppText></View>}
             </Card>
 

@@ -51,7 +51,7 @@ export function PlanScreen() {
               // Dates and the rollover amount are data, so the caption is
               // assembled with its translatable words already resolved and
               // then rendered verbatim.
-              const periodSummary = `${customState}${t(budget.period.unit)} · ${snapshot.periodStart} to ${snapshot.periodEnd}${budget.rollover ? ` · rollover ${formatMoney(snapshot.rolloverMinor, state.settings.baseCurrency, state.settings.locale, { sign: true })}` : ''}`;
+              const periodSummary = `${customState}${t(budget.period.unit)} · ${snapshot.periodStart} ${t('to')} ${snapshot.periodEnd}${budget.rollover ? ` · ${t('rollover')} ${formatMoney(snapshot.rolloverMinor, state.settings.baseCurrency, state.settings.locale, { sign: true })}` : ''}`;
               return (
                 <MotionView key={budget.id} delay={Math.min(index, 5) * 45} animateLayout exit>
                   <Card style={{ gap: 14 }}>
@@ -67,7 +67,7 @@ export function PlanScreen() {
                   <ProgressBar value={ratio} color={ratio > 1 ? theme.negative as string : budget.color} />
                   {categorySpend.length ? (
                     <View style={{ gap: 10, paddingTop: 4 }}>
-                      {categorySpend.slice(0, 3).map((limit) => {
+                      {categorySpend.map((limit) => {
                         const category = state.categories.find((item) => item.id === limit.categoryId);
                         return category ? <View key={limit.categoryId} style={{ gap: 5 }}><View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><AppText literal variant="caption">{category.name}</AppText><AppText literal variant="caption" muted>{`${formatMoney(limit.amountMinor, state.settings.baseCurrency, state.settings.locale)} / ${formatMoney(limit.limitMinor, state.settings.baseCurrency, state.settings.locale)}`}</AppText></View><ProgressBar value={limit.amountMinor / limit.limitMinor} color={category.color} /></View> : null;
                       })}
@@ -99,7 +99,7 @@ export function PlanScreen() {
                   <Card style={{ gap: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <View style={{ width: 44, height: 44, borderRadius: radius.control, backgroundColor: goal.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="target" color={readableTextColor(goal.color)} size={21} /></View>
-                    <View style={{ flex: 1, gap: 2 }}><AppText literal variant="headline">{goal.name}</AppText><AppText literal variant="caption" muted>{`${goal.kind} goal${goal.targetDate ? ` · by ${goal.targetDate}` : ''}`}</AppText></View>
+                    <View style={{ flex: 1, gap: 2 }}><AppText literal variant="headline">{goal.name}</AppText><AppText literal variant="caption" muted>{`${t(goal.kind === 'saving' ? 'Savings goal' : 'Planned purchase')}${goal.targetDate ? ` · ${t('by')} ${goal.targetDate}` : ''}`}</AppText></View>
                     <ActionButton title="Open" variant="secondary" onPress={() => router.push({ pathname: '/goal', params: { id: goal.id } })} />
                   </View>
                   <AnimatedMoney variant="money" minor={displayProgress} currency={state.settings.baseCurrency} locale={state.settings.locale} />
@@ -109,7 +109,7 @@ export function PlanScreen() {
                     milestones={GOAL_MILESTONES}
                     onMilestone={hapticSuccess}
                   />
-                  <AppText literal variant="caption" muted>{`${Math.max(0, Math.min(100, Math.round(ratio * 100)))}% of ${formatMoney(goal.targetMinor, state.settings.baseCurrency, state.settings.locale)}`}</AppText>
+                  <AppText literal variant="caption" muted>{`${Math.max(0, Math.min(100, Math.round(ratio * 100)))}% ${t('of')} ${formatMoney(goal.targetMinor, state.settings.baseCurrency, state.settings.locale)}`}</AppText>
                   </Card>
                 </MotionView>
               );

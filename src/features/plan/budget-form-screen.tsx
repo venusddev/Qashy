@@ -9,6 +9,7 @@ import { ChoiceChip } from '@/components/ui/choice-chip';
 import { FormField } from '@/components/ui/form-field';
 import { FormScreen } from '@/components/ui/form-screen';
 import type { PeriodUnit } from '@/domain/models';
+import { useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
@@ -22,9 +23,13 @@ export function BudgetFormScreen() {
   const repository = useFinanceRepository();
   const state = useFinanceState();
   const theme = useQashyTheme();
+  const { t } = useLocalization();
+  const defaultBudgetName = state.settings.locale.toLocaleLowerCase().startsWith('he')
+    ? 'הוצאות יומיומיות'
+    : 'Everyday spending';
   const existing = id ? state.budgets.find((item) => item.id === id) : undefined;
   const toMoneyText = (minor: number) => minorToLocalizedDecimalString(minor, state.settings.baseCurrency, state.settings.locale);
-  const [name, setName] = useState(existing?.name ?? 'Everyday spending');
+  const [name, setName] = useState(existing?.name ?? defaultBudgetName);
   const [limit, setLimit] = useState(existing ? toMoneyText(existing.limitMinor) : '1000');
   const [unit, setUnit] = useState<PeriodUnit>(existing?.period.unit ?? 'month');
   const [endDate, setEndDate] = useState(existing?.period.endDate ?? todayLocal());
@@ -66,7 +71,7 @@ export function BudgetFormScreen() {
     setSaving(true);
     try {
       await repository.saveBudget({
-        name: name.trim() || 'Budget',
+        name: name.trim() || defaultBudgetName,
         icon: 'chart.pie',
         color: existing?.color ?? theme.staticAccent,
         limitMinor: parseMoney(limit, state.settings.baseCurrency, state.settings.locale),
@@ -131,7 +136,7 @@ export function BudgetFormScreen() {
         </View>
         {selectedCategories.map((categoryId) => {
           const category = expenseCategories.find((item) => item.id === categoryId);
-          return category ? <FormField key={category.id} literalLabel label={`${category.name} cap (optional)`} value={categoryLimits[category.id] ?? ''} onChangeText={(value) => setCategoryLimits((current) => ({ ...current, [category.id]: value }))} keyboardType="decimal-pad" placeholder="No cap" error={categoryLimitErrors[category.id]} /> : null;
+          return category ? <FormField key={category.id} literalLabel label={`${category.name} ${t('cap (optional)')}`} value={categoryLimits[category.id] ?? ''} onChangeText={(value) => setCategoryLimits((current) => ({ ...current, [category.id]: value }))} keyboardType="decimal-pad" placeholder="No cap" error={categoryLimitErrors[category.id]} /> : null;
         })}
       </Card>
 

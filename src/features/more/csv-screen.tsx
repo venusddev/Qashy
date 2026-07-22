@@ -16,7 +16,7 @@ import { useLocalization } from '@/localization/localization';
 import { useQashyTheme } from '@/theme/theme';
 import { radius } from '@/theme/tokens';
 import { errorMessage, showError } from '@/utils/confirm';
-import { parseCsvTable } from '@/utils/csv';
+import { csvCategoryForRow, parseCsvTable } from '@/utils/csv';
 import { todayLocal } from '@/utils/date';
 import { hapticSuccess } from '@/utils/haptics';
 
@@ -97,26 +97,29 @@ export function CsvScreen() {
   const previewImport = async () => {
     if (missingRequiredFields.length) return;
     const defaultAccount = state.accounts.find((item) => item.id === defaultAccountId)?.name ?? '';
-    const defaultCategory = state.categories.find((item) => item.id === defaultCategoryId)?.name ?? '';
+    const defaultCategory = state.categories.find((item) => item.id === defaultCategoryId);
     const value = (record: Record<string, string | number>, field: CsvField) =>
       mapping[field] ? String(record[mapping[field]] ?? '') : '';
-    const parsed = sourceRows.map((record) => ({
-      rowNumber: Number(record.rowNumber),
-      date: value(record, 'date'),
-      type: (value(record, 'type') || 'expense').toLowerCase() as TransactionKind,
-      status: (value(record, 'status') || 'posted').toLowerCase() as TransactionStatus,
-      title: value(record, 'title'),
-      amount: value(record, 'amount'),
-      currency: (value(record, 'currency') || state.settings.baseCurrency).toUpperCase(),
-      account: value(record, 'account') || defaultAccount,
-      category: value(record, 'category') || defaultCategory,
-      tags: value(record, 'tags'),
-      note: value(record, 'note'),
-      exchangeRate: value(record, 'exchangeRate'),
-      destinationAccount: value(record, 'destinationAccount'),
-      destinationAmount: value(record, 'destinationAmount'),
-      destinationBaseAmountMinor: value(record, 'destinationBaseAmountMinor'),
-    }));
+    const parsed = sourceRows.map((record) => {
+      const type = (value(record, 'type') || 'expense').toLowerCase() as TransactionKind;
+      return {
+        rowNumber: Number(record.rowNumber),
+        date: value(record, 'date'),
+        type,
+        status: (value(record, 'status') || 'posted').toLowerCase() as TransactionStatus,
+        title: value(record, 'title'),
+        amount: value(record, 'amount'),
+        currency: (value(record, 'currency') || state.settings.baseCurrency).toUpperCase(),
+        account: value(record, 'account') || defaultAccount,
+        category: csvCategoryForRow(value(record, 'category'), type, defaultCategory),
+        tags: value(record, 'tags'),
+        note: value(record, 'note'),
+        exchangeRate: value(record, 'exchangeRate'),
+        destinationAccount: value(record, 'destinationAccount'),
+        destinationAmount: value(record, 'destinationAmount'),
+        destinationBaseAmountMinor: value(record, 'destinationBaseAmountMinor'),
+      };
+    });
     setRows(parsed);
     setPreview(await repository.importCsv(parsed, false));
   };
@@ -215,6 +218,7 @@ export function CsvScreen() {
                 <ChoiceChip key={category.id} literal label={category.name} selected={defaultCategoryId === category.id} onPress={() => { setDefaultCategoryId(category.id); setPreview(null); }} />
               ))}
             </View>
+            <AppText variant="caption" muted>The default category is used only for rows with the same transaction type. Other rows stay uncategorized.</AppText>
             {missingRequiredFields.length ? (
               <AppText accessibilityRole="alert" variant="caption" style={{ color: theme.negative }}>
                 Map required fields: {missingRequiredFields.map((field) => field.label).join(', ')}.

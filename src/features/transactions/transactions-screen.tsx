@@ -50,8 +50,10 @@ export function TransactionsScreen() {
     if (Object.keys(categoryOverrides).length) setCategoryOverrides({});
     if (hiddenIds.length) setHiddenIds([]);
   }
-  const selectedKinds = [...new Set(state.transactions
-    .filter((item) => selectedIds.includes(item.id) && item.kind !== 'transfer')
+  const selectedTransactions = state.transactions.filter((item) => selectedIds.includes(item.id));
+  const hasSelectedTransfers = selectedTransactions.some((item) => item.kind === 'transfer');
+  const selectedKinds = [...new Set(selectedTransactions
+    .filter((item) => item.kind !== 'transfer')
     .map((item) => item.kind))];
   const compatibleCategoryKind = selectedKinds.length === 1 ? selectedKinds[0] : null;
   const transactions = useMemo(() => {
@@ -183,14 +185,20 @@ export function TransactionsScreen() {
               </View>
               {selectedIds.length ? (
                 <>
-                  <AppText variant="caption" muted>Change category</AppText>
-                  {selectedKinds.length > 1 ? <AppText variant="caption" muted>Select only income or only expense transactions to assign a category.</AppText> : null}
-                  <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                    <ChoiceChip mode="button" label="Uncategorized" selected={false} onPress={() => changeCategory(null)} />
-                    {state.categories.filter((item) => item.kind === compatibleCategoryKind && !item.archived).map((category) => (
-                      <ChoiceChip mode="button" key={category.id} literal label={category.name} selected={false} onPress={() => changeCategory(category.id)} />
-                    ))}
-                  </View>
+                  {hasSelectedTransfers ? (
+                    <AppText variant="caption" muted>Transfers do not have categories. Select only income or expense transactions to change categories.</AppText>
+                  ) : (
+                    <>
+                      <AppText variant="caption" muted>Change category</AppText>
+                      {selectedKinds.length > 1 ? <AppText variant="caption" muted>Select only income or only expense transactions to assign a category.</AppText> : null}
+                      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                        <ChoiceChip mode="button" label="Uncategorized" selected={false} onPress={() => changeCategory(null)} />
+                        {state.categories.filter((item) => item.kind === compatibleCategoryKind && !item.archived).map((category) => (
+                          <ChoiceChip mode="button" key={category.id} literal label={category.name} selected={false} onPress={() => changeCategory(category.id)} />
+                        ))}
+                      </View>
+                    </>
+                  )}
                   <ActionButton title="Delete selected" variant="danger" onPress={deleteSelected} />
                 </>
               ) : <AppText variant="caption" muted>Choose one or more transactions below.</AppText>}

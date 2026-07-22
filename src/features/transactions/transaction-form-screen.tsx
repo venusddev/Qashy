@@ -103,6 +103,13 @@ export function TransactionFormScreen() {
     && !destinationAmountError
     && !exchangeRateError
     && !destinationError;
+  const ownerRoute = returnTo === '/overview' ? '/overview' as const : '/transactions' as const;
+  const closeToOwner = () => {
+    router.dismissTo(ownerRoute);
+    if (process.env.EXPO_OS === 'web' && typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => router.replace(ownerRoute));
+    }
+  };
 
   const save = async () => {
     if (!account || busy) return;
@@ -129,7 +136,7 @@ export function TransactionFormScreen() {
         status: existing?.status ?? 'posted',
       }, existing?.id);
       hapticSuccess();
-      router.dismissTo(returnTo === '/overview' ? '/overview' : '/transactions');
+      closeToOwner();
     } catch (reason) {
       showError('Couldn’t save transaction', errorMessage(reason, 'Check the form and try again.'));
     } finally {
@@ -143,7 +150,7 @@ export function TransactionFormScreen() {
     setBusy(true);
     try {
       await repository.deleteEntities('transactions', [existing.id]);
-      router.dismissTo(returnTo === '/overview' ? '/overview' : '/transactions');
+      closeToOwner();
     } catch (reason) {
       showError('Couldn’t delete transaction', errorMessage(reason, 'Try again.'));
     } finally {
@@ -159,7 +166,11 @@ export function TransactionFormScreen() {
     <FormScreen>
       <View accessibilityLabel="Transaction kind" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>
         {(['expense', 'income', 'transfer'] as TransactionKind[]).map((item) => (
-          <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => { setKind(item); setCategoryId(''); }} /></View>
+          <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => {
+            if (item === kind) return;
+            setKind(item);
+            setCategoryId('');
+          }} /></View>
         ))}
       </View>
 
@@ -182,14 +193,24 @@ export function TransactionFormScreen() {
       <Card style={{ gap: 14 }}>
         <AppText variant="label">From account</AppText>
         <View accessibilityLabel="From account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-          {accountChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name} · ${item.currency}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={accountId === item.id} onPress={() => { setAccountId(item.id); setExchangeRate(''); setDestinationAmount(''); if (destinationAccountId === item.id) setDestinationAccountId(''); }} />)}
+          {accountChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name} · ${item.currency}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={accountId === item.id} onPress={() => {
+            if (item.id === accountId) return;
+            setAccountId(item.id);
+            setExchangeRate('');
+            setDestinationAmount('');
+            if (destinationAccountId === item.id) setDestinationAccountId('');
+          }} />)}
         </View>
         {kind === 'transfer' ? (
           <>
             <AppText variant="label">To account</AppText>
             {destinationChoices.length ? (
               <View accessibilityLabel="To account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                {destinationChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name} · ${item.currency}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={destinationAccountId === item.id} onPress={() => { setDestinationAccountId(item.id); setDestinationAmount(''); }} />)}
+                {destinationChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name} · ${item.currency}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={destinationAccountId === item.id} onPress={() => {
+                  if (item.id === destinationAccountId) return;
+                  setDestinationAccountId(item.id);
+                  setDestinationAmount('');
+                }} />)}
               </View>
             ) : (
               <View role="alert" style={{ gap: 10, padding: 14, borderRadius: 14, backgroundColor: theme.surfaceMuted }}>
@@ -221,6 +242,7 @@ export function TransactionFormScreen() {
           <>
             <AppText variant="label">Category</AppText>
             <View accessibilityLabel="Category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              <ChoiceChip label="Uncategorized" selected={!categoryId} onPress={() => setCategoryId('')} />
               {categories.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}
             </View>
           </>

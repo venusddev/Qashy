@@ -1,6 +1,6 @@
 import { getLocales, type Locale } from 'expo-localization';
 
-import { initialLocalePreferences, initialSettings } from '@/domain/defaults';
+import { createDefaultCategories, defaultAccountName, initialLocalePreferences, initialSettings } from '@/domain/defaults';
 
 const mockedGetLocales = jest.mocked(getLocales);
 
@@ -45,5 +45,19 @@ describe('initial settings', () => {
       locale: 'en-US',
       baseCurrency: 'USD',
     });
+  });
+
+  it('creates localized starter finance names for Hebrew setup', () => {
+    expect(defaultAccountName('he-IL')).toBe('יומיומי');
+    expect(createDefaultCategories('he-IL').map((category) => category.name)).toEqual([
+      'מצרכים',
+      'מסעדות',
+      'תחבורה',
+      'בית',
+      'בריאות',
+      'פנאי',
+      'משכורת',
+      'הכנסה אחרת',
+    ]);
   });
 });

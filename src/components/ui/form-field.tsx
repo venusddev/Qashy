@@ -33,7 +33,7 @@ export function FormField({
   const translatedDescription = description ? t(description) : undefined;
   const baseAccessibilityLabel = props.accessibilityLabel ? t(props.accessibilityLabel) : translatedLabel;
   const fieldAccessibilityLabel = required
-    ? `${baseAccessibilityLabel}, required`
+    ? `${baseAccessibilityLabel}, ${t('required')}`
     : baseAccessibilityLabel;
   // The visible description (hint, or the error that replaces it) and the
   // caller's own hint are both meaningful, so announce both rather than

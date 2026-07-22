@@ -19,7 +19,7 @@ import { ChoiceChip } from '@/components/ui/choice-chip';
 import { ColorSwatch } from '@/components/ui/color-swatch';
 import { FormField } from '@/components/ui/form-field';
 import { MotionView } from '@/components/ui/motion';
-import { initialLocalePreferences, QASHY_ACCENT } from '@/domain/defaults';
+import { defaultAccountName, initialLocalePreferences, QASHY_ACCENT } from '@/domain/defaults';
 import type { AccountType, AccentSource, ThemeMode } from '@/domain/models';
 import { APP_LANGUAGE_OPTIONS, languageFromLocale } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
@@ -84,7 +84,7 @@ export function OnboardingScreen() {
     languageFromLocale(startingPreferences.locale) === 'he' ? 'he-IL' : 'en-US',
   );
   const [currency, setCurrency] = useState(startingPreferences.baseCurrency);
-  const [accountName, setAccountName] = useState('Everyday');
+  const [accountName, setAccountName] = useState(() => defaultAccountName(startingPreferences.locale));
   const [accountType, setAccountType] = useState<AccountType>('checking');
   const [openingBalance, setOpeningBalance] = useState('0');
   const [themeMode, setThemeMode] = useState<ThemeMode>(settings.themeMode);
@@ -233,6 +233,9 @@ export function OnboardingScreen() {
                   options={localeOptions}
                   onChange={(value) => {
                     setLocale(value);
+                    if (accountName === defaultAccountName(locale)) {
+                      setAccountName(defaultAccountName(value));
+                    }
                     applySetupSettings({ locale: value });
                   }}
                 />

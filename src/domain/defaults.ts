@@ -48,12 +48,28 @@ const CATEGORY_SEEDS = [
   ['Other income', 'plus.circle', '#4C9CB5', 'income'],
 ] as const;
 
-export function createDefaultCategories(): Category[] {
+const HEBREW_CATEGORY_NAMES: Record<(typeof CATEGORY_SEEDS)[number][0], string> = {
+  Groceries: 'מצרכים',
+  Dining: 'מסעדות',
+  Transport: 'תחבורה',
+  Home: 'בית',
+  Health: 'בריאות',
+  Fun: 'פנאי',
+  Salary: 'משכורת',
+  'Other income': 'הכנסה אחרת',
+};
+
+export function defaultAccountName(locale: string) {
+  return locale.toLocaleLowerCase().startsWith('he') ? 'יומיומי' : 'Everyday';
+}
+
+export function createDefaultCategories(locale = 'en-US'): Category[] {
+  const hebrew = locale.toLocaleLowerCase().startsWith('he');
   const firstTimestamp = Date.now() - CATEGORY_SEEDS.length;
   return CATEGORY_SEEDS.map(([name, icon, color, kind], index) => {
     const entity = createEntity({
       id: makeId(),
-      name,
+      name: hebrew ? HEBREW_CATEGORY_NAMES[name] : name,
       icon,
       color,
       kind,

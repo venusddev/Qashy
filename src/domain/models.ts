@@ -159,6 +159,8 @@ export interface RecurringRule extends SyncEntity {
   nextDueDate: string;
   autoPost: boolean;
   active: boolean;
+  /** True only when Qashy paused this rule because an account/category was archived. */
+  pausedByDependency: boolean;
 }
 
 export interface ExchangeRate extends SyncEntity {

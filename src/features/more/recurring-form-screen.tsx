@@ -11,6 +11,7 @@ import { FormScreen } from '@/components/ui/form-screen';
 import type { CategoryKind, RecurrenceUnit } from '@/domain/models';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
+import { useLocalization } from '@/localization/localization';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
 import {
@@ -26,11 +27,14 @@ export function RecurringFormScreen() {
   const repository = useFinanceRepository();
   const state = useFinanceState();
   const theme = useQashyTheme();
+  const { t } = useLocalization();
   const existing = params.id ? state.recurringRules.find((item) => item.id === params.id) : undefined;
   const initialAccount = state.accounts.find((item) => item.id === (existing?.template.accountId ?? params.accountId))
     ?? state.accounts.find((item) => !item.archived);
   const [kind, setKind] = useState<CategoryKind>(existing?.template.kind ?? params.kind ?? 'expense');
   const [title, setTitle] = useState(existing?.template.title ?? params.title ?? '');
+  const [note, setNote] = useState(existing?.template.note ?? '');
+  const [tagIds, setTagIds] = useState(existing?.template.tagIds ?? []);
   const [amount, setAmount] = useState(existing ? minorToLocalizedDecimalString(existing.template.amountMinor, existing.template.currency, state.settings.locale) : params.amount ?? '');
   const [accountId, setAccountId] = useState(initialAccount?.id ?? '');
   const [categoryId, setCategoryId] = useState(existing?.template.categoryId ?? params.categoryId ?? '');
@@ -58,6 +62,11 @@ export function RecurringFormScreen() {
     ? 'End date must not precede the start date.'
     : endDateFormatError;
   const canSave = Boolean(account) && !amountError && !intervalError && !startDateError && !endDateError;
+  const toggleTag = (tagId: string) => {
+    setTagIds((current) => current.includes(tagId)
+      ? current.filter((item) => item !== tagId)
+      : [...current, tagId]);
+  };
 
   const save = async () => {
     if (!account || busy || !canSave) return;
@@ -66,7 +75,16 @@ export function RecurringFormScreen() {
       const normalizedInterval = Math.max(1, Math.floor(Number(interval) || 1));
       const normalizedEndDate = endDate || null;
       await repository.saveRecurringRule({
-        template: { kind, title: title.trim() || 'Recurring transaction', note: '', accountId: account.id, categoryId: categoryId || null, tagIds: [], amountMinor: parseMoney(amount, account.currency, state.settings.locale), currency: account.currency },
+        template: {
+          kind,
+          title: title.trim() || t('Recurring transaction'),
+          note: note.trim(),
+          accountId: account.id,
+          categoryId: categoryId || null,
+          tagIds,
+          amountMinor: parseMoney(amount, account.currency, state.settings.locale),
+          currency: account.currency,
+        },
         unit,
         interval: normalizedInterval,
         startDate,
@@ -103,13 +121,26 @@ export function RecurringFormScreen() {
   return (
     <FormScreen contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 16 }}>
-        <View accessibilityLabel="Recurring transaction kind" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>{(['expense', 'income'] as CategoryKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => { setKind(item); setCategoryId(''); }} /></View>)}</View>
+        <View accessibilityLabel="Recurring transaction kind" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>{(['expense', 'income'] as CategoryKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => {
+          if (item === kind) return;
+          setKind(item);
+          setCategoryId('');
+        }} /></View>)}</View>
         <FormField label="Title" value={title} onChangeText={setTitle} placeholder="Rent, salary, subscription…" />
         <FormField label={`Amount (${account?.currency ?? state.settings.baseCurrency})`} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" error={amountError} required />
         <AppText variant="label">Account</AppText>
         <View accessibilityLabel="Recurring account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{accountChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={accountId === item.id} onPress={() => setAccountId(item.id)} />)}</View>
         <AppText variant="label">Category</AppText>
         <View accessibilityLabel="Recurring category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{categories.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}</View>
+        <FormField label="Note" value={note} onChangeText={setNote} placeholder="Optional context" multiline style={{ minHeight: 92, textAlignVertical: 'top' }} />
+        {state.tags.length ? (
+          <>
+            <AppText variant="label">Tags</AppText>
+            <View accessibilityLabel="Recurring tags" role="group" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              {state.tags.map((tag) => <ChoiceChip mode="checkbox" key={tag.id} literal label={tag.name} selected={tagIds.includes(tag.id)} onPress={() => toggleTag(tag.id)} />)}
+            </View>
+          </>
+        ) : null}
         {referencesArchivedEntity ? <AppText variant="caption" muted>This schedule stays paused until its archived account and category are restored.</AppText> : null}
       </Card>
 

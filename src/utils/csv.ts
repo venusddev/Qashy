@@ -42,6 +42,15 @@ export function parseCsvText(input: string) {
 
 export type CsvRowError = { lineNumber: number; message: string };
 
+export function csvCategoryForRow(
+  explicitCategory: string,
+  rowKind: string,
+  defaultCategory?: { name: string; kind: 'expense' | 'income' },
+) {
+  if (explicitCategory) return explicitCategory;
+  return defaultCategory?.kind === rowKind ? defaultCategory.name : '';
+}
+
 const DELIMITERS = [',', ';', '\t'] as const;
 
 // Spreadsheet exports in locales that use the comma as a decimal separator are

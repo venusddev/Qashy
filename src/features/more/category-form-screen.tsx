@@ -55,6 +55,7 @@ export function CategoryFormScreen() {
     !item.parentId &&
     item.id !== existing?.id,
   );
+  const hasChildren = !!existing && state.categories.some((item) => item.parentId === existing.id);
   const selectedParentId = parentChoices.some((item) => item.id === parentId) ? parentId : '';
 
   const save = async () => {
@@ -91,7 +92,12 @@ export function CategoryFormScreen() {
     <FormScreen contentContainerStyle={{ gap: 16 }}>
       <Card style={{ gap: 16 }}>
         <FormField label="Category name" value={name} onChangeText={setName} autoFocus={!existing} />
-        <View accessibilityLabel="Category kind" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>{(['expense', 'income'] as CategoryKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} disabled={kindLocked && kind !== item} onPress={() => { setKind(item); setParentId(''); setIcon(ICONS[item][0][0]); }} /></View>)}</View>
+        <View accessibilityLabel="Category kind" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>{(['expense', 'income'] as CategoryKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} disabled={kindLocked && kind !== item} onPress={() => {
+          if (item === kind) return;
+          setKind(item);
+          setParentId('');
+          setIcon(ICONS[item][0][0]);
+        }} /></View>)}</View>
         {kindLocked ? <AppText variant="caption" muted>Kind is locked because transactions, budgets, goals, or schedules reference this category.</AppText> : null}
         <AppText variant="label">Icon</AppText>
         <View accessibilityLabel="Category icon" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
@@ -100,7 +106,8 @@ export function CategoryFormScreen() {
         <AppText variant="label">Color</AppText>
         <View accessibilityLabel="Category color" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>{COLORS.map((item) => <ColorSwatch key={item} color={item} selected={color === item} label={`Use ${item} category color`} onPress={() => setColor(item)} />)}</View>
         <AppText variant="label">Parent category</AppText>
-        <View accessibilityLabel="Parent category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!selectedParentId} onPress={() => setParentId('')} />{parentChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={selectedParentId === item.id} onPress={() => setParentId(item.id)} />)}</View>
+        <View accessibilityLabel="Parent category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!selectedParentId} onPress={() => setParentId('')} />{parentChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived || hasChildren} selected={selectedParentId === item.id} onPress={() => setParentId(item.id)} />)}</View>
+        {hasChildren ? <AppText variant="caption" muted>A category with child categories must stay at the top level.</AppText> : null}
       </Card>
       <ActionButton title={busy ? 'Saving…' : existing ? 'Save category' : 'Create category'} icon="checkmark" onPress={save} disabled={busy} busy={busy} />
       {existing ? <ActionButton title="Archive category" variant="danger" onPress={archive} disabled={busy} /> : null}
