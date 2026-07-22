@@ -1690,4 +1690,225 @@ describe('FinanceRepository contract', () => {
       recurringRules: [],
     });
   });
+
+  it('reconciles shared storage and rejects a stale entity revision', async () => {
+    const storage = new MemoryStorageAdapter();
+    const { repository: first } = await createRepository(storage);
+    const second = new LocalFinanceRepository(storage);
+    await second.initialize();
+    const stale = second.getSnapshot().categories.find((item) => item.name === 'Groceries')!;
+    const current = first.getSnapshot().categories.find((item) => item.id === stale.id)!;
+
+    await first.saveCategory({ ...current, name: 'Food' }, current.id, current.revision);
+    await second.refresh();
+    expect(second.getSnapshot().categories.find((item) => item.id === stale.id)?.name).toBe('Food');
+
+    await expect(second.saveCategory({ ...stale, name: 'Old form value' }, stale.id, stale.revision))
+      .rejects.toThrow('changed in another window');
+    expect(first.getSnapshot().categories.find((item) => item.id === stale.id)?.name).toBe('Food');
+  });
+
+  it('does not allow settings updates to reopen onboarding', async () => {
+    const { repository } = await createRepository();
+    await repository.updateSettings({ onboardingComplete: false } as never);
+    expect(repository.getSnapshot().settings.onboardingComplete).toBe(true);
+    await expect(repository.completeOnboarding({
+      locale: 'en-US', baseCurrency: 'EUR', accountName: 'Second', accountType: 'checking',
+      openingBalanceMinor: 0, themeMode: 'system', accentSource: 'system', accentHex: '#5966E9',
+    })).rejects.toThrow('already complete');
+  });
+
+  it('includes child-category activity in parent budgets and goals', async () => {
+    const { repository } = await createRepository();
+    const account = repository.getSnapshot().accounts[0];
+    const parent = await repository.saveCategory({ name: 'Household', kind: 'expense', icon: 'house', color: '#5966E9', parentId: null, archived: false });
+    const child = await repository.saveCategory({ name: 'Repairs', kind: 'expense', icon: 'wrench', color: '#5966E9', parentId: parent.id, archived: false });
+    await repository.saveTransaction({ kind: 'expense', title: 'Fix', localDate: '2026-07-15', accountId: account.id, categoryId: child.id, amountMinor: 400 });
+    await repository.saveBudget({
+      name: 'Home', icon: 'chart', color: '#5966E9', limitMinor: 1000,
+      period: { unit: 'custom', interval: 1, anchorDate: '2026-07-01', endDate: '2026-07-31' },
+      rollover: false, filters: { accountIds: [], categoryIds: [parent.id], tagIds: [] }, categoryLimits: [], archived: false,
+    });
+    const goal = await repository.saveGoal({
+      name: 'Renovation', kind: 'spending', icon: 'target', color: '#5966E9', targetMinor: 1000,
+      initialMinor: 0, targetDate: null, linkedAccountId: null, linkedCategoryId: parent.id, archived: false,
+    });
+
+    expect(repository.getBudgetStatuses('2026-07-15')[0].spentMinor).toBe(400);
+    expect(repository.getGoalProgress(goal.id)).toBe(400);
+  });
+
+  it('removes a deleted tag from editable budgets and recurring templates', async () => {
+    const { repository } = await createRepository();
+    const account = repository.getSnapshot().accounts[0];
+    const tag = await repository.saveTag({ name: 'Work', color: '#5966E9' });
+    const budget = await repository.saveBudget({
+      name: 'Work', icon: 'chart', color: '#5966E9', limitMinor: 1000,
+      period: { unit: 'month', interval: 1, anchorDate: '2026-07-01', endDate: null },
+      rollover: false, filters: { accountIds: [], categoryIds: [], tagIds: [tag.id] }, categoryLimits: [], archived: false,
+    });
+    const rule = await repository.saveRecurringRule({
+      template: { kind: 'expense', title: 'Tool', note: '', accountId: account.id, categoryId: null, tagIds: [tag.id], amountMinor: 100, currency: 'USD' },
+      unit: 'month', interval: 1, startDate: '2099-01-01', endDate: null, nextDueDate: '2099-01-01', autoPost: false, active: true,
+    });
+
+    await repository.deleteEntities('tags', [tag.id]);
+    const cleanedBudget = repository.getSnapshot().budgets.find((item) => item.id === budget.id)!;
+    const cleanedRule = repository.getSnapshot().recurringRules.find((item) => item.id === rule.id)!;
+    expect(cleanedBudget.filters.tagIds).toEqual([]);
+    expect(cleanedRule.template.tagIds).toEqual([]);
+    await expect(repository.saveBudget(cleanedBudget, cleanedBudget.id, cleanedBudget.revision)).resolves.toBeDefined();
+    await expect(repository.saveRecurringRule(cleanedRule, cleanedRule.id, cleanedRule.revision)).resolves.toBeDefined();
+  });
+
+  it('does not count contributions whose linked transaction is skipped', async () => {
+    const { repository } = await createRepository();
+    const account = repository.getSnapshot().accounts[0];
+    const goal = await repository.saveGoal({
+      name: 'Fund', kind: 'saving', icon: 'target', color: '#5966E9', targetMinor: 1000,
+      initialMinor: 0, targetDate: null, linkedAccountId: null, linkedCategoryId: null, archived: false,
+    });
+    const upcoming = await repository.saveTransaction({ kind: 'income', status: 'upcoming', title: 'Future', localDate: '2026-08-01', accountId: account.id, amountMinor: 100 });
+    await repository.saveContribution({ goalId: goal.id, amountMinor: 100, localDate: '2026-08-01', transactionId: upcoming.id, note: '' });
+    expect(repository.getGoalProgress(goal.id)).toBe(0);
+    await repository.skipUpcoming(upcoming.id);
+    expect(repository.getGoalProgress(goal.id)).toBe(0);
+  });
+
+  it('rejects an unsafe recurring rule before persisting it', async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-07-15T09:00:00Z'));
+      const storage = new MemoryStorageAdapter();
+      const { repository } = await createRepository(storage);
+      const account = repository.getSnapshot().accounts[0];
+      await repository.saveAccount({ ...account, openingBalanceMinor: Number.MAX_SAFE_INTEGER }, account.id, account.revision);
+      await expect(repository.saveRecurringRule({
+        template: { kind: 'income', title: 'Overflow', note: '', accountId: account.id, categoryId: null, tagIds: [], amountMinor: 1, currency: 'USD' },
+        unit: 'month', interval: 1, startDate: '2026-07-15', endDate: '2026-07-15', nextDueDate: '2026-07-15', autoPost: true, active: true,
+      })).rejects.toThrow('supported range');
+      expect(repository.getSnapshot().recurringRules).toEqual([]);
+      const reloaded = new LocalFinanceRepository(storage);
+      await expect(reloaded.initialize()).resolves.toBeUndefined();
+      expect(reloaded.getSnapshot().recurringRules).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('prevents a parent category kind change while it has children', async () => {
+    const { repository } = await createRepository();
+    const parent = await repository.saveCategory({ name: 'Parent', kind: 'expense', icon: 'house', color: '#5966E9', parentId: null, archived: false });
+    await repository.saveCategory({ name: 'Child', kind: 'expense', icon: 'wrench', color: '#5966E9', parentId: parent.id, archived: false });
+    await expect(repository.saveCategory({ ...parent, kind: 'income' }, parent.id, parent.revision))
+      .rejects.toThrow('kind cannot change');
+  });
+
+  it('validates linked-goal ranges before batch category changes persist', async () => {
+    const { repository } = await createRepository();
+    const account = repository.getSnapshot().accounts[0];
+    const salary = repository.getSnapshot().categories.find((item) => item.name === 'Salary')!;
+    const other = repository.getSnapshot().categories.find((item) => item.name === 'Other income')!;
+    await repository.saveGoal({
+      name: 'Maximum', kind: 'saving', icon: 'target', color: '#5966E9', targetMinor: Number.MAX_SAFE_INTEGER,
+      initialMinor: Number.MAX_SAFE_INTEGER - 50, targetDate: null, linkedAccountId: null, linkedCategoryId: salary.id, archived: false,
+    });
+    const transaction = await repository.saveTransaction({ kind: 'income', title: 'Bonus', localDate: '2026-07-15', accountId: account.id, categoryId: other.id, amountMinor: 100 });
+    await expect(repository.updateTransactionsCategory([transaction.id], salary.id)).rejects.toThrow('supported range');
+    expect(repository.getSnapshot().transactions.find((item) => item.id === transaction.id)?.categoryId).toBe(other.id);
+  });
+
+  it('deduplicates repeated CSV tag names before building duplicate keys', async () => {
+    const { repository } = await createRepository();
+    const row: CsvImportRow = {
+      rowNumber: 2, date: '2026-07-15', type: 'expense', status: 'posted', title: 'Taxi', amount: '10.00',
+      currency: 'USD', account: 'Everyday', category: '', tags: 'Work|Work', note: '', exchangeRate: '', destinationAccount: '', destinationAmount: '',
+    };
+    await repository.importCsv([row], true);
+    const preview = await repository.importCsv([row], false);
+    expect(preview.validRows).toEqual([]);
+    expect(preview.duplicateRows).toEqual([2]);
+  });
+
+  it('caps positive rollover so a valid budget remains renderable next period', async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-07-15T09:00:00Z'));
+      const storage = new MemoryStorageAdapter();
+      const { repository } = await createRepository(storage);
+      await repository.saveBudget({
+        name: 'Boundary', icon: 'chart', color: '#5966E9', limitMinor: Number.MAX_SAFE_INTEGER,
+        period: { unit: 'day', interval: 1, anchorDate: '2026-07-15', endDate: null },
+        rollover: true, filters: { accountIds: [], categoryIds: [], tagIds: [] }, categoryLimits: [], archived: false,
+      });
+      jest.setSystemTime(new Date('2026-07-16T09:00:00Z'));
+      const reloaded = new LocalFinanceRepository(storage);
+      await reloaded.initialize();
+      expect(reloaded.getBudgetStatuses('2026-07-16')[0]).toMatchObject({
+        effectiveLimitMinor: Number.MAX_SAFE_INTEGER,
+        snapshot: { rolloverMinor: 0 },
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('rejects a rate edit that would overflow net worth', async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-07-15T09:00:00Z'));
+      const { repository } = await createRepository();
+      const rate = await repository.saveExchangeRate({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '1', effectiveDate: '2026-01-01' });
+      await repository.saveAccount({ name: 'Euro', type: 'checking', currency: 'EUR', openingBalanceMinor: Number.MAX_SAFE_INTEGER, icon: 'wallet', color: '#5966E9', archived: false });
+      await expect(repository.saveExchangeRate({ ...rate, rate: '2' }, rate.id, rate.revision)).rejects.toThrow('supported range');
+      expect(repository.getSnapshot().exchangeRates.find((item) => item.id === rate.id)?.rate).toBe('1');
+      expect(repository.getDashboard('2026-07-01', '2026-07-31').netWorthMinor).toBe(Number.MAX_SAFE_INTEGER);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('rejects budget sets whose maximum aggregate limit is unsafe', async () => {
+    const { repository } = await createRepository();
+    const input = {
+      icon: 'chart', color: '#5966E9', limitMinor: Number.MAX_SAFE_INTEGER,
+      period: { unit: 'custom' as const, interval: 1, anchorDate: '2026-07-01', endDate: '2026-07-31' },
+      rollover: false, filters: { accountIds: [], categoryIds: [], tagIds: [] }, categoryLimits: [], archived: false,
+    };
+    await repository.saveBudget({ ...input, name: 'First' });
+    await expect(repository.saveBudget({ ...input, name: 'Second' })).rejects.toThrow('supported range');
+    expect(repository.getSnapshot().budgets).toHaveLength(1);
+  });
+
+  it('cleans category references atomically and archives referenced accounts', async () => {
+    const { repository } = await createRepository();
+    const account = repository.getSnapshot().accounts[0];
+    const category = await repository.saveCategory({ name: 'Project', kind: 'expense', icon: 'house', color: '#5966E9', parentId: null, archived: false });
+    const child = await repository.saveCategory({ name: 'Project child', kind: 'expense', icon: 'wrench', color: '#5966E9', parentId: category.id, archived: false });
+    const transaction = await repository.saveTransaction({ kind: 'expense', title: 'Project', localDate: '2026-07-15', accountId: account.id, categoryId: category.id, amountMinor: 100 });
+    const budget = await repository.saveBudget({
+      name: 'Project', icon: 'chart', color: '#5966E9', limitMinor: 1000,
+      period: { unit: 'month', interval: 1, anchorDate: '2026-07-01', endDate: null }, rollover: false,
+      filters: { accountIds: [], categoryIds: [category.id], tagIds: [] }, categoryLimits: [{ categoryId: category.id, limitMinor: 500 }], archived: false,
+    });
+    const goal = await repository.saveGoal({
+      name: 'Project', kind: 'spending', icon: 'target', color: '#5966E9', targetMinor: 1000, initialMinor: 0,
+      targetDate: null, linkedAccountId: null, linkedCategoryId: category.id, archived: false,
+    });
+    const rule = await repository.saveRecurringRule({
+      template: { kind: 'expense', title: 'Project', note: '', accountId: account.id, categoryId: category.id, tagIds: [], amountMinor: 100, currency: 'USD' },
+      unit: 'month', interval: 1, startDate: '2099-01-01', endDate: null, nextDueDate: '2099-01-01', autoPost: false, active: true,
+    });
+
+    await repository.deleteEntities('categories', [category.id]);
+    expect(repository.getSnapshot().categories.find((item) => item.id === child.id)?.parentId).toBeNull();
+    expect(repository.getSnapshot().transactions.find((item) => item.id === transaction.id)?.categoryId).toBeNull();
+    expect(repository.getSnapshot().budgets.find((item) => item.id === budget.id)).toMatchObject({ filters: { categoryIds: [] }, categoryLimits: [] });
+    expect(repository.getSnapshot().goals.find((item) => item.id === goal.id)?.linkedCategoryId).toBeNull();
+    expect(repository.getSnapshot().recurringRules.find((item) => item.id === rule.id)?.template.categoryId).toBeNull();
+
+    await repository.deleteEntities('accounts', [account.id]);
+    expect(repository.getSnapshot().accounts.find((item) => item.id === account.id)?.archived).toBe(true);
+    expect(repository.getSnapshot().transactions.find((item) => item.id === transaction.id)?.accountId).toBe(account.id);
+  });
 });

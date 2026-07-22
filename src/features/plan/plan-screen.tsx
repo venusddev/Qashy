@@ -64,12 +64,12 @@ export function PlanScreen() {
                     <AppText variant="label"><AnimatedMoney variant="label" minor={spentMinor} currency={state.settings.baseCurrency} locale={state.settings.locale} /> spent</AppText>
                     <AppText variant="caption" muted><AnimatedMoney variant="caption" muted minor={Math.max(0, effectiveLimitMinor - spentMinor)} currency={state.settings.baseCurrency} locale={state.settings.locale} /> left</AppText>
                   </View>
-                  <ProgressBar value={ratio} color={ratio > 1 ? theme.negative as string : budget.color} />
+                  <ProgressBar label={`${budget.name}: ${t('Budget progress')}`} value={ratio} color={ratio > 1 ? theme.negative as string : budget.color} />
                   {categorySpend.length ? (
                     <View style={{ gap: 10, paddingTop: 4 }}>
                       {categorySpend.map((limit) => {
                         const category = state.categories.find((item) => item.id === limit.categoryId);
-                        return category ? <View key={limit.categoryId} style={{ gap: 5 }}><View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><AppText literal variant="caption">{category.name}</AppText><AppText literal variant="caption" muted>{`${formatMoney(limit.amountMinor, state.settings.baseCurrency, state.settings.locale)} / ${formatMoney(limit.limitMinor, state.settings.baseCurrency, state.settings.locale)}`}</AppText></View><ProgressBar value={limit.amountMinor / limit.limitMinor} color={category.color} /></View> : null;
+                        return category ? <View key={limit.categoryId} style={{ gap: 5 }}><View style={{ flexDirection: 'row', justifyContent: 'space-between' }}><AppText literal variant="caption">{category.name}</AppText><AppText literal variant="caption" muted>{`${formatMoney(limit.amountMinor, state.settings.baseCurrency, state.settings.locale)} / ${formatMoney(limit.limitMinor, state.settings.baseCurrency, state.settings.locale)}`}</AppText></View><ProgressBar label={`${category.name}: ${t('Category budget progress')}`} value={limit.amountMinor / limit.limitMinor} color={category.color} /></View> : null;
                       })}
                     </View>
                   ) : null}
@@ -104,6 +104,7 @@ export function PlanScreen() {
                   </View>
                   <AnimatedMoney variant="money" minor={displayProgress} currency={state.settings.baseCurrency} locale={state.settings.locale} />
                   <ProgressBar
+                    label={`${goal.name}: ${t('Goal progress')}`}
                     value={ratio}
                     color={goal.color}
                     milestones={GOAL_MILESTONES}

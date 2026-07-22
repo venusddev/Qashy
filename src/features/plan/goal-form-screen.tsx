@@ -29,6 +29,7 @@ export function GoalFormScreen() {
     ? 'קרן ליום גשום'
     : 'Rainy day fund';
   const existing = id ? state.goals.find((item) => item.id === id) : undefined;
+  const [expectedRevision] = useState(existing?.revision);
   const toMoneyText = (minor: number) => minorToLocalizedDecimalString(minor, state.settings.baseCurrency, state.settings.locale);
   const [name, setName] = useState(existing?.name ?? defaultGoalName);
   const [kind, setKind] = useState<GoalKind>(existing?.kind ?? 'saving');
@@ -41,6 +42,7 @@ export function GoalFormScreen() {
   const [contributionDate, setContributionDate] = useState(todayLocal());
   const [contributionNote, setContributionNote] = useState('Manual contribution');
   const [editingContributionId, setEditingContributionId] = useState<string | null>(null);
+  const [editingContributionRevision, setEditingContributionRevision] = useState<number | undefined>();
   const [saving, setSaving] = useState(false);
   const targetError = validateMoneyInput(target, state.settings.baseCurrency, state.settings.locale, {
     label: 'Target',
@@ -87,7 +89,7 @@ export function GoalFormScreen() {
         linkedAccountId: linkedAccountId || null,
         linkedCategoryId: linkedCategoryId || null,
         archived: false,
-      }, existing?.id);
+      }, existing?.id, expectedRevision);
       hapticSuccess();
       router.dismissTo('/plan');
     } catch (reason) {
@@ -102,6 +104,7 @@ export function GoalFormScreen() {
     setContributionDate(todayLocal());
     setContributionNote('Manual contribution');
     setEditingContributionId(null);
+    setEditingContributionRevision(undefined);
   };
 
   const editManualContribution = (item: GoalContribution) => {
@@ -109,6 +112,7 @@ export function GoalFormScreen() {
     setContributionDate(item.localDate);
     setContributionNote(item.note);
     setEditingContributionId(item.id);
+    setEditingContributionRevision(item.revision);
   };
 
   const saveManualContribution = async () => {
@@ -121,7 +125,7 @@ export function GoalFormScreen() {
         localDate: contributionDate,
         transactionId: null,
         note: contributionNote,
-      }, editingContributionId ?? undefined);
+      }, editingContributionId ?? undefined, editingContributionRevision);
       resetContributionForm();
       hapticSuccess();
     } catch (reason) {

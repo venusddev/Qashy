@@ -26,6 +26,7 @@ export function AppearanceScreen() {
   const { settings } = useFinanceState();
   const theme = useQashyTheme();
   const systemScheme = useColorScheme();
+  const [expectedRevision, setExpectedRevision] = useState(settings.revision);
   const [mode, setMode] = useState<ThemeMode>(settings.themeMode);
   const [source, setSource] = useState<AccentSource>(settings.accentSource);
   const [hex, setHex] = useState(settings.accentHex);
@@ -46,11 +47,12 @@ export function AppearanceScreen() {
     setSaving(true);
     setSaved(false);
     try {
-      await repository.updateSettings({
+      const updated = await repository.updateSettings({
         themeMode: mode,
         accentSource: source,
         accentHex: validHex ? hex.toUpperCase() : settings.accentHex,
-      });
+      }, expectedRevision);
+      setExpectedRevision(updated.revision);
       setSaved(true);
     } catch (reason) {
       showError('Couldn’t save appearance', errorMessage(reason, 'Try again.'));

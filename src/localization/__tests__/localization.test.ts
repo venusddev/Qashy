@@ -20,6 +20,9 @@ describe('localization', () => {
     expect(translateMessage('Missing exchange rate for EUR → ILS on 2026-07-01.', 'he')).toBe('חסר שער חליפין מ־EUR ל־ILS בתאריך 2026-07-01.');
     expect(translateMessage('Delete Rainy day fund?', 'he')).toBe('למחוק את Rainy day fund?');
     expect(translateMessage('Row 3: Unknown category: Old', 'he')).toBe('שורה 3: קטגוריה לא מוכרת: Old');
+    expect(translateMessage('Transaction kind', 'he')).toBe('סוג תנועה');
+    expect(translateMessage('Expense, money out', 'he')).toBe('הוצאה, כסף יצא');
+    expect(translateMessage('Budget progress', 'he')).toBe('התקדמות התקציב');
   });
 
   it('leaves unknown copy and English unchanged', () => {

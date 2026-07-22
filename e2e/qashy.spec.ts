@@ -48,7 +48,13 @@ test('chooses readable locale and currency options during onboarding', async ({ 
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
 
   await page.getByLabel('הוספת תנועה').first().click();
+  await expect(page.getByRole('radiogroup', { name: 'סוג תנועה' })).toBeVisible();
   await expect(page.getByRole('radio', { name: 'מסעדות' })).toBeVisible();
+  await page.getByLabel('סכום (ILS)').fill('10');
+  await page.getByLabel('כותרת').fill('בדיקת נגישות');
+  await page.getByRole('button', { name: 'הוספת תנועה' }).click();
+  await expect(page.getByRole('button', { name: /הוצאה, כסף יצא.*בדיקת נגישות/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Expense, money out/ })).toHaveCount(0);
 
   await page.goto('/goal');
   await expect(page.getByLabel('שם היעד')).toHaveValue('קרן ליום גשום');
@@ -125,6 +131,22 @@ test('completes onboarding and records an expense', async ({ page }) => {
   await expect(page.getByText(/Groceries · Everyday/)).toBeVisible();
 });
 
+test('reconciles finance changes across open browser tabs', async ({ page, context }) => {
+  await completeOnboarding(page);
+  const secondPage = await context.newPage();
+  await secondPage.goto('/transactions');
+  await expect(secondPage.getByText('No transactions yet')).toBeVisible();
+
+  await page.getByLabel('Add transaction').first().click();
+  await page.getByLabel('Amount (USD)').fill('8');
+  await page.getByLabel('Title').fill('Cross-tab update');
+  await page.getByRole('button', { name: 'Add transaction' }).click();
+
+  await secondPage.bringToFront();
+  await expect(secondPage.getByText('Cross-tab update')).toBeVisible();
+  await secondPage.close();
+});
+
 test('preserves a selected transaction type and lets an edit clear its category', async ({ page }) => {
   await completeOnboarding(page);
   await page.getByLabel('Add transaction').first().click();
@@ -194,6 +216,70 @@ test('shows every category cap and the actual recurring interval', async ({ page
   await expect(page.getByText(/Every 3 months\. · Next 2099-01-01/)).toBeVisible();
 });
 
+test('uncategorizes, pauses, and resumes a recurring schedule', async ({ page }) => {
+  await completeOnboarding(page);
+  await page.getByRole('link', { name: 'More' }).click();
+  await page.getByRole('button', { name: 'New recurring' }).click();
+  await page.getByLabel('Title').fill('Flexible schedule');
+  await page.getByLabel('Amount (USD)').fill('10');
+  await page.getByRole('radio', { name: 'Dining' }).click();
+  await page.getByRole('textbox', { name: 'Starts, required' }).fill('2099-01-01');
+  await expect(page.getByRole('switch', { name: 'Post automatically' })).toBeVisible();
+  await expect(page.getByRole('switch', { name: 'Schedule active' })).toBeChecked();
+  await page.getByRole('button', { name: 'Create schedule' }).click();
+
+  await page.getByRole('button', { name: /Flexible schedule/ }).click();
+  const uncategorized = page.getByRole('radio', { name: 'Uncategorized' });
+  await uncategorized.click();
+  await expect(uncategorized).toBeChecked();
+  await page.getByRole('switch', { name: 'Schedule active' }).click();
+  await page.getByRole('button', { name: 'Save schedule' }).click();
+  await expect(page.getByRole('button', { name: /Flexible schedule.*Paused/ })).toBeVisible();
+
+  await page.getByRole('button', { name: /Flexible schedule/ }).click();
+  await expect(page.getByRole('radio', { name: 'Uncategorized' })).toBeChecked();
+  await page.getByRole('switch', { name: 'Schedule active' }).click();
+  await page.getByRole('button', { name: 'Save schedule' }).click();
+  await expect(page.getByRole('button', { name: /Flexible schedule.*Next 2099-01-01/ })).toBeVisible();
+});
+
+test('selects a custom budget start date and labels progress controls', async ({ page }) => {
+  await completeOnboarding(page);
+  await page.goto('/budget');
+  await page.getByRole('radio', { name: 'Custom' }).click();
+  await page.getByLabel('Start date').fill('2099-01-01');
+  await page.getByLabel('End date').fill('2099-01-31');
+  await expect(page.getByRole('switch', { name: 'Rollover' })).toBeVisible();
+  await page.getByRole('button', { name: 'Create budget' }).click();
+  await expect(page.getByText(/2099-01-01 to 2099-01-31/)).toBeVisible();
+  await expect(page.getByRole('progressbar', { name: 'Everyday spending: Budget progress' })).toBeVisible();
+
+  await page.goto('/goal');
+  await page.getByRole('button', { name: 'Create goal' }).click();
+  await expect(page.getByRole('progressbar', { name: 'Rainy day fund: Goal progress' })).toBeVisible();
+});
+
+test('edits tags carried by an imported transaction', async ({ page }) => {
+  await completeOnboarding(page);
+  await page.goto('/csv');
+  const chooserPromise = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Choose CSV' }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles('e2e/fixtures/tagged.csv');
+  await page.getByRole('button', { name: 'Preview import' }).click();
+  await expect(page.getByText('Ready').locator('..').getByText('1')).toBeVisible();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Import 1 transactions' }).click();
+  await page.goto('/transactions');
+  await page.getByRole('button', { name: /Tagged import/ }).click();
+  const workTag = page.getByRole('checkbox', { name: 'Work' });
+  await expect(workTag).toBeChecked();
+  await workTag.click();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await page.getByRole('button', { name: /Tagged import/ }).click();
+  await expect(page.getByRole('checkbox', { name: 'Work' })).not.toBeChecked();
+});
+
 test('keeps Plan creation actions inside their empty sections', async ({ page }) => {
   await completeOnboarding(page);
   await page.getByRole('link', { name: 'Plan' }).click();
@@ -242,6 +328,9 @@ test('can leave an invalid custom accent by returning to the default source', as
   const save = page.getByRole('button', { name: 'Save appearance' });
   await expect(save).toBeEnabled();
   await save.click();
+  await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible();
+  await page.getByRole('radio', { name: 'Dark' }).click();
+  await page.getByRole('button', { name: 'Save appearance' }).click();
   await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible();
 });
 

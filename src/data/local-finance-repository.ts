@@ -36,6 +36,7 @@ import type {
   OnboardingInput,
   RateInput,
   RecurringInput,
+  SettingsInput,
   TagInput,
   TransactionInput,
 } from '@/data/repository';
@@ -112,9 +113,14 @@ export class LocalFinanceRepository implements FinanceRepository {
   private state = createInitialState();
   private listeners = new Set<() => void>();
   private mutationQueue: Promise<void> = Promise.resolve();
+  private mutationActive = false;
   private deletedOccurrenceKeys = new Set<string>();
 
-  constructor(private storage: StorageAdapter = new PlatformStorageAdapter()) {}
+  constructor(private storage: StorageAdapter = new PlatformStorageAdapter()) {
+    this.storage.subscribe?.((source) => {
+      if (source !== this && !this.mutationActive && this.state.ready) void this.refresh();
+    });
+  }
 
   initialize() {
     return this.enqueueMutation(() => this.initializeNow());
@@ -122,26 +128,18 @@ export class LocalFinanceRepository implements FinanceRepository {
 
   private async initializeNow() {
     await this.storage.initialize();
-    const settingsRecords = await this.storage.readAll('settings');
-    const settings = (settingsRecords.find((item) => item.id === 'settings' && !item.deletedAt) ??
-      initialSettings()) as AppSettings;
-
-    const loaded = await Promise.all(ENTITY_TYPES.map((type) => this.storage.readAll(type)));
-    const loadedTransactions = loaded[ENTITY_TYPES.indexOf('transactions')] as TransactionRecord[];
-    this.deletedOccurrenceKeys = new Set(
-      loadedTransactions
-        .filter((transaction) => transaction.deletedAt && transaction.occurrenceKey)
-        .map((transaction) => transaction.occurrenceKey!),
-    );
-    const next = { ...createInitialState(), settings, ready: true } as FinanceState;
-    ENTITY_TYPES.forEach((type, index) => {
-      (next[type] as FinanceEntity[]) = loaded[index].filter((entity) => !entity.deletedAt);
-    });
-    this.state = next;
+    const settingsRecords = await this.hydrateFromStorage();
     await this.migrateLoadedState();
-    if (!settingsRecords.length) await this.persist('settings', [settings]);
+    if (!settingsRecords.length) await this.persist('settings', [this.state.settings]);
     await this.generateRecurringNow(addRecurrence(todayLocal(), 'month', 1));
     this.emit();
+  }
+
+  refresh() {
+    return this.enqueueMutation(async () => {
+      await this.hydrateFromStorage();
+      this.emit();
+    });
   }
 
   getSnapshot = () => this.state;
@@ -156,7 +154,10 @@ export class LocalFinanceRepository implements FinanceRepository {
   }
 
   private async completeOnboardingNow(input: OnboardingInput) {
-    if (this.state.settings.onboardingComplete) throw new Error('Qashy setup is already complete.');
+    if (
+      this.state.settings.onboardingComplete ||
+      ENTITY_TYPES.some((type) => (this.state[type] as FinanceEntity[]).length > 0)
+    ) throw new Error('Qashy setup is already complete.');
     this.assertLocale(input.locale);
     const baseCurrency = this.normalizeCurrency(input.baseCurrency);
     this.assertSafeMinor(input.openingBalanceMinor, 'Opening balance');
@@ -187,16 +188,17 @@ export class LocalFinanceRepository implements FinanceRepository {
       { type: 'settings', entity: settings },
       { type: 'accounts', entity: account },
       ...categories.map((entity) => ({ type: 'categories' as const, entity })),
-    ]);
+    ], this);
     this.state = { ...this.state, settings, accounts: [account], categories };
     this.emit();
   }
 
-  updateSettings(patch: Partial<AppSettings>) {
-    return this.enqueueMutation(() => this.updateSettingsNow(patch));
+  updateSettings(patch: SettingsInput, expectedRevision?: number) {
+    return this.enqueueMutation(() => this.updateSettingsNow(patch, expectedRevision));
   }
 
-  private async updateSettingsNow(patch: Partial<AppSettings>) {
+  private async updateSettingsNow(patch: SettingsInput, expectedRevision?: number) {
+    this.assertExpectedRevision(this.state.settings, patch, expectedRevision);
     const locale = patch.locale ?? this.state.settings.locale;
     const baseCurrency = this.normalizeCurrency(patch.baseCurrency ?? this.state.settings.baseCurrency);
     this.assertLocale(locale);
@@ -209,7 +211,7 @@ export class LocalFinanceRepository implements FinanceRepository {
       throw new Error('Base currency cannot change after setup is complete.');
     }
     const settings = updateEntity(this.state.settings, {
-      onboardingComplete: patch.onboardingComplete ?? this.state.settings.onboardingComplete,
+      onboardingComplete: this.state.settings.onboardingComplete,
       locale,
       baseCurrency,
       themeMode,
@@ -222,11 +224,11 @@ export class LocalFinanceRepository implements FinanceRepository {
     return settings;
   }
 
-  saveAccount(input: AccountInput, id?: string) {
-    return this.enqueueMutation(() => this.saveAccountNow(input, id));
+  saveAccount(input: AccountInput, id?: string, expectedRevision?: number) {
+    return this.enqueueMutation(() => this.saveAccountNow(input, id, expectedRevision));
   }
 
-  private async saveAccountNow(input: AccountInput, id?: string) {
+  private async saveAccountNow(input: AccountInput, id?: string, expectedRevision?: number) {
     const currency = this.normalizeCurrency(input.currency);
     this.assertSafeMinor(input.openingBalanceMinor, 'Opening balance');
     this.assertColor(input.color);
@@ -234,6 +236,7 @@ export class LocalFinanceRepository implements FinanceRepository {
     const name = input.name.trim() || 'Account';
     this.assertUniqueName('accounts', name, id);
     const existing = this.findExisting(this.state.accounts, id, 'account');
+    this.assertExpectedRevision(existing, input, expectedRevision);
     if (existing && existing.currency !== currency) {
       const hasTransactions = this.state.transactions.some((item) =>
         item.accountId === existing.id || item.destinationAccountId === existing.id,
@@ -265,7 +268,7 @@ export class LocalFinanceRepository implements FinanceRepository {
     await this.storage.putMany([
       { type: 'accounts', entity: account },
       ...rules.map((entity) => ({ type: 'recurringRules' as const, entity })),
-    ]);
+    ], this);
     this.replaceInList('accounts', account);
     rules.forEach((rule) => this.replaceInList('recurringRules', rule));
     this.emit();
@@ -275,21 +278,23 @@ export class LocalFinanceRepository implements FinanceRepository {
     return account;
   }
 
-  saveCategory(input: CategoryInput, id?: string) {
-    return this.enqueueMutation(() => this.saveCategoryNow(input, id));
+  saveCategory(input: CategoryInput, id?: string, expectedRevision?: number) {
+    return this.enqueueMutation(() => this.saveCategoryNow(input, id, expectedRevision));
   }
 
-  private async saveCategoryNow(input: CategoryInput, id?: string) {
+  private async saveCategoryNow(input: CategoryInput, id?: string, expectedRevision?: number) {
     const name = input.name.trim() || 'Category';
     this.assertUniqueName('categories', name, id);
     this.assertColor(input.color);
     if (!CATEGORY_KINDS.includes(input.kind)) throw new Error('Choose a valid category kind.');
     const existing = this.findExisting(this.state.categories, id, 'category');
+    this.assertExpectedRevision(existing, input, expectedRevision);
     if (existing && existing.kind !== input.kind) {
       const isReferenced = this.state.transactions.some((item) => item.categoryId === existing.id) ||
         this.state.recurringRules.some((item) => item.template.categoryId === existing.id) ||
         this.state.budgets.some((item) => item.filters.categoryIds.includes(existing.id)) ||
-        this.state.goals.some((item) => item.linkedCategoryId === existing.id);
+        this.state.goals.some((item) => item.linkedCategoryId === existing.id) ||
+        this.state.categories.some((item) => item.parentId === existing.id);
       if (isReferenced) throw new Error('Category kind cannot change after finance records reference it.');
     }
     if (input.parentId) {
@@ -326,7 +331,7 @@ export class LocalFinanceRepository implements FinanceRepository {
     await this.storage.putMany([
       { type: 'categories', entity: category },
       ...rules.map((entity) => ({ type: 'recurringRules' as const, entity })),
-    ]);
+    ], this);
     this.replaceInList('categories', category);
     rules.forEach((rule) => this.replaceInList('recurringRules', rule));
     this.emit();
@@ -336,24 +341,24 @@ export class LocalFinanceRepository implements FinanceRepository {
     return category;
   }
 
-  saveTag(input: TagInput, id?: string) {
-    return this.enqueueMutation(() => this.saveTagNow(input, id));
+  saveTag(input: TagInput, id?: string, expectedRevision?: number) {
+    return this.enqueueMutation(() => this.saveTagNow(input, id, expectedRevision));
   }
 
-  private async saveTagNow(input: TagInput, id?: string) {
+  private async saveTagNow(input: TagInput, id?: string, expectedRevision?: number) {
     const name = input.name.trim();
     if (!name) throw new Error('Tag name is required.');
     this.assertUniqueName('tags', name, id);
     this.assertColor(input.color);
-    return await this.saveListEntity<Tag>('tags', { ...input, name, color: input.color.toUpperCase() }, id);
+    return await this.saveListEntity<Tag>('tags', { ...input, name, color: input.color.toUpperCase() }, id, expectedRevision);
   }
 
-  saveTransaction(input: TransactionInput, id?: string) {
-    return this.enqueueMutation(() => this.saveTransactionNow(input, id));
+  saveTransaction(input: TransactionInput, id?: string, expectedRevision?: number) {
+    return this.enqueueMutation(() => this.saveTransactionNow(input, id, expectedRevision));
   }
 
-  private async saveTransactionNow(input: TransactionInput, id?: string) {
-    const transaction = this.buildTransaction(input, id);
+  private async saveTransactionNow(input: TransactionInput, id?: string, expectedRevision?: number) {
+    const transaction = this.buildTransaction(input, id, [], expectedRevision);
     this.assertTransactionSetSafe(this.withEntity(this.state.transactions, transaction));
     await this.persist('transactions', [transaction]);
     this.replaceInList('transactions', transaction);
@@ -361,16 +366,18 @@ export class LocalFinanceRepository implements FinanceRepository {
     return transaction;
   }
 
-  saveBudget(input: BudgetInput, id?: string) {
-    return this.enqueueMutation(() => this.saveBudgetNow(input, id));
+  saveBudget(input: BudgetInput, id?: string, expectedRevision?: number) {
+    return this.enqueueMutation(() => this.saveBudgetNow(input, id, expectedRevision));
   }
 
-  private async saveBudgetNow(input: BudgetInput, id?: string) {
+  private async saveBudgetNow(input: BudgetInput, id?: string, expectedRevision?: number) {
     const normalized = this.validateBudget(input);
     const existing = this.findExisting(this.state.budgets, id, 'budget');
+    this.assertExpectedRevision(existing, input, expectedRevision);
     const budget = existing
       ? updateEntity(existing, normalized)
       : createEntity({ id: makeId(), ...normalized }) as Budget;
+    this.assertBudgetSetSafe(this.withEntity(this.state.budgets, budget));
     const periods = this.buildBudgetSnapshots(budget, true);
     periods.forEach((period) => {
       addMinor(period.limitMinor, period.rolloverMinor, `${budget.name} effective limit`);
@@ -378,32 +385,35 @@ export class LocalFinanceRepository implements FinanceRepository {
     await this.storage.putMany([
       { type: 'budgets', entity: budget },
       ...periods.map((entity) => ({ type: 'budgetPeriods' as const, entity })),
-    ]);
+    ], this);
     this.replaceInList('budgets', budget);
     periods.forEach((period) => this.replaceInList('budgetPeriods', period));
     this.emit();
     return budget;
   }
 
-  saveGoal(input: GoalInput, id?: string) {
-    return this.enqueueMutation(() => this.saveGoalAndContributionNow(input, undefined, id));
+  saveGoal(input: GoalInput, id?: string, expectedRevision?: number) {
+    return this.enqueueMutation(() => this.saveGoalAndContributionNow(input, undefined, id, expectedRevision));
   }
 
   saveGoalAndContribution(
     input: GoalInput,
     contribution?: GoalContributionInput,
     id?: string,
+    expectedRevision?: number,
   ) {
-    return this.enqueueMutation(() => this.saveGoalAndContributionNow(input, contribution, id));
+    return this.enqueueMutation(() => this.saveGoalAndContributionNow(input, contribution, id, expectedRevision));
   }
 
   private async saveGoalAndContributionNow(
     input: GoalInput,
     contribution?: GoalContributionInput,
     id?: string,
+    expectedRevision?: number,
   ) {
     const normalized = this.validateGoal(input, id);
     const existing = this.findExisting(this.state.goals, id, 'goal');
+    this.assertExpectedRevision(existing, input, expectedRevision);
     const goal = existing
       ? updateEntity(existing, normalized)
       : createEntity({ id: makeId(), ...normalized }) as Goal;
@@ -434,7 +444,7 @@ export class LocalFinanceRepository implements FinanceRepository {
       ...(contributionEntity
         ? [{ type: 'contributions' as const, entity: contributionEntity }]
         : []),
-    ]);
+    ], this);
     // Re-derive from the post-await snapshot rather than reusing the `goals` /
     // `contributions` copies taken before the write. Another mutation can land
     // while the persist is in flight, and rebuilding from the stale copy drops
@@ -449,11 +459,11 @@ export class LocalFinanceRepository implements FinanceRepository {
     return goal;
   }
 
-  saveContribution(input: ContributionInput, id?: string) {
-    return this.enqueueMutation(() => this.saveContributionNow(input, id));
+  saveContribution(input: ContributionInput, id?: string, expectedRevision?: number) {
+    return this.enqueueMutation(() => this.saveContributionNow(input, id, expectedRevision));
   }
 
-  private async saveContributionNow(input: ContributionInput, id?: string) {
+  private async saveContributionNow(input: ContributionInput, id?: string, expectedRevision?: number) {
     this.assertPositiveMinor(input.amountMinor, 'Contribution');
     this.assertDate(input.localDate);
     if (!this.state.goals.some((item) => item.id === input.goalId)) throw new Error('Choose a valid goal.');
@@ -461,6 +471,7 @@ export class LocalFinanceRepository implements FinanceRepository {
       throw new Error('Choose a valid transaction.');
     }
     const existing = this.findExisting(this.state.contributions, id, 'contribution');
+    this.assertExpectedRevision(existing, input, expectedRevision);
     const contribution = existing
       ? updateEntity(existing, { ...input, note: input.note.trim() })
       : createEntity({ id: makeId(), ...input, note: input.note.trim() }) as GoalContribution;
@@ -472,12 +483,13 @@ export class LocalFinanceRepository implements FinanceRepository {
     return contribution;
   }
 
-  saveRecurringRule(input: RecurringInput, id?: string) {
-    return this.enqueueMutation(() => this.saveRecurringRuleNow(input, id));
+  saveRecurringRule(input: RecurringInput, id?: string, expectedRevision?: number) {
+    return this.enqueueMutation(() => this.saveRecurringRuleNow(input, id, expectedRevision));
   }
 
-  private async saveRecurringRuleNow(input: RecurringInput, id?: string) {
+  private async saveRecurringRuleNow(input: RecurringInput, id?: string, expectedRevision?: number) {
     const existing = this.findExisting(this.state.recurringRules, id, 'recurring rule');
+    this.assertExpectedRevision(existing, input, expectedRevision);
     const scheduleChanged = !!existing && (
       existing.unit !== input.unit ||
       existing.interval !== input.interval ||
@@ -537,10 +549,19 @@ export class LocalFinanceRepository implements FinanceRepository {
           occurrenceKey: transaction.occurrenceKey,
         }, transaction.id))
         : [];
+    const replacementsForValidation = new Map(transactionChanges.map((transaction) => [transaction.id, transaction]));
+    const prospectiveTransactions = this.state.transactions
+      .filter((transaction) => !replacementsForValidation.get(transaction.id)?.deletedAt)
+      .map((transaction) => replacementsForValidation.get(transaction.id) ?? transaction);
+    this.assertRecurringRuleGenerationSafe(
+      rule,
+      prospectiveTransactions,
+      addRecurrence(todayLocal(), 'month', 1),
+    );
     await this.storage.putMany([
       { type: 'recurringRules', entity: rule },
       ...transactionChanges.map((entity) => ({ type: 'transactions' as const, entity })),
-    ]);
+    ], this);
     const replacements = new Map(
       transactionChanges
         .filter((transaction) => !transaction.deletedAt)
@@ -563,11 +584,11 @@ export class LocalFinanceRepository implements FinanceRepository {
     return rule;
   }
 
-  saveExchangeRate(input: RateInput, id?: string) {
-    return this.enqueueMutation(() => this.saveExchangeRateNow(input, id));
+  saveExchangeRate(input: RateInput, id?: string, expectedRevision?: number) {
+    return this.enqueueMutation(() => this.saveExchangeRateNow(input, id, expectedRevision));
   }
 
-  private async saveExchangeRateNow(input: RateInput, id?: string) {
+  private async saveExchangeRateNow(input: RateInput, id?: string, expectedRevision?: number) {
     const fromCurrency = this.normalizeCurrency(input.fromCurrency);
     const toCurrency = this.normalizeCurrency(input.toCurrency);
     if (fromCurrency === toCurrency) throw new Error('Exchange-rate currencies must be different.');
@@ -579,17 +600,31 @@ export class LocalFinanceRepository implements FinanceRepository {
     );
     if (duplicate) throw new Error('A rate already exists for this currency pair and date.');
     this.assertReciprocalRate(fromCurrency, toCurrency, rate, input.effectiveDate, id);
-    return await this.saveListEntity<ExchangeRate>('exchangeRates', {
+    const existing = this.findExisting(this.state.exchangeRates, id, 'exchange rate');
+    this.assertExpectedRevision(existing, input, expectedRevision);
+    const exchangeRate = existing ? updateEntity(existing, {
       ...input,
       fromCurrency,
       toCurrency,
       rate,
-    }, id);
+    }) : createEntity({
+      id: makeId(),
+      ...input,
+      fromCurrency,
+      toCurrency,
+      rate,
+    }) as ExchangeRate;
+    const exchangeRates = this.withEntity(this.state.exchangeRates, exchangeRate);
+    this.assertTransactionSetSafe(this.state.transactions, this.state.accounts, exchangeRates);
+    await this.persist('exchangeRates', [exchangeRate]);
+    this.replaceInList('exchangeRates', exchangeRate);
+    this.emit();
+    return exchangeRate;
   }
 
-  queryTransactions(query: TransactionQuery = {}) {
+  queryTransactions(query: TransactionQuery = {}, snapshot = this.state.transactions) {
     const normalizedSearch = query.search?.trim().toLocaleLowerCase();
-    let result = this.active(this.state.transactions).filter((transaction) => {
+    let result = this.active(snapshot).filter((transaction) => {
       if (normalizedSearch && !`${transaction.title} ${transaction.note}`.toLocaleLowerCase().includes(normalizedSearch)) return false;
       if (
         query.accountIds?.length &&
@@ -886,7 +921,7 @@ export class LocalFinanceRepository implements FinanceRepository {
       await this.storage.putMany([
         ...transactionChanges.map((entity) => ({ type: 'transactions' as const, entity })),
         ...ruleChanges.map((entity) => ({ type: 'recurringRules' as const, entity })),
-      ]);
+      ], this);
       // Merge into the current state rather than replacing it with the
       // pre-await snapshot, so transactions saved while putMany was in
       // flight are not dropped.
@@ -952,11 +987,13 @@ export class LocalFinanceRepository implements FinanceRepository {
       }
     }
     const updated = candidates.map((item) => updateEntity(item, { categoryId }));
-    await this.persist('transactions', updated);
     const replacements = new Map(updated.map((item) => [item.id, item]));
+    const transactions = this.state.transactions.map((item) => replacements.get(item.id) ?? item);
+    this.assertTransactionSetSafe(transactions);
+    await this.persist('transactions', updated);
     this.state = {
       ...this.state,
-      transactions: this.state.transactions.map((item) => replacements.get(item.id) ?? item),
+      transactions,
     };
     this.emit();
   }
@@ -969,17 +1006,54 @@ export class LocalFinanceRepository implements FinanceRepository {
     if (type === 'ready' || type === 'settings') return;
     const list = this.state[type] as FinanceEntity[];
     const deleted = list.filter((entity) => ids.includes(entity.id)).map((entity) => updateEntity(entity, { deletedAt: nowIso() }));
-    // Deactivate recurring rules that reference a deleted account or category,
-    // mirroring the archive paths in saveAccount/saveCategory, so recurring
-    // generation never trips over a dangling reference.
     const deletedIds = new Set(ids);
-    const rules = type === 'accounts' || type === 'categories'
-      ? this.state.recurringRules
-        .filter((rule) => rule.active && !rule.deletedAt && deletedIds.has(
-          (type === 'accounts' ? rule.template.accountId : rule.template.categoryId) ?? '',
-        ))
-        .map((rule) => updateEntity(rule, { active: false, pausedByDependency: true }))
-      : [];
+
+    // Accounts are part of every ledger entry's identity and cannot be nulled
+    // or reassigned without changing history. Convert deletion of a referenced
+    // account into the same safe archive operation exposed by the UI.
+    if (type === 'accounts') {
+      const referenced = this.state.transactions.some((item) =>
+        deletedIds.has(item.accountId) || Boolean(item.destinationAccountId && deletedIds.has(item.destinationAccountId))) ||
+        this.state.recurringRules.some((item) => deletedIds.has(item.template.accountId)) ||
+        this.state.budgets.some((item) => item.filters.accountIds.some((id) => deletedIds.has(id))) ||
+        this.state.goals.some((item) => Boolean(item.linkedAccountId && deletedIds.has(item.linkedAccountId)));
+      if (referenced) {
+        const archivedAccounts = this.state.accounts
+          .filter((account) => deletedIds.has(account.id))
+          .map((account) => updateEntity(account, { archived: true }));
+        const pausedRules = this.state.recurringRules
+          .filter((rule) => rule.active && deletedIds.has(rule.template.accountId))
+          .map((rule) => updateEntity(rule, { active: false, pausedByDependency: true }));
+        await this.storage.putMany([
+          ...archivedAccounts.map((entity) => ({ type: 'accounts' as const, entity })),
+          ...pausedRules.map((entity) => ({ type: 'recurringRules' as const, entity })),
+        ], this);
+        const accountReplacements = new Map(archivedAccounts.map((account) => [account.id, account]));
+        const ruleReplacements = new Map(pausedRules.map((rule) => [rule.id, rule]));
+        this.state = {
+          ...this.state,
+          accounts: this.state.accounts.map((account) => accountReplacements.get(account.id) ?? account),
+          recurringRules: this.state.recurringRules.map((rule) => ruleReplacements.get(rule.id) ?? rule),
+        };
+        this.emit();
+        return;
+      }
+    }
+
+    const ruleChanges = this.state.recurringRules.flatMap((rule) => {
+      if (type === 'categories' && rule.template.categoryId && deletedIds.has(rule.template.categoryId)) {
+        return [updateEntity(rule, {
+          template: { ...rule.template, categoryId: null },
+          pausedByDependency: false,
+        })];
+      }
+      if (type === 'tags' && rule.template.tagIds.some((id) => deletedIds.has(id))) {
+        return [updateEntity(rule, {
+          template: { ...rule.template, tagIds: rule.template.tagIds.filter((id) => !deletedIds.has(id)) },
+        })];
+      }
+      return [];
+    });
     const contributions = type === 'goals'
       ? this.state.contributions
         .filter((item) => deletedIds.has(item.goalId))
@@ -990,36 +1064,51 @@ export class LocalFinanceRepository implements FinanceRepository {
         .filter((item) => deletedIds.has(item.budgetId))
         .map((item) => updateEntity(item, { deletedAt: nowIso() }))
       : [];
-    // Deleting a transaction must retire the goal contribution it funded,
-    // otherwise the goal keeps counting money that no longer exists.
     const orphanedContributions = type === 'transactions'
       ? this.state.contributions
         .filter((item) => !item.deletedAt && item.transactionId !== null && deletedIds.has(item.transactionId))
         .map((item) => updateEntity(item, { deletedAt: nowIso() }))
       : [];
-    // Deleting a rule must release the transactions it already generated, or they
-    // keep pointing at a rule that is gone.
     const releasedTransactions = type === 'recurringRules'
       ? this.state.transactions
         .filter((item) => !item.deletedAt && item.recurringRuleId !== null && deletedIds.has(item.recurringRuleId))
         .map((item) => updateEntity(item, { recurringRuleId: null }))
       : [];
-    // Deleting a tag must strip it from every transaction. Leaving the id behind
-    // makes the transaction fail its own tag validation the next time the user
-    // saves it — a dead end with no way out from the UI.
     const untaggedTransactions = type === 'tags'
       ? this.state.transactions
         .filter((item) => !item.deletedAt && item.tagIds.some((tagId) => deletedIds.has(tagId)))
         .map((item) => updateEntity(item, { tagIds: item.tagIds.filter((tagId) => !deletedIds.has(tagId)) }))
       : [];
-    // Same dead end as tags, one level up: `buildTransaction` rejects a
-    // categoryId with no matching category, so a transaction left pointing at a
-    // deleted category throws "Choose a valid expense category." on every
-    // subsequent save and cannot be repaired from the UI.
     const uncategorisedTransactions = type === 'categories'
       ? this.state.transactions
         .filter((item) => !item.deletedAt && item.categoryId !== null && deletedIds.has(item.categoryId))
         .map((item) => updateEntity(item, { categoryId: null }))
+      : [];
+    const detachedCategories = type === 'categories'
+      ? this.state.categories
+        .filter((item) => item.parentId !== null && deletedIds.has(item.parentId) && !deletedIds.has(item.id))
+        .map((item) => updateEntity(item, { parentId: null }))
+      : [];
+    const budgetChanges = type === 'categories' || type === 'tags'
+      ? this.state.budgets.flatMap((budget) => {
+        const filters = type === 'categories'
+          ? { ...budget.filters, categoryIds: budget.filters.categoryIds.filter((id) => !deletedIds.has(id)) }
+          : { ...budget.filters, tagIds: budget.filters.tagIds.filter((id) => !deletedIds.has(id)) };
+        const categoryLimits = type === 'categories'
+          ? budget.categoryLimits.filter((limit) => !deletedIds.has(limit.categoryId))
+          : budget.categoryLimits;
+        if (
+          filters.categoryIds.length === budget.filters.categoryIds.length &&
+          filters.tagIds.length === budget.filters.tagIds.length &&
+          categoryLimits.length === budget.categoryLimits.length
+        ) return [];
+        return [updateEntity(budget, { filters, categoryLimits })];
+      })
+      : [];
+    const goalChanges = type === 'categories'
+      ? this.state.goals
+        .filter((goal) => goal.linkedCategoryId !== null && deletedIds.has(goal.linkedCategoryId))
+        .map((goal) => updateEntity(goal, { linkedCategoryId: null }))
       : [];
     const transactionChanges = [...releasedTransactions, ...untaggedTransactions, ...uncategorisedTransactions];
     if (type === 'transactions') {
@@ -1029,24 +1118,27 @@ export class LocalFinanceRepository implements FinanceRepository {
     }
     await this.storage.putMany([
       ...deleted.map((entity) => ({ type: type as EntityType, entity })),
-      ...rules.map((entity) => ({ type: 'recurringRules' as const, entity })),
+      ...ruleChanges.map((entity) => ({ type: 'recurringRules' as const, entity })),
       ...contributions.map((entity) => ({ type: 'contributions' as const, entity })),
       ...orphanedContributions.map((entity) => ({ type: 'contributions' as const, entity })),
       ...budgetPeriods.map((entity) => ({ type: 'budgetPeriods' as const, entity })),
       ...transactionChanges.map((entity) => ({ type: 'transactions' as const, entity })),
-    ]);
+      ...detachedCategories.map((entity) => ({ type: 'categories' as const, entity })),
+      ...budgetChanges.map((entity) => ({ type: 'budgets' as const, entity })),
+      ...goalChanges.map((entity) => ({ type: 'goals' as const, entity })),
+    ], this);
     if (type === 'transactions') {
       deleted.forEach((entity) => {
         const occurrenceKey = (entity as TransactionRecord).occurrenceKey;
         if (occurrenceKey) this.deletedOccurrenceKeys.add(occurrenceKey);
       });
     }
-    const ruleChanges = new Map(rules.map((rule) => [rule.id, rule]));
+    const recurringReplacements = new Map(ruleChanges.map((rule) => [rule.id, rule]));
     const nextState = {
       ...this.state,
       [type]: (this.state[type] as FinanceEntity[]).filter((entity) => !deletedIds.has(entity.id)),
     } as FinanceState;
-    nextState.recurringRules = nextState.recurringRules.map((rule) => ruleChanges.get(rule.id) ?? rule);
+    nextState.recurringRules = nextState.recurringRules.map((rule) => recurringReplacements.get(rule.id) ?? rule);
     if (transactionChanges.length) {
       const edits = new Map(transactionChanges.map((item) => [item.id, item]));
       nextState.transactions = nextState.transactions.map((item) => edits.get(item.id) ?? item);
@@ -1060,6 +1152,18 @@ export class LocalFinanceRepository implements FinanceRepository {
     }
     if (type === 'budgets') {
       nextState.budgetPeriods = nextState.budgetPeriods.filter((item) => !deletedIds.has(item.budgetId));
+    }
+    if (detachedCategories.length) {
+      const replacements = new Map(detachedCategories.map((item) => [item.id, item]));
+      nextState.categories = nextState.categories.map((item) => replacements.get(item.id) ?? item);
+    }
+    if (budgetChanges.length) {
+      const replacements = new Map(budgetChanges.map((item) => [item.id, item]));
+      nextState.budgets = nextState.budgets.map((item) => replacements.get(item.id) ?? item);
+    }
+    if (goalChanges.length) {
+      const replacements = new Map(goalChanges.map((item) => [item.id, item]));
+      nextState.goals = nextState.goals.map((item) => replacements.get(item.id) ?? item);
     }
     this.state = nextState;
     this.emit();
@@ -1109,7 +1213,13 @@ export class LocalFinanceRepository implements FinanceRepository {
           )
           : undefined;
         if (row.category && !category) throw new Error(`Unknown category: ${row.category}`);
-        const tagNames = row.tags.split('|').map((item) => item.trim()).filter(Boolean);
+        const tagNames = [...new Map(
+          row.tags
+            .split('|')
+            .map((item) => item.trim())
+            .filter(Boolean)
+            .map((name) => [name.toLocaleLowerCase(), name]),
+        ).values()];
         const input: TransactionInput = {
           kind: row.type,
           status: row.status,
@@ -1164,7 +1274,7 @@ export class LocalFinanceRepository implements FinanceRepository {
       await this.storage.putMany([
         ...newTags.map((entity) => ({ type: 'tags' as const, entity })),
         ...transactions.map((entity) => ({ type: 'transactions' as const, entity })),
-      ]);
+      ], this);
       // Append only the new tags onto current state; the pre-await `tags`
       // snapshot may be missing tags saved while putMany was in flight.
       this.state = {
@@ -1199,7 +1309,7 @@ export class LocalFinanceRepository implements FinanceRepository {
   private async resetAllDataNow() {
     // Nothing below this line may touch `this.state` until the disk wipe has
     // succeeded, so a failing `clear()` leaves the snapshot intact.
-    await this.storage.clear();
+    await this.storage.clear(this);
     const next = { ...createInitialState(), ready: true };
     this.deletedOccurrenceKeys.clear();
     this.state = next;
@@ -1212,14 +1322,46 @@ export class LocalFinanceRepository implements FinanceRepository {
   }
 
   private enqueueMutation<T>(operation: () => Promise<T>) {
-    const run = this.mutationQueue.then(operation);
+    const run = this.mutationQueue.then(async () => {
+      this.mutationActive = true;
+      try {
+        return await operation();
+      } finally {
+        this.mutationActive = false;
+      }
+    });
     this.mutationQueue = run.then(() => undefined, () => undefined);
     return run;
   }
 
-  private async saveListEntity<T extends FinanceEntity>(type: ListKey, input: Omit<T, keyof import('@/domain/models').SyncEntity>, id?: string) {
+  private async hydrateFromStorage() {
+    const settingsRecords = await this.storage.readAll('settings');
+    const settings = (settingsRecords.find((item) => item.id === 'settings' && !item.deletedAt) ??
+      initialSettings()) as AppSettings;
+    const loaded = await Promise.all(ENTITY_TYPES.map((type) => this.storage.readAll(type)));
+    const loadedTransactions = loaded[ENTITY_TYPES.indexOf('transactions')] as TransactionRecord[];
+    this.deletedOccurrenceKeys = new Set(
+      loadedTransactions
+        .filter((transaction) => transaction.deletedAt && transaction.occurrenceKey)
+        .map((transaction) => transaction.occurrenceKey!),
+    );
+    const next = { ...createInitialState(), settings, ready: true } as FinanceState;
+    ENTITY_TYPES.forEach((type, index) => {
+      (next[type] as FinanceEntity[]) = loaded[index].filter((entity) => !entity.deletedAt);
+    });
+    this.state = next;
+    return settingsRecords;
+  }
+
+  private async saveListEntity<T extends FinanceEntity>(
+    type: ListKey,
+    input: Omit<T, keyof import('@/domain/models').SyncEntity>,
+    id?: string,
+    expectedRevision?: number,
+  ) {
     const list = this.state[type] as T[];
     const existing = this.findExisting(list, id, type.slice(0, -1));
+    this.assertExpectedRevision(existing, input, expectedRevision);
     const entity = existing ? updateEntity(existing, input as Partial<T>) : createEntity<T>({ id: makeId(), ...input } as T);
     await this.persist(type, [entity]);
     this.replaceInList(type, entity);
@@ -1227,13 +1369,19 @@ export class LocalFinanceRepository implements FinanceRepository {
     return entity;
   }
 
-  private buildTransaction(input: TransactionInput, id?: string, additionalTagIds: string[] = []) {
+  private buildTransaction(
+    input: TransactionInput,
+    id?: string,
+    additionalTagIds: string[] = [],
+    expectedRevision?: number,
+  ) {
     this.assertPositiveMinor(input.amountMinor, 'Amount');
     this.assertDate(input.localDate);
     if (!TRANSACTION_TYPES.includes(input.kind)) throw new Error('Choose a valid transaction type.');
     const status = input.status ?? 'posted';
     if (!TRANSACTION_STATUSES.includes(status)) throw new Error('Choose a valid transaction status.');
     const existing = this.findExisting(this.state.transactions, id, 'transaction');
+    this.assertExpectedRevision(existing, input, expectedRevision);
     const account = this.active(this.state.accounts).find((item) => item.id === input.accountId);
     if (!account || (account.archived && existing?.accountId !== account.id)) throw new Error('Choose a valid account.');
     const destination = input.kind === 'transfer' && input.destinationAccountId
@@ -1255,9 +1403,9 @@ export class LocalFinanceRepository implements FinanceRepository {
     ) {
       throw new Error(`Choose a valid ${input.kind} category.`);
     }
-    // The transaction form does not expose tags, so an omitted tagIds field on
-    // update means "leave them unchanged". Callers can still clear every tag by
-    // passing an explicit empty array.
+    // Some callers (for example recurring generation) omit tags when editing,
+    // so omission means "leave them unchanged". Passing an explicit empty
+    // array still clears every tag.
     const tagIds = [...new Set(input.tagIds ?? existing?.tagIds ?? [])];
     const knownTagIds = new Set([...this.state.tags.map((tag) => tag.id), ...additionalTagIds]);
     if (tagIds.some((tagId) => !knownTagIds.has(tagId))) {
@@ -1352,28 +1500,33 @@ export class LocalFinanceRepository implements FinanceRepository {
   }
 
   private async persist(type: EntityType, entities: FinanceEntity[]) {
-    await this.storage.putMany(entities.map((entity) => ({ type, entity }) satisfies StoredEntity));
+    await this.storage.putMany(entities.map((entity) => ({ type, entity }) satisfies StoredEntity), this);
   }
 
   private active<T extends FinanceEntity>(entities: T[]) {
     return entities.filter((entity) => !entity.deletedAt);
   }
 
-  private resolveRate(fromValue: string, toValue: string, localDate: string) {
+  private resolveRate(
+    fromValue: string,
+    toValue: string,
+    localDate: string,
+    exchangeRates = this.state.exchangeRates,
+  ) {
     const fromCurrency = this.normalizeCurrency(fromValue);
     const toCurrency = this.normalizeCurrency(toValue);
     this.assertDate(localDate);
     if (fromCurrency === toCurrency) return '1';
-    const direct = this.directOrInverseRate(fromCurrency, toCurrency, localDate);
+    const direct = this.directOrInverseRate(fromCurrency, toCurrency, localDate, exchangeRates);
     if (direct) return direct;
     const baseCurrency = this.state.settings.baseCurrency;
     if (fromCurrency !== baseCurrency && toCurrency !== baseCurrency) {
-      const fromBase = this.directOrInverseRate(fromCurrency, baseCurrency, localDate);
-      const toBase = this.directOrInverseRate(toCurrency, baseCurrency, localDate);
+      const fromBase = this.directOrInverseRate(fromCurrency, baseCurrency, localDate, exchangeRates);
+      const toBase = this.directOrInverseRate(toCurrency, baseCurrency, localDate, exchangeRates);
       if (fromBase && toBase) return new Decimal(fromBase).div(toBase).toSignificantDigits(20).toString();
     }
     if (fromCurrency === baseCurrency) {
-      const toBase = this.directOrInverseRate(toCurrency, baseCurrency, localDate);
+      const toBase = this.directOrInverseRate(toCurrency, baseCurrency, localDate, exchangeRates);
       if (toBase) return new Decimal(1).div(toBase).toSignificantDigits(20).toString();
     }
     throw new Error(`Missing exchange rate for ${fromCurrency} → ${toCurrency} on ${localDate}.`);
@@ -1418,16 +1571,26 @@ export class LocalFinanceRepository implements FinanceRepository {
     }
   }
 
-  private directOrInverseRate(fromCurrency: string, toCurrency: string, localDate: string) {
-    const direct = this.latestRate(fromCurrency, toCurrency, localDate);
+  private directOrInverseRate(
+    fromCurrency: string,
+    toCurrency: string,
+    localDate: string,
+    exchangeRates = this.state.exchangeRates,
+  ) {
+    const direct = this.latestRate(fromCurrency, toCurrency, localDate, exchangeRates);
     if (direct) return this.normalizeRate(direct.rate);
-    const inverse = this.latestRate(toCurrency, fromCurrency, localDate);
+    const inverse = this.latestRate(toCurrency, fromCurrency, localDate, exchangeRates);
     if (!inverse) return null;
     return new Decimal(1).div(this.normalizeRate(inverse.rate)).toSignificantDigits(20).toString();
   }
 
-  private latestRate(fromCurrency: string, toCurrency: string, localDate: string) {
-    return this.active(this.state.exchangeRates)
+  private latestRate(
+    fromCurrency: string,
+    toCurrency: string,
+    localDate: string,
+    exchangeRates = this.state.exchangeRates,
+  ) {
+    return this.active(exchangeRates)
       .filter((item) => item.fromCurrency === fromCurrency && item.toCurrency === toCurrency && item.effectiveDate <= localDate)
       .sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate) || b.updatedAt.localeCompare(a.updatedAt))[0];
   }
@@ -1439,13 +1602,40 @@ export class LocalFinanceRepository implements FinanceRepository {
   // debt is a meaningful signal, ten is noise.
   private clampRollover(rolloverMinor: number, limitMinor: number) {
     const floor = -Math.abs(limitMinor);
-    return rolloverMinor < floor ? floor : rolloverMinor;
+    const ceiling = Number.MAX_SAFE_INTEGER - limitMinor;
+    return Math.max(floor, Math.min(ceiling, rolloverMinor));
+  }
+
+  private categoryMatches(categoryId: string | null, selectedIds: string[]) {
+    if (!categoryId) return false;
+    const selected = new Set(selectedIds);
+    let currentId: string | null = categoryId;
+    const visited = new Set<string>();
+    while (currentId && !visited.has(currentId)) {
+      if (selected.has(currentId)) return true;
+      visited.add(currentId);
+      currentId = this.state.categories.find((category) => category.id === currentId)?.parentId ?? null;
+    }
+    return false;
+  }
+
+  private assertBudgetSetSafe(budgets: Budget[]) {
+    const maximumEffectiveLimits = this.active(budgets)
+      .filter((budget) => !budget.archived)
+      .map((budget) => budget.rollover
+        ? addMinor(
+          budget.limitMinor,
+          Math.min(budget.limitMinor, Number.MAX_SAFE_INTEGER - budget.limitMinor),
+          `${budget.name} maximum effective limit`,
+        )
+        : budget.limitMinor);
+    sumMinor(maximumEffectiveLimits, 'Budget limit total');
   }
 
   private budgetSpend(filters: BudgetFilters, fromDate: string, toDate: string) {
     return sumMinor(this.queryTransactions({ fromDate, toDate, statuses: ['posted'], kinds: ['expense'] })
       .filter((item) => !filters.accountIds.length || filters.accountIds.includes(item.accountId))
-      .filter((item) => !filters.categoryIds.length || (!!item.categoryId && filters.categoryIds.includes(item.categoryId)))
+      .filter((item) => !filters.categoryIds.length || this.categoryMatches(item.categoryId, filters.categoryIds))
       .filter((item) => !filters.tagIds.length || filters.tagIds.some((id) => item.tagIds.includes(id)))
       .map((item) => item.baseAmountMinor), 'Budget spending');
   }
@@ -1677,7 +1867,7 @@ export class LocalFinanceRepository implements FinanceRepository {
       ...recurringRuleUpdates.map((entity) => ({ type: 'recurringRules' as const, entity })),
     ];
     if (!records.length) return;
-    await this.storage.putMany(records);
+    await this.storage.putMany(records, this);
     const transactionReplacements = new Map(transactionUpdates.map((entity) => [entity.id, entity]));
     const recurringRuleReplacements = new Map(recurringRuleUpdates.map((entity) => [entity.id, entity]));
     this.state = {
@@ -1769,6 +1959,49 @@ export class LocalFinanceRepository implements FinanceRepository {
       (!rule.endDate || rule.nextDueDate <= rule.endDate);
   }
 
+  private assertRecurringRuleGenerationSafe(
+    rule: RecurringRule,
+    currentTransactions: TransactionRecord[],
+    horizonDate: string,
+  ) {
+    if (!rule.active) return;
+    const today = todayLocal();
+    const transactions = currentTransactions.map((transaction) =>
+      rule.autoPost &&
+      transaction.recurringRuleId === rule.id &&
+      transaction.status === 'upcoming' &&
+      transaction.localDate <= today
+        ? updateEntity(transaction, { status: 'posted' })
+        : transaction,
+    );
+    let due = rule.nextDueDate;
+    let guard = 0;
+    while (due <= horizonDate && guard < MAX_RECURRING_OCCURRENCES_PER_RUN) {
+      guard += 1;
+      if (rule.endDate && due > rule.endDate) break;
+      const occurrenceKey = `${rule.id}:${due}`;
+      if (
+        !this.deletedOccurrenceKeys.has(occurrenceKey) &&
+        !transactions.some((transaction) => transaction.occurrenceKey === occurrenceKey)
+      ) {
+        transactions.push(this.buildTransaction({
+          ...rule.template,
+          localDate: due,
+          status: rule.autoPost && due <= today ? 'posted' : 'upcoming',
+          recurringRuleId: rule.id,
+          occurrenceKey,
+        }));
+      }
+      const nextDue = addRecurrence(due, rule.unit, Math.max(1, rule.interval), rule.startDate);
+      if (nextDue <= due) throw new Error('Recurring schedule did not advance.');
+      due = nextDue;
+    }
+    if (guard >= MAX_RECURRING_OCCURRENCES_PER_RUN && due <= horizonDate) {
+      throw new Error('Recurring schedule has too many occurrences to generate in one run.');
+    }
+    this.assertTransactionSetSafe(transactions);
+  }
+
   private calculateGoalProgress(
     goalId: string,
     goals: Goal[],
@@ -1779,7 +2012,12 @@ export class LocalFinanceRepository implements FinanceRepository {
     if (!goal) throw new Error('Choose a valid goal.');
     const manual = sumMinor(
       contributions
-        .filter((item) => item.goalId === goal.id && !item.deletedAt)
+        .filter((item) => {
+          if (item.goalId !== goal.id || item.deletedAt) return false;
+          if (!item.transactionId) return true;
+          const transaction = transactions.find((candidate) => candidate.id === item.transactionId);
+          return Boolean(transaction && !transaction.deletedAt && transaction.status === 'posted');
+        })
         .map((item) => item.amountMinor),
       `${goal.name} contributions`,
     );
@@ -1789,7 +2027,7 @@ export class LocalFinanceRepository implements FinanceRepository {
     let linked = 0;
     for (const item of transactions) {
       if (item.deletedAt || item.status !== 'posted') continue;
-      if (goal.linkedCategoryId && item.categoryId !== goal.linkedCategoryId) continue;
+      if (goal.linkedCategoryId && !this.categoryMatches(item.categoryId, [goal.linkedCategoryId])) continue;
       if (goal.kind === 'spending') {
         if (item.kind !== 'expense') continue;
         if (goal.linkedAccountId && item.accountId !== goal.linkedAccountId) continue;
@@ -1833,6 +2071,7 @@ export class LocalFinanceRepository implements FinanceRepository {
   private assertTransactionSetSafe(
     transactions: TransactionRecord[],
     accounts = this.state.accounts,
+    exchangeRates = this.state.exchangeRates,
   ) {
     const posted = transactions.filter((item) => !item.deletedAt && item.status === 'posted');
     const balances = new Map<string, number>();
@@ -1876,6 +2115,7 @@ export class LocalFinanceRepository implements FinanceRepository {
           account.currency,
           this.state.settings.baseCurrency,
           todayLocal(),
+          exchangeRates,
         );
       } catch {
         continue;
@@ -1919,7 +2159,7 @@ export class LocalFinanceRepository implements FinanceRepository {
       transaction.categoryId,
       transaction.title.trim().toLocaleLowerCase(),
       transaction.note.trim().toLocaleLowerCase(),
-      [...tagNames].map((name) => name.toLocaleLowerCase()).sort(),
+      [...new Set(tagNames.map((name) => name.trim().toLocaleLowerCase()))].sort(),
       transaction.exchangeRate,
     ]);
   }
@@ -1929,6 +2169,17 @@ export class LocalFinanceRepository implements FinanceRepository {
     const existing = entities.find((item) => item.id === id);
     if (!existing) throw new Error(`Could not find the ${label} to update.`);
     return existing;
+  }
+
+  private assertExpectedRevision(
+    existing: FinanceEntity | undefined,
+    _input: object,
+    expectedRevision?: number,
+  ) {
+    if (!existing) return;
+    if (expectedRevision !== undefined && expectedRevision !== existing.revision) {
+      throw new Error('This record changed in another window. Reopen it and try again.');
+    }
   }
 
   private assertUniqueName(type: 'accounts' | 'categories' | 'tags', name: string, id?: string) {

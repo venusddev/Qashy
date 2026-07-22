@@ -43,12 +43,12 @@ export function TransactionRow({
       : isIncome
         ? theme.positive
         : theme.text;
-  const direction = isTransfer ? 'Transfer, money moved' : isIncome ? 'Income, money in' : 'Expense, money out';
-  const signedAmount = `${isIncome ? 'plus ' : isTransfer ? '' : 'minus '}${formatMoney(transaction.amountMinor, transaction.currency, settings.locale)}`;
+  const direction = t(isTransfer ? 'Transfer, money moved' : isIncome ? 'Income, money in' : 'Expense, money out');
+  const signedAmount = `${isIncome ? `${t('plus')} ` : isTransfer ? '' : `${t('minus')} `}${formatMoney(transaction.amountMinor, transaction.currency, settings.locale)}`;
   const accountContext = isTransfer
-    ? `${account?.name ?? 'Unknown account'} to ${destination?.name ?? 'Unknown account'}`
-    : account?.name ?? 'Unknown account';
-  const rowLabel = `${direction}, ${transaction.title}, ${signedAmount}, ${category?.name ?? (isTransfer ? 'transfer' : 'uncategorized')}, ${accountContext}, ${transaction.localDate}`;
+    ? `${account?.name ?? t('Unknown account')} ${t('into')} ${destination?.name ?? t('Unknown account')}`
+    : account?.name ?? t('Unknown account');
+  const rowLabel = `${direction}, ${transaction.title}, ${signedAmount}, ${category?.name ?? t(isTransfer ? 'Transfer' : 'Uncategorized')}, ${accountContext}, ${transaction.localDate}`;
   // The fallbacks are the only translatable parts of the caption, so they are
   // resolved here and the whole line renders verbatim. Otherwise a category or
   // account the user named "Savings" would be rewritten by the dictionary.
@@ -58,10 +58,10 @@ export function TransactionRow({
 
   return (
     <MotionPressable
-      accessibilityActions={!selectionMode && onLongPress ? [{ name: 'longpress', label: 'Select transaction' }] : undefined}
-      accessibilityHint={!selectionMode && onLongPress ? 'Long press to select this transaction for batch actions.' : undefined}
+      accessibilityActions={!selectionMode && onLongPress ? [{ name: 'longpress', label: t('Select transaction') }] : undefined}
+      accessibilityHint={!selectionMode && onLongPress ? t('Long press to select this transaction for batch actions.') : undefined}
       accessibilityRole={selectionMode ? 'checkbox' : 'button'}
-      accessibilityLabel={selectionMode ? `${rowLabel}, ${selected ? 'selected' : 'not selected'}` : rowLabel}
+      accessibilityLabel={selectionMode ? `${rowLabel}, ${t(selected ? 'selected' : 'not selected')}` : rowLabel}
       accessibilityState={selectionMode ? { checked: selected } : undefined}
       aria-checked={selectionMode ? selected : undefined}
       onAccessibilityAction={(event) => {

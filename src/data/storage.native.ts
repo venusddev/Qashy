@@ -11,6 +11,7 @@ const DATABASE_VERSION = 1;
 
 export class PlatformStorageAdapter implements StorageAdapter {
   private database: SQLiteDatabase | null = null;
+  private listeners = new Set<(source?: object) => void>();
 
   async initialize() {
     this.database = await openDatabaseAsync('qashy.db');
@@ -41,7 +42,7 @@ export class PlatformStorageAdapter implements StorageAdapter {
       .sort(compareStoredEntities);
   }
 
-  async putMany(records: StoredEntity[]) {
+  async putMany(records: StoredEntity[], source?: object) {
     if (!records.length) return;
     const database = this.getDatabase();
     await database.withExclusiveTransactionAsync(async (transaction) => {
@@ -62,10 +63,17 @@ export class PlatformStorageAdapter implements StorageAdapter {
         );
       }
     });
+    this.listeners.forEach((listener) => listener(source));
   }
 
-  async clear() {
+  async clear(source?: object) {
     await this.getDatabase().runAsync('DELETE FROM records');
+    this.listeners.forEach((listener) => listener(source));
+  }
+
+  subscribe(listener: (source?: object) => void) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   private getDatabase() {

@@ -25,6 +25,7 @@ export function AccountFormScreen() {
   const state = useFinanceState();
   const theme = useQashyTheme();
   const existing = id ? state.accounts.find((item) => item.id === id) : undefined;
+  const [expectedRevision] = useState(existing?.revision);
   const [name, setName] = useState(existing?.name ?? '');
   const [type, setType] = useState<AccountType>(existing?.type ?? 'checking');
   const [currency, setCurrency] = useState(existing?.currency ?? state.settings.baseCurrency);
@@ -59,7 +60,7 @@ export function AccountFormScreen() {
     if (busy || !canSave) return;
     setBusy(true);
     try {
-      await repository.saveAccount({ name: name.trim() || 'Account', type, currency: currency.toUpperCase(), openingBalanceMinor: parseMoney(opening, currency, state.settings.locale), icon: 'wallet.bifold', color, archived: false }, existing?.id);
+      await repository.saveAccount({ name: name.trim() || 'Account', type, currency: currency.toUpperCase(), openingBalanceMinor: parseMoney(opening, currency, state.settings.locale), icon: 'wallet.bifold', color, archived: false }, existing?.id, expectedRevision);
       hapticSuccess();
       if (!existing && returnTo === '/transaction' && router.canGoBack()) router.back();
       else router.dismissTo('/more');
@@ -75,7 +76,7 @@ export function AccountFormScreen() {
     if (!(await confirmDestructive({ title: `Archive ${existing.name}?`, message: 'The account is hidden from lists and pickers. You can restore it from the Archived section in More.', confirmLabel: 'Archive' }))) return;
     setBusy(true);
     try {
-      await repository.saveAccount({ ...existing, archived: true }, existing.id);
+      await repository.saveAccount({ ...existing, archived: true }, existing.id, expectedRevision);
       router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t archive account', errorMessage(reason, 'Try again.'));

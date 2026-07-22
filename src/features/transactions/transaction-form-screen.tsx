@@ -10,6 +10,7 @@ import { FormField } from '@/components/ui/form-field';
 import { FormScreen } from '@/components/ui/form-screen';
 import { TextButton } from '@/components/ui/text-button';
 import type { TransactionKind } from '@/domain/models';
+import { useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
@@ -32,7 +33,9 @@ export function TransactionFormScreen() {
   const repository = useFinanceRepository();
   const state = useFinanceState();
   const theme = useQashyTheme();
+  const { t } = useLocalization();
   const existing = id ? state.transactions.find((item) => item.id === id) : undefined;
+  const [expectedRevision] = useState(existing?.revision);
   const defaultAccount = state.accounts.find((item) => !item.archived);
   const [kind, setKind] = useState<TransactionKind>(existing?.kind ?? 'expense');
   const [title, setTitle] = useState(existing?.title ?? '');
@@ -43,6 +46,7 @@ export function TransactionFormScreen() {
   const [accountId, setAccountId] = useState(existing?.accountId ?? defaultAccount?.id ?? '');
   const [destinationAccountId, setDestinationAccountId] = useState(existing?.destinationAccountId ?? '');
   const [categoryId, setCategoryId] = useState(existing?.categoryId ?? '');
+  const [tagIds, setTagIds] = useState(existing?.tagIds ?? []);
   const [note, setNote] = useState(existing?.note ?? '');
   const [exchangeRate, setExchangeRate] = useState(() => existing?.exchangeRate
     ? localizeDecimalString(existing.exchangeRate, state.settings.locale)
@@ -104,6 +108,11 @@ export function TransactionFormScreen() {
     && !exchangeRateError
     && !destinationError;
   const ownerRoute = returnTo === '/overview' ? '/overview' as const : '/transactions' as const;
+  const toggleTag = (tagId: string) => {
+    setTagIds((current) => current.includes(tagId)
+      ? current.filter((item) => item !== tagId)
+      : [...current, tagId]);
+  };
   const closeToOwner = () => {
     router.dismissTo(ownerRoute);
     if (process.env.EXPO_OS === 'web' && typeof window !== 'undefined') {
@@ -129,12 +138,13 @@ export function TransactionFormScreen() {
           ? parseMoney(destinationAmount, destinationAccount.currency, state.settings.locale)
           : null,
         categoryId: kind === 'transfer' ? null : categoryId || null,
+        tagIds,
         amountMinor: parseMoney(amount, account.currency, state.settings.locale),
         exchangeRate: needsRate && exchangeRate.trim()
           ? normalizeDecimalString(exchangeRate, state.settings.locale)
           : undefined,
         status: existing?.status ?? 'posted',
-      }, existing?.id);
+      }, existing?.id, expectedRevision);
       hapticSuccess();
       closeToOwner();
     } catch (reason) {
@@ -164,7 +174,7 @@ export function TransactionFormScreen() {
 
   return (
     <FormScreen>
-      <View accessibilityLabel="Transaction kind" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>
+      <View accessibilityLabel={t('Transaction kind')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>
         {(['expense', 'income', 'transfer'] as TransactionKind[]).map((item) => (
           <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => {
             if (item === kind) return;
@@ -192,7 +202,7 @@ export function TransactionFormScreen() {
 
       <Card style={{ gap: 14 }}>
         <AppText variant="label">From account</AppText>
-        <View accessibilityLabel="From account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+        <View accessibilityLabel={t('From account')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
           {accountChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name} · ${item.currency}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={accountId === item.id} onPress={() => {
             if (item.id === accountId) return;
             setAccountId(item.id);
@@ -205,7 +215,7 @@ export function TransactionFormScreen() {
           <>
             <AppText variant="label">To account</AppText>
             {destinationChoices.length ? (
-              <View accessibilityLabel="To account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              <View accessibilityLabel={t('To account')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                 {destinationChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name} · ${item.currency}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={destinationAccountId === item.id} onPress={() => {
                   if (item.id === destinationAccountId) return;
                   setDestinationAccountId(item.id);
@@ -241,13 +251,22 @@ export function TransactionFormScreen() {
         ) : (
           <>
             <AppText variant="label">Category</AppText>
-            <View accessibilityLabel="Category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            <View accessibilityLabel={t('Category')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               <ChoiceChip label="Uncategorized" selected={!categoryId} onPress={() => setCategoryId('')} />
               {categories.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}
             </View>
           </>
         )}
       </Card>
+
+      {state.tags.length && kind !== 'transfer' ? (
+        <Card style={{ gap: 14 }}>
+          <AppText variant="label">Tags</AppText>
+          <View accessibilityLabel={t('Transaction tags')} role="group" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            {state.tags.map((tag) => <ChoiceChip mode="checkbox" key={tag.id} literal label={tag.name} selected={tagIds.includes(tag.id)} onPress={() => toggleTag(tag.id)} />)}
+          </View>
+        </Card>
+      ) : null}
 
       {needsRate ? (
         <Card><FormField label={`1 ${account.currency} equals how many ${state.settings.baseCurrency}?`} value={exchangeRate} onChangeText={setExchangeRate} keyboardType="decimal-pad" placeholder="Use saved effective rate" error={exchangeRateError} hint="Leave blank to use the saved rate for this date. The applied rate is snapshotted." /></Card>

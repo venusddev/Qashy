@@ -29,6 +29,7 @@ export function RecurringFormScreen() {
   const theme = useQashyTheme();
   const { t } = useLocalization();
   const existing = params.id ? state.recurringRules.find((item) => item.id === params.id) : undefined;
+  const [expectedRevision] = useState(existing?.revision);
   const initialAccount = state.accounts.find((item) => item.id === (existing?.template.accountId ?? params.accountId))
     ?? state.accounts.find((item) => !item.archived);
   const [kind, setKind] = useState<CategoryKind>(existing?.template.kind ?? params.kind ?? 'expense');
@@ -43,6 +44,7 @@ export function RecurringFormScreen() {
   const [startDate, setStartDate] = useState(existing?.startDate ?? todayLocal());
   const [endDate, setEndDate] = useState(existing?.endDate ?? '');
   const [autoPost, setAutoPost] = useState(existing?.autoPost ?? false);
+  const [active, setActive] = useState(existing?.active ?? true);
   const [busy, setBusy] = useState(false);
   const account = state.accounts.find((item) => item.id === accountId) ?? initialAccount;
   const accountChoices = state.accounts.filter((item) => !item.archived || item.id === accountId);
@@ -91,8 +93,8 @@ export function RecurringFormScreen() {
         endDate: normalizedEndDate,
         nextDueDate: existing?.nextDueDate ?? startDate,
         autoPost,
-        active: true,
-      }, existing?.id);
+        active,
+      }, existing?.id, expectedRevision);
       hapticSuccess();
       router.dismissTo('/more');
     } catch (reason) {
@@ -121,7 +123,7 @@ export function RecurringFormScreen() {
   return (
     <FormScreen contentContainerStyle={{ gap: 16, paddingBottom: 40 }}>
       <Card style={{ gap: 16 }}>
-        <View accessibilityLabel="Recurring transaction kind" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>{(['expense', 'income'] as CategoryKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => {
+        <View accessibilityLabel={t('Recurring transaction kind')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>{(['expense', 'income'] as CategoryKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => {
           if (item === kind) return;
           setKind(item);
           setCategoryId('');
@@ -129,14 +131,17 @@ export function RecurringFormScreen() {
         <FormField label="Title" value={title} onChangeText={setTitle} placeholder="Rent, salary, subscription…" />
         <FormField label={`Amount (${account?.currency ?? state.settings.baseCurrency})`} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" error={amountError} required />
         <AppText variant="label">Account</AppText>
-        <View accessibilityLabel="Recurring account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{accountChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={accountId === item.id} onPress={() => setAccountId(item.id)} />)}</View>
+        <View accessibilityLabel={t('Recurring account')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{accountChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ` (${t('Archived')})` : ''}`} disabled={item.archived} selected={accountId === item.id} onPress={() => setAccountId(item.id)} />)}</View>
         <AppText variant="label">Category</AppText>
-        <View accessibilityLabel="Recurring category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{categories.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}</View>
+        <View accessibilityLabel={t('Recurring category')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+          <ChoiceChip label="Uncategorized" selected={!categoryId} onPress={() => setCategoryId('')} />
+          {categories.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ` (${t('Archived')})` : ''}`} disabled={item.archived} selected={categoryId === item.id} onPress={() => setCategoryId(item.id)} />)}
+        </View>
         <FormField label="Note" value={note} onChangeText={setNote} placeholder="Optional context" multiline style={{ minHeight: 92, textAlignVertical: 'top' }} />
         {state.tags.length ? (
           <>
             <AppText variant="label">Tags</AppText>
-            <View accessibilityLabel="Recurring tags" role="group" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            <View accessibilityLabel={t('Recurring tags')} role="group" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               {state.tags.map((tag) => <ChoiceChip mode="checkbox" key={tag.id} literal label={tag.name} selected={tagIds.includes(tag.id)} onPress={() => toggleTag(tag.id)} />)}
             </View>
           </>
@@ -146,13 +151,17 @@ export function RecurringFormScreen() {
 
       <Card style={{ gap: 16 }}>
         <AppText variant="label">Repeats</AppText>
-        <View accessibilityLabel="Recurrence period" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{(['day', 'week', 'month', 'year'] as RecurrenceUnit[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={unit === item} onPress={() => setUnit(item)} />)}</View>
+        <View accessibilityLabel={t('Recurrence period')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{(['day', 'week', 'month', 'year'] as RecurrenceUnit[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={unit === item} onPress={() => setUnit(item)} />)}</View>
         <FormField label="Every" value={interval} onChangeText={setInterval} keyboardType="number-pad" error={intervalError} hint={`Every ${interval || '1'} ${unit}${Number(interval) === 1 ? '' : 's'}.`} required />
         <FormField label="Starts" value={startDate} onChangeText={setStartDate} placeholder="YYYY-MM-DD" error={startDateError} required />
         <FormField label="Ends (optional)" value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD" error={endDateError} />
         <View style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
           <View style={{ flex: 1, gap: 2 }}><AppText variant="label">Post automatically</AppText><AppText variant="caption" muted>Off by default. Upcoming items wait for your review.</AppText></View>
-          <Switch value={autoPost} onValueChange={setAutoPost} trackColor={{ true: theme.accent }} />
+          <Switch accessibilityLabel={t('Post automatically')} value={autoPost} onValueChange={setAutoPost} trackColor={{ true: theme.accent }} />
+        </View>
+        <View style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
+          <View style={{ flex: 1, gap: 2 }}><AppText variant="label">Schedule active</AppText><AppText variant="caption" muted>Pause without deleting this schedule.</AppText></View>
+          <Switch accessibilityLabel={t('Schedule active')} value={active} onValueChange={setActive} disabled={referencesArchivedEntity} trackColor={{ true: theme.accent }} />
         </View>
       </Card>
 

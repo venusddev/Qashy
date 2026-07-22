@@ -20,6 +20,8 @@ export function compareStoredEntities(first: FinanceEntity, second: FinanceEntit
 export interface StorageAdapter {
   initialize(): Promise<void>;
   readAll(type: EntityType): Promise<FinanceEntity[]>;
-  putMany(records: StoredEntity[]): Promise<void>;
-  clear(): Promise<void>;
+  putMany(records: StoredEntity[], source?: object): Promise<void>;
+  clear(source?: object): Promise<void>;
+  /** Notifies repository instances after this local store changes. */
+  subscribe?(listener: (source?: object) => void): () => void;
 }

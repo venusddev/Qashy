@@ -35,14 +35,23 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const reconcile = () => {
-      if (financeRepository.getSnapshot().ready) financeRepository.generateRecurring().catch(() => undefined);
+      if (!financeRepository.getSnapshot().ready) return;
+      financeRepository.refresh()
+        .then(() => financeRepository.generateRecurring())
+        .catch(() => undefined);
     };
-    if (process.env.EXPO_OS === 'web' && typeof document !== 'undefined') {
+    if (typeof document !== 'undefined') {
       const onVisibilityChange = () => {
         if (document.visibilityState === 'visible') reconcile();
       };
       document.addEventListener('visibilitychange', onVisibilityChange);
-      return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+      globalThis.addEventListener('focus', reconcile);
+      globalThis.addEventListener('pageshow', reconcile);
+      return () => {
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+        globalThis.removeEventListener('focus', reconcile);
+        globalThis.removeEventListener('pageshow', reconcile);
+      };
     }
     let previousState = AppState.currentState;
     const subscription = AppState.addEventListener('change', (nextState) => {

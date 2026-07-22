@@ -24,6 +24,7 @@ export function ExchangeRateScreen() {
   const repository = useFinanceRepository();
   const state = useFinanceState();
   const existing = id ? state.exchangeRates.find((item) => item.id === id) : undefined;
+  const [expectedRevision] = useState(existing?.revision);
   const [fromCurrency, setFromCurrency] = useState(existing?.fromCurrency ?? 'EUR');
   const [rate, setRate] = useState(() => existing?.rate
     ? localizeDecimalString(existing.rate, state.settings.locale)
@@ -46,7 +47,7 @@ export function ExchangeRateScreen() {
         toCurrency: state.settings.baseCurrency,
         rate: normalizeDecimalString(rate, state.settings.locale),
         effectiveDate,
-      }, existing?.id);
+      }, existing?.id, expectedRevision);
       hapticSuccess();
       router.dismissTo('/more');
     } catch (reason) {

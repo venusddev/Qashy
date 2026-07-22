@@ -38,34 +38,17 @@ export function TransactionsScreen() {
   const { visibility: fabVisibility, onScroll } = useScrollHide();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
-  // Optimistic overlays for batch mutations: context updates from the
-  // repository don't always reach an already-mounted screen on web, so the
-  // list applies the change locally, then drops the overlay as soon as a
-  // fresh transactions snapshot arrives (keeping it from masking later edits).
-  const [categoryOverrides, setCategoryOverrides] = useState<Record<string, string | null>>({});
-  const [hiddenIds, setHiddenIds] = useState<string[]>([]);
-  const [seenTransactions, setSeenTransactions] = useState(state.transactions);
-  if (seenTransactions !== state.transactions) {
-    setSeenTransactions(state.transactions);
-    if (Object.keys(categoryOverrides).length) setCategoryOverrides({});
-    if (hiddenIds.length) setHiddenIds([]);
-  }
   const selectedTransactions = state.transactions.filter((item) => selectedIds.includes(item.id));
   const hasSelectedTransfers = selectedTransactions.some((item) => item.kind === 'transfer');
   const selectedKinds = [...new Set(selectedTransactions
     .filter((item) => item.kind !== 'transfer')
     .map((item) => item.kind))];
   const compatibleCategoryKind = selectedKinds.length === 1 ? selectedKinds[0] : null;
-  const transactions = useMemo(() => {
-    void state.transactions;
-    return repository.queryTransactions({
+  const transactions = repository.queryTransactions({
       search,
       kinds: kind !== 'all' && kind !== 'upcoming' ? [kind] : undefined,
       statuses: kind === 'upcoming' ? ['upcoming'] : kind === 'all' ? ['posted', 'upcoming'] : ['posted'],
-    })
-      .filter((item) => !hiddenIds.includes(item.id))
-      .map((item) => Object.hasOwn(categoryOverrides, item.id) ? { ...item, categoryId: categoryOverrides[item.id] } : item);
-  }, [repository, state.transactions, categoryOverrides, hiddenIds, search, kind]);
+    }, state.transactions);
   const sections = useMemo(() => {
     const groups = new Map<string, typeof transactions>();
     transactions.forEach((transaction) => {
@@ -86,10 +69,6 @@ export function TransactionsScreen() {
     try {
       await repository.updateTransactionsCategory(ids, categoryId);
       hapticSuccess();
-      setCategoryOverrides((current) => ({
-        ...current,
-        ...Object.fromEntries(ids.map((id) => [id, categoryId])),
-      }));
       setSelectedIds([]);
       setSelectionMode(false);
     } catch (reason) {
@@ -103,7 +82,6 @@ export function TransactionsScreen() {
     try {
       await repository.deleteEntities('transactions', ids);
       hapticSuccess();
-      setHiddenIds((current) => [...new Set([...current, ...ids])]);
       setSelectedIds([]);
       setSelectionMode(false);
     } catch (reason) {
@@ -121,7 +99,7 @@ export function TransactionsScreen() {
       style={{ flex: 1, backgroundColor: theme.background }}
       contentContainerStyle={[screenContentMetrics(width, insets), { gap: 8 }]}
       sections={sections}
-      extraData={`${selectedIds.join(',')}|${JSON.stringify(categoryOverrides)}|${hiddenIds.join(',')}|${repository.getSnapshot().transactions.map((item) => `${item.id}:${item.revision}`).join(',')}`}
+      extraData={`${selectedIds.join(',')}|${state.transactions.map((item) => `${item.id}:${item.revision}`).join(',')}`}
       keyExtractor={(item) => `${item.id}:${item.revision}`}
       stickySectionHeadersEnabled={false}
       ListHeaderComponent={

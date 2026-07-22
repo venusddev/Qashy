@@ -35,6 +35,7 @@ export function CategoryFormScreen() {
   const repository = useFinanceRepository();
   const state = useFinanceState();
   const existing = id ? state.categories.find((item) => item.id === id) : undefined;
+  const [expectedRevision] = useState(existing?.revision);
   const [name, setName] = useState(existing?.name ?? '');
   const [kind, setKind] = useState<CategoryKind>(existing?.kind ?? 'expense');
   const [color, setColor] = useState(existing?.color ?? COLORS[0]);
@@ -47,7 +48,8 @@ export function CategoryFormScreen() {
     state.transactions.some((item) => item.categoryId === existing.id) ||
     state.recurringRules.some((item) => item.template.categoryId === existing.id) ||
     state.budgets.some((item) => item.filters.categoryIds.includes(existing.id)) ||
-    state.goals.some((item) => item.linkedCategoryId === existing.id)
+    state.goals.some((item) => item.linkedCategoryId === existing.id) ||
+    state.categories.some((item) => item.parentId === existing.id)
   );
   const parentChoices = state.categories.filter((item) =>
     (!item.archived || item.id === parentId) &&
@@ -62,7 +64,7 @@ export function CategoryFormScreen() {
     if (busy) return;
     setBusy(true);
     try {
-      await repository.saveCategory({ name: name.trim() || 'Category', kind, color, icon, parentId: selectedParentId || null, archived: false }, existing?.id);
+      await repository.saveCategory({ name: name.trim() || 'Category', kind, color, icon, parentId: selectedParentId || null, archived: false }, existing?.id, expectedRevision);
       hapticSuccess();
       router.dismissTo('/more');
     } catch (reason) {
@@ -77,7 +79,7 @@ export function CategoryFormScreen() {
     if (!(await confirmDestructive({ title: `Archive ${existing.name}?`, message: 'The category is hidden from lists and pickers. You can restore it from the Archived section in More.', confirmLabel: 'Archive' }))) return;
     setBusy(true);
     try {
-      await repository.saveCategory({ ...existing, archived: true }, existing.id);
+      await repository.saveCategory({ ...existing, archived: true }, existing.id, expectedRevision);
       router.dismissTo('/more');
     } catch (reason) {
       showError('Couldn’t archive category', errorMessage(reason, 'Try again.'));

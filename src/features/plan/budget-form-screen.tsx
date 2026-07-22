@@ -28,10 +28,12 @@ export function BudgetFormScreen() {
     ? 'הוצאות יומיומיות'
     : 'Everyday spending';
   const existing = id ? state.budgets.find((item) => item.id === id) : undefined;
+  const [expectedRevision] = useState(existing?.revision);
   const toMoneyText = (minor: number) => minorToLocalizedDecimalString(minor, state.settings.baseCurrency, state.settings.locale);
   const [name, setName] = useState(existing?.name ?? defaultBudgetName);
   const [limit, setLimit] = useState(existing ? toMoneyText(existing.limitMinor) : '1000');
   const [unit, setUnit] = useState<PeriodUnit>(existing?.period.unit ?? 'month');
+  const [startDate, setStartDate] = useState(existing?.period.anchorDate ?? todayLocal());
   const [endDate, setEndDate] = useState(existing?.period.endDate ?? todayLocal());
   const [rollover, setRollover] = useState(existing?.rollover ?? false);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(existing?.filters.categoryIds ?? []);
@@ -41,11 +43,14 @@ export function BudgetFormScreen() {
     item.kind === 'expense' &&
     (!item.archived || selectedCategories.includes(item.id)),
   );
-  const anchorDate = existing?.period.anchorDate ?? todayLocal();
+  const anchorDate = unit === 'custom' ? startDate : existing?.period.anchorDate ?? todayLocal();
   const limitError = validateMoneyInput(limit, state.settings.baseCurrency, state.settings.locale, {
     label: 'Total limit',
     positive: true,
   });
+  const startDateError = unit === 'custom'
+    ? validateDateInput(startDate, { label: 'Start date' })
+    : undefined;
   const endDateFormatError = unit === 'custom'
     ? validateDateInput(endDate, { label: 'End date' })
     : undefined;
@@ -60,7 +65,7 @@ export function BudgetFormScreen() {
       positive: true,
     }),
   ]));
-  const canSave = !limitError && !endDateError && !Object.values(categoryLimitErrors).some(Boolean);
+  const canSave = !limitError && !startDateError && !endDateError && !Object.values(categoryLimitErrors).some(Boolean);
 
   const toggleCategory = (categoryId: string) => {
     setSelectedCategories((current) => current.includes(categoryId) ? current.filter((item) => item !== categoryId) : [...current, categoryId]);
@@ -86,7 +91,7 @@ export function BudgetFormScreen() {
           .filter((categoryId) => categoryLimits[categoryId]?.trim())
           .map((categoryId) => ({ categoryId, limitMinor: parseMoney(categoryLimits[categoryId], state.settings.baseCurrency, state.settings.locale) })),
         archived: false,
-      }, existing?.id);
+      }, existing?.id, expectedRevision);
       hapticSuccess();
       router.dismissTo('/plan');
     } catch (reason) {
@@ -118,20 +123,25 @@ export function BudgetFormScreen() {
         <FormField label="Budget name" value={name} onChangeText={setName} />
         <FormField label={`Total limit (${state.settings.baseCurrency})`} value={limit} onChangeText={setLimit} keyboardType="decimal-pad" error={limitError} required />
         <AppText variant="label">Period</AppText>
-        <View accessibilityLabel="Budget period" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+        <View accessibilityLabel={t('Budget period')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
           {(['day', 'week', 'month', 'year', 'custom'] as PeriodUnit[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={unit === item} onPress={() => setUnit(item)} />)}
         </View>
-        {unit === 'custom' ? <FormField label="End date" value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD" error={endDateError} required /> : null}
+        {unit === 'custom' ? (
+          <>
+            <FormField label="Start date" value={startDate} onChangeText={setStartDate} placeholder="YYYY-MM-DD" error={startDateError} required />
+            <FormField label="End date" value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD" error={endDateError} required />
+          </>
+        ) : null}
         <View style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
           <View style={{ flex: 1, gap: 2 }}><AppText variant="label">Rollover</AppText><AppText variant="caption" muted>Carry both surplus and overspend forward.</AppText></View>
-          <Switch value={rollover} onValueChange={setRollover} trackColor={{ true: theme.accent }} />
+          <Switch accessibilityLabel={t('Rollover')} value={rollover} onValueChange={setRollover} trackColor={{ true: theme.accent }} />
         </View>
       </Card>
 
       <Card style={{ gap: 14 }}>
         <AppText variant="headline">Categories and caps</AppText>
         <AppText muted>Leave every category unselected to count all expenses.</AppText>
-        <View accessibilityLabel="Included categories" role="group" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+        <View accessibilityLabel={t('Included categories')} role="group" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
           {expenseCategories.map((category) => <ChoiceChip mode="checkbox" key={category.id} literal label={`${category.name}${category.archived ? ' (archived)' : ''}`} selected={selectedCategories.includes(category.id)} onPress={() => toggleCategory(category.id)} />)}
         </View>
         {selectedCategories.map((categoryId) => {

@@ -168,7 +168,7 @@ export function OverviewScreen() {
                   <AnimatedMoney minor={summary.budgetSpentMinor} currency={currency} locale={locale} variant="headline" />
                   <AppText literal muted>{`${t('of')} ${formatMoney(summary.budgetLimitMinor, currency, locale)}`}</AppText>
                 </View>
-                <ProgressBar value={budgetProgress} color={budgetProgress > 1 ? theme.negative as string : undefined} />
+                <ProgressBar label={t('Budget progress')} value={budgetProgress} color={budgetProgress > 1 ? theme.negative as string : undefined} />
                 <AppText variant="caption" muted>{budgetProgress > 1 ? 'Over budget — review the categories driving it.' : `${Math.max(0, Math.round((1 - budgetProgress) * 100))}% remains in this period.`}</AppText>
               </>
             ) : (
