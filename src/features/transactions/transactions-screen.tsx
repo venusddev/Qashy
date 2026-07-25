@@ -38,6 +38,7 @@ export function TransactionsScreen() {
   const { visibility: fabVisibility, onScroll } = useScrollHide();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
+  const [busy, setBusy] = useState(false);
   const selectedTransactions = state.transactions.filter((item) => selectedIds.includes(item.id));
   const hasSelectedTransfers = selectedTransactions.some((item) => item.kind === 'transfer');
   const selectedKinds = [...new Set(selectedTransactions
@@ -64,8 +65,13 @@ export function TransactionsScreen() {
     setSelectedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   };
 
+  // Guards a double-tap on a category chip or "Delete selected" from firing two
+  // concurrent batch mutations, matching how every other mutating handler in the
+  // app is gated.
   const changeCategory = async (categoryId: string | null) => {
+    if (busy) return;
     const ids = [...selectedIds];
+    setBusy(true);
     try {
       await repository.updateTransactionsCategory(ids, categoryId);
       hapticSuccess();
@@ -73,12 +79,16 @@ export function TransactionsScreen() {
       setSelectionMode(false);
     } catch (reason) {
       showError('Couldn’t change category', errorMessage(reason, 'Try a compatible category.'));
+    } finally {
+      setBusy(false);
     }
   };
 
   const deleteSelected = async () => {
+    if (busy) return;
     const ids = [...selectedIds];
     if (!(await confirmDestructive({ title: ids.length === 1 ? 'Delete 1 transaction?' : `Delete ${ids.length} transactions?`, message: 'They will be removed from your ledger.' }))) return;
+    setBusy(true);
     try {
       await repository.deleteEntities('transactions', ids);
       hapticSuccess();
@@ -86,6 +96,8 @@ export function TransactionsScreen() {
       setSelectionMode(false);
     } catch (reason) {
       showError('Couldn’t delete transactions', errorMessage(reason, 'Try again.'));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -123,7 +135,7 @@ export function TransactionsScreen() {
               setSelectedIds([]);
             }} style={{ marginRight: -10 }} /> : null}
           </View>
-          <View accessibilityLabel="Transaction type filter" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+          <View accessibilityLabel={t('Transaction type filter')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
             {(['all', 'expense', 'income', 'transfer', 'upcoming'] as KindFilter[]).map((item) => (
               <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} onPress={() => {
                 setKind(item);
@@ -170,14 +182,14 @@ export function TransactionsScreen() {
                       <AppText variant="caption" muted>Change category</AppText>
                       {selectedKinds.length > 1 ? <AppText variant="caption" muted>Select only income or only expense transactions to assign a category.</AppText> : null}
                       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                        <ChoiceChip mode="button" label="Uncategorized" selected={false} onPress={() => changeCategory(null)} />
+                        <ChoiceChip mode="button" label="Uncategorized" selected={false} disabled={busy} onPress={() => changeCategory(null)} />
                         {state.categories.filter((item) => item.kind === compatibleCategoryKind && !item.archived).map((category) => (
-                          <ChoiceChip mode="button" key={category.id} literal label={category.name} selected={false} onPress={() => changeCategory(category.id)} />
+                          <ChoiceChip mode="button" key={category.id} literal label={category.name} selected={false} disabled={busy} onPress={() => changeCategory(category.id)} />
                         ))}
                       </View>
                     </>
                   )}
-                  <ActionButton title="Delete selected" variant="danger" onPress={deleteSelected} />
+                  <ActionButton title="Delete selected" variant="danger" disabled={busy} onPress={deleteSelected} />
                 </>
               ) : <AppText variant="caption" muted>Choose one or more transactions below.</AppText>}
               </Card>

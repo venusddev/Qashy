@@ -19,6 +19,11 @@ export class MemoryStorageAdapter implements StorageAdapter {
   }
 
   async putMany(records: StoredEntity[], source?: object) {
+    // Both real adapters return early on an empty batch, and callers do produce
+    // one (`updateTransactionsCategory` with no matching ids). Without the same
+    // guard the test double notifies where production would not, so behaviour
+    // under test drifts from behaviour on device.
+    if (!records.length) return;
     records.forEach((record) => {
       this.records.set(`${record.type}:${record.entity.id}`, structuredClone(record));
     });

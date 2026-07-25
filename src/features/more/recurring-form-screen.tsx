@@ -1,7 +1,8 @@
-import { Redirect, router, useLocalSearchParams } from 'expo-router';
+import { Redirect, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { Switch, View } from 'react-native';
 
+import { useFormSheet } from '@/components/navigation/use-form-sheet';
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
@@ -46,6 +47,10 @@ export function RecurringFormScreen() {
   const [autoPost, setAutoPost] = useState(existing?.autoPost ?? false);
   const [active, setActive] = useState(existing?.active ?? true);
   const [busy, setBusy] = useState(false);
+  const { closeToOwner } = useFormSheet({
+    ownerRoute: '/more',
+    values: { kind, title, note, tagIds, amount, accountId, categoryId, unit, interval, startDate, endDate, autoPost, active },
+  });
   const account = state.accounts.find((item) => item.id === accountId) ?? initialAccount;
   const accountChoices = state.accounts.filter((item) => !item.archived || item.id === accountId);
   const categories = state.categories.filter((item) =>
@@ -96,7 +101,7 @@ export function RecurringFormScreen() {
         active,
       }, existing?.id, expectedRevision);
       hapticSuccess();
-      router.dismissTo('/more');
+      closeToOwner();
     } catch (reason) {
       showError('Couldn’t save schedule', errorMessage(reason, 'Try again.'));
     } finally {
@@ -110,7 +115,7 @@ export function RecurringFormScreen() {
     setBusy(true);
     try {
       await repository.deleteEntities('recurringRules', [existing.id]);
-      router.dismissTo('/more');
+      closeToOwner();
     } catch (reason) {
       showError('Couldn’t delete schedule', errorMessage(reason, 'Try again.'));
     } finally {

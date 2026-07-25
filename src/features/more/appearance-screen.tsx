@@ -9,6 +9,7 @@ import { ColorSwatch } from '@/components/ui/color-swatch';
 import { FormField } from '@/components/ui/form-field';
 import { MotionView } from '@/components/ui/motion';
 import type { AccentSource, ThemeMode } from '@/domain/models';
+import { useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { previewAccentTokens, useQashyTheme } from '@/theme/theme';
 import { ACCENT_PRESETS, mixHex } from '@/theme/tokens';
@@ -18,6 +19,7 @@ export function AppearanceScreen() {
   const repository = useFinanceRepository();
   const { settings } = useFinanceState();
   const theme = useQashyTheme();
+  const { t } = useLocalization();
   const systemScheme = useColorScheme();
   const [expectedRevision, setExpectedRevision] = useState(settings.revision);
   const [mode, setMode] = useState<ThemeMode>(settings.themeMode);
@@ -62,13 +64,13 @@ export function AppearanceScreen() {
       <MotionView>
         <Card style={{ gap: 16 }}>
           <AppText variant="headline">Appearance</AppText>
-          <View accessibilityLabel="Appearance" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{(['system', 'light', 'dark'] as ThemeMode[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={mode === item} onPress={() => { setMode(item); setSaved(false); }} />)}</View>
+          <View accessibilityLabel={t('Appearance')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{(['system', 'light', 'dark'] as ThemeMode[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={mode === item} onPress={() => { setMode(item); setSaved(false); }} />)}</View>
         </Card>
       </MotionView>
       <MotionView delay={45}>
         <Card style={{ gap: 16 }}>
           <AppText variant="headline">Accent source</AppText>
-          <View accessibilityLabel="Accent source" accessibilityRole="radiogroup" style={{ gap: 12 }}>
+          <View accessibilityLabel={t('Accent source')} accessibilityRole="radiogroup" style={{ gap: 12 }}>
             <ChoiceChip label={process.env.EXPO_OS === 'android' ? 'Material You wallpaper' : 'Qashy default'} selected={source === 'system'} onPress={() => { setSource('system'); setSaved(false); }} icon="paintbrush" />
             <AppText muted>{process.env.EXPO_OS === 'android' ? 'Android 12 and later derive this from your wallpaper. Older versions use Qashy’s default palette.' : 'Uses Qashy’s indigo accent on neutral surfaces.'}</AppText>
             <AppText variant="label">Curated accents</AppText>

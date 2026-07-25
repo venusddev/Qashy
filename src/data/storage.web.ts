@@ -29,11 +29,34 @@ class QashyDatabase extends Dexie {
   }
 }
 
+type SignatureRow = Pick<DbRecord, 'key' | 'updatedAt' | 'deletedAt'>;
+
+// The record key is `${type}:${id}` and `updatedAt` is an ISO timestamp, so a colon
+// separator would leave the key unrecoverable from an entry. A pipe appears in
+// neither, so it splits the two cleanly.
+const SIGNATURE_SEPARATOR = '|';
+
+const signatureOf = (row: SignatureRow) =>
+  `${row.key}${SIGNATURE_SEPARATOR}${row.updatedAt}${SIGNATURE_SEPARATOR}${row.deletedAt ?? ''}`;
+
+const signatureKey = (entry: string) => entry.slice(0, entry.indexOf(SIGNATURE_SEPARATOR));
+
+const sameSignature = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((entry, index) => entry === b[index]);
+
 export class PlatformStorageAdapter implements StorageAdapter {
-  private database = new QashyDatabase();
+  private db = new QashyDatabase();
   private listeners = new Set<(source?: object) => void>();
   private observation: Subscription | null = null;
-  private receivedInitialObservation = false;
+  private opened = false;
+  private opening: Promise<void> | null = null;
+  // The row signature this adapter believes is on disk. `liveQuery` fires for every
+  // write to `records`, including this adapter's own, and those emissions carry no
+  // source — so they slipped past the repository's `source === this` filter and
+  // forced a full re-hydrate after every single local mutation. Tracking the expected
+  // signature lets a self-inflicted emission be recognised exactly, leaving only
+  // genuine cross-tab changes to notify.
+  private knownSignature: string[] | null = null;
 
   constructor() {
     if (typeof globalThis.addEventListener === 'function') {
@@ -44,55 +67,98 @@ export class PlatformStorageAdapter implements StorageAdapter {
   }
 
   async initialize() {
-    await this.database.open();
+    if (this.opened) return;
+    if (!this.opening) {
+      this.opening = this.openDatabase().finally(() => {
+        this.opening = null;
+      });
+    }
+    await this.opening;
+  }
+
+  private async openDatabase() {
+    await this.db.open();
     if (!this.observation) {
       this.observation = liveQuery(async () => {
-        const rows = await this.database.records.toArray();
-        return rows.map((row) => `${row.key}:${row.updatedAt}:${row.deletedAt ?? ''}`).sort();
+        const rows = await this.db.records.toArray();
+        return rows.map(signatureOf).sort();
       }).subscribe({
-        next: () => {
-          if (!this.receivedInitialObservation) {
-            this.receivedInitialObservation = true;
-            return;
-          }
+        next: (signature) => {
+          const previous = this.knownSignature;
+          this.knownSignature = signature;
+          // The first emission is the initial read, and an emission matching what
+          // this adapter just wrote is its own echo. Neither is a change to report.
+          if (previous === null || sameSignature(previous, signature)) return;
           this.notifyLocalListeners();
         },
         error: () => undefined,
       });
     }
+    this.opened = true;
+  }
+
+  // Dexie defaults to `autoOpen`, so reads and writes before `initialize()` used to
+  // quietly succeed against a database whose change subscription was never wired —
+  // change notifications then silently never fired. The native adapter throws for
+  // the same misuse; match it so the mistake surfaces on both platforms.
+  private database() {
+    if (!this.opened) throw new Error('Qashy database has not been initialized.');
+    return this.db;
   }
 
   async readAll(type: EntityType) {
-    const rows = await this.database.records.where('type').equals(type).toArray();
+    const rows = await this.database().records.where('type').equals(type).toArray();
     rows.sort((a, b) => compareStoredEntities(a.payload, b.payload));
     return rows.map((row) => row.payload);
   }
 
   async putMany(records: StoredEntity[], source?: object) {
     if (!records.length) return;
-    await this.database.transaction('rw', this.database.records, async () => {
-      await this.database.records.bulkPut(
-        records.map(({ type, entity }) => ({
-          key: `${type}:${entity.id}`,
-          type,
-          entityId: entity.id,
-          payload: entity,
-          updatedAt: entity.updatedAt,
-          deletedAt: entity.deletedAt,
-        })),
-      );
+    const database = this.database();
+    const rows = records.map(({ type, entity }) => ({
+      key: `${type}:${entity.id}`,
+      type,
+      entityId: entity.id,
+      payload: entity,
+      updatedAt: entity.updatedAt,
+      deletedAt: entity.deletedAt,
+    }));
+    await database.transaction('rw', database.records, async () => {
+      await database.records.bulkPut(rows);
     });
+    this.rememberWrites(rows);
     this.notifyChange(source);
   }
 
   async clear(source?: object) {
-    await this.database.records.clear();
+    await this.database().records.clear();
+    this.knownSignature = [];
     this.notifyChange(source);
+  }
+
+  // Fold this adapter's own writes into the expected signature so the `liveQuery`
+  // emission they trigger is recognised as an echo rather than a cross-tab change.
+  private rememberWrites(rows: SignatureRow[]) {
+    if (this.knownSignature === null) return;
+    const next = new Map(this.knownSignature.map((entry) => [signatureKey(entry), entry]));
+    rows.forEach((row) => next.set(row.key, signatureOf(row)));
+    this.knownSignature = [...next.values()].sort();
   }
 
   subscribe(listener: (source?: object) => void) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  // The app holds a single adapter for its whole lifetime, so nothing releases the
+  // `liveQuery` subscription in normal use. Tests create adapters per case and need
+  // to hand the database back.
+  async dispose() {
+    this.observation?.unsubscribe();
+    this.observation = null;
+    this.knownSignature = null;
+    this.opened = false;
+    this.db.close();
   }
 
   private notifyChange(source?: object) {

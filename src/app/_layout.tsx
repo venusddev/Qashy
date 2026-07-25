@@ -9,6 +9,7 @@ import * as SystemUI from 'expo-system-ui';
 
 import { FinanceProvider, useFinanceState } from '@/providers/finance-provider';
 import { PwaUpdatePrompt } from '@/components/pwa-update-prompt';
+import { ReloadErrorBanner } from '@/components/reload-error-banner';
 import { LocalizationProvider, useLocalization } from '@/localization/localization';
 import { QashyThemeProvider, useQashyTheme } from '@/theme/theme';
 import { QASHY_ACCENT } from '@/domain/defaults';
@@ -142,6 +143,7 @@ function RootNavigator() {
         </Stack.Protected>
       </Stack>
       <PwaUpdatePrompt />
+      <ReloadErrorBanner />
     </>
   );
 }

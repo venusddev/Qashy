@@ -2065,4 +2065,100 @@ describe('FinanceRepository contract', () => {
     }, transfer.id);
     expect(retitled.title).toBe('Moved');
   });
+
+  it('does not inherit rollover from a window the new period definition would not produce', async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-06-15T09:00:00Z'));
+      const storage = new MemoryStorageAdapter();
+      const { repository } = await createRepository(storage);
+      const account = repository.getSnapshot().accounts[0];
+      const budget = await repository.saveBudget({
+        name: 'Monthly', icon: 'chart', color: '#5966E9', limitMinor: 1000,
+        period: { unit: 'month', interval: 1, anchorDate: '2026-06-01', endDate: null },
+        rollover: true, filters: { accountIds: [], categoryIds: [], tagIds: [] }, categoryLimits: [], archived: false,
+      });
+      await repository.saveTransaction({ kind: 'expense', title: 'June', localDate: '2026-06-20', accountId: account.id, amountMinor: 400 });
+
+      // Settle June so a completed monthly snapshot exists to roll over from.
+      jest.setSystemTime(new Date('2026-07-15T09:00:00Z'));
+      const reloaded = new LocalFinanceRepository(storage);
+      await reloaded.initialize();
+      expect(reloaded.getBudgetStatuses('2026-07-15')[0]).toMatchObject({ effectiveLimitMinor: 1600 });
+
+      // Switching the period mid-July moves the current window off every stored
+      // snapshot. The June monthly one is no longer a window this definition would
+      // produce, so its unspent remainder must not seed the first weekly window.
+      await reloaded.saveBudget({
+        name: budget.name, icon: budget.icon, color: budget.color, limitMinor: budget.limitMinor,
+        period: { unit: 'week', interval: 1, anchorDate: '2026-07-20', endDate: null },
+        rollover: true, filters: budget.filters, categoryLimits: budget.categoryLimits, archived: false,
+      }, budget.id);
+      // Week of 2026-07-13: bare limit, not limit + the 600 left over from June.
+      expect(reloaded.getBudgetStatuses('2026-07-15')[0].effectiveLimitMinor).toBe(1000);
+      // The following week legitimately inherits that untouched weekly limit, which
+      // confirms rollover still works — it is only the mismatched window that is skipped.
+      expect(reloaded.getBudgetStatuses('2026-07-24')[0].effectiveLimitMinor).toBe(2000);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps a rule paused by an archived account when an unrelated category is deleted', async () => {
+    const { repository } = await createRepository();
+    const spare = await repository.saveAccount({ name: 'Spare', type: 'cash', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#00A58E', archived: false });
+    const category = repository.getSnapshot().categories.find((item) => item.kind === 'expense')!;
+    const rule = await repository.saveRecurringRule({
+      template: { kind: 'expense', title: 'Rent', note: '', amountMinor: 50_00, currency: 'USD', accountId: spare.id, categoryId: category.id, tagIds: [] },
+      unit: 'month', interval: 1, startDate: '2026-07-01', endDate: null, nextDueDate: '2026-07-01', autoPost: false, active: true,
+    });
+
+    await repository.saveAccount({ ...spare, archived: true }, spare.id);
+    expect(repository.getSnapshot().recurringRules.find((item) => item.id === rule.id)).toMatchObject({ active: false, pausedByDependency: true });
+
+    await repository.deleteEntities('categories', [category.id]);
+    const afterDelete = repository.getSnapshot().recurringRules.find((item) => item.id === rule.id)!;
+    // The account is still archived, so the rule must stay recoverable rather than
+    // losing the flag both reactivation gates key off.
+    expect(afterDelete.template.categoryId).toBeNull();
+    expect(afterDelete).toMatchObject({ active: false, pausedByDependency: true });
+
+    await repository.saveAccount({ ...spare, archived: false }, spare.id);
+    expect(repository.getSnapshot().recurringRules.find((item) => item.id === rule.id)).toMatchObject({ active: true, pausedByDependency: false });
+  });
+
+  it('filters transactions by parent category the same way budgets aggregate them', async () => {
+    const { repository } = await createRepository();
+    const account = repository.getSnapshot().accounts[0];
+    const parent = repository.getSnapshot().categories.find((item) => item.kind === 'expense')!;
+    const child = await repository.saveCategory({ name: 'Corner shop', kind: 'expense', color: '#5F9F78', icon: 'cart', parentId: parent.id, archived: false });
+    await repository.saveTransaction({ kind: 'expense', title: 'Milk', localDate: '2026-07-10', accountId: account.id, amountMinor: 4_00, categoryId: child.id });
+
+    const byParent = repository.queryTransactions({ categoryIds: [parent.id] });
+    expect(byParent.map((item) => item.title)).toEqual(['Milk']);
+  });
+
+  it('reports an archived account by name instead of claiming the CSV is unknown', async () => {
+    const { repository } = await createRepository();
+    const spare = await repository.saveAccount({ name: 'Spare', type: 'cash', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#00A58E', archived: false });
+    await repository.saveAccount({ ...spare, archived: true }, spare.id);
+
+    const result = await repository.importCsv([{
+      rowNumber: 2,
+      date: '2026-07-10',
+      type: 'expense' as TransactionKind,
+      title: 'Old purchase',
+      amount: '10.00',
+      currency: 'USD',
+      account: 'Spare',
+      category: '',
+      tags: '',
+      note: '',
+      exchangeRate: '',
+      destinationAccount: '',
+      destinationAmount: '',
+    }], false);
+
+    expect(result.rejectedRows[0].reason).toBe('Account Spare is archived.');
+  });
 });

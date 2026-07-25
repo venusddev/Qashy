@@ -9,6 +9,29 @@
       ],
       "@/assets/*": [
         "./assets/*"
+      ],
+      // React Native's own .d.ts files import each other through self-referential
+      // `react-native/types/...` specifiers, which its `exports` map fails to
+      // resolve for TypeScript. `skipLibCheck` hides the resulting TS2307s, but
+      // the damage still lands: ViewProps and friends degrade to error types, so
+      // every host component loses its React.Component members and fails as a JSX
+      // element. Mapping the subpath straight to disk bypasses the broken map.
+      "react-native/*": [
+        "./node_modules/react-native/*"
+      ],
+      // Same defect one level down: this package's `exports` map sets
+      // `"types": null` for every subpath, so its own
+      // `export * from '@react-native/virtualized-lists/Lists/VirtualizedList'`
+      // resolves to nothing and ListRenderItemInfo disappears, taking FlatList's
+      // and SectionList's renderItem argument types with it.
+      "@react-native/virtualized-lists/*": [
+        "./node_modules/@react-native/virtualized-lists/*"
+      ],
+      // Dexie's `exports` map has no `types` condition, so TypeScript lands on
+      // `import-wrapper.d.mts` — which re-exports from 'dexie', resolving back to
+      // itself. Every named export is lost. Point at the real declaration file.
+      "dexie": [
+        "./node_modules/dexie/dist/dexie.d.ts"
       ]
     }
   },

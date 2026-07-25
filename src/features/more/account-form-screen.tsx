@@ -2,6 +2,7 @@ import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
 
+import { useFormSheet } from '@/components/navigation/use-form-sheet';
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
@@ -10,6 +11,7 @@ import { ColorSwatch } from '@/components/ui/color-swatch';
 import { FormField } from '@/components/ui/form-field';
 import { FormScreen } from '@/components/ui/form-screen';
 import type { AccountType } from '@/domain/models';
+import { useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
@@ -24,6 +26,7 @@ export function AccountFormScreen() {
   const repository = useFinanceRepository();
   const state = useFinanceState();
   const theme = useQashyTheme();
+  const { t } = useLocalization();
   const existing = id ? state.accounts.find((item) => item.id === id) : undefined;
   const [expectedRevision] = useState(existing?.revision);
   const [name, setName] = useState(existing?.name ?? '');
@@ -33,11 +36,15 @@ export function AccountFormScreen() {
   const [openingTouched, setOpeningTouched] = useState(false);
   const [color, setColor] = useState(existing?.color ?? theme.staticAccent);
   const [busy, setBusy] = useState(false);
+  const { closeToOwner, allowLeave } = useFormSheet({
+    ownerRoute: '/more',
+    values: { name, type, currency, opening, color },
+  });
   const currencyLocked = !!existing && (
     state.transactions.some((item) => item.accountId === existing.id || item.destinationAccountId === existing.id) ||
     state.recurringRules.some((item) => item.template.accountId === existing.id)
   );
-  const currencyError = validateCurrencyCode(currency, state.settings.locale);
+  const currencyError = validateCurrencyCode(currency);
   const openingError = currencyError
     ? undefined
     : validateMoneyInput(opening, currency, state.settings.locale, { label: 'Opening balance' });
@@ -62,8 +69,11 @@ export function AccountFormScreen() {
     try {
       await repository.saveAccount({ name: name.trim() || 'Account', type, currency: currency.toUpperCase(), openingBalanceMinor: parseMoney(opening, currency, state.settings.locale), icon: 'wallet.bifold', color, archived: false }, existing?.id, expectedRevision);
       hapticSuccess();
-      if (!existing && returnTo === '/transaction' && router.canGoBack()) router.back();
-      else router.dismissTo('/more');
+      if (!existing && returnTo === '/transaction' && router.canGoBack()) {
+        // Returning to the transaction sheet that opened this one, not to a section.
+        allowLeave();
+        router.back();
+      } else closeToOwner();
     } catch (reason) {
       showError('Couldn’t save account', errorMessage(reason, 'Try again.'));
     } finally {
@@ -77,7 +87,7 @@ export function AccountFormScreen() {
     setBusy(true);
     try {
       await repository.saveAccount({ ...existing, archived: true }, existing.id, expectedRevision);
-      router.dismissTo('/more');
+      closeToOwner();
     } catch (reason) {
       showError('Couldn’t archive account', errorMessage(reason, 'Try again.'));
     } finally {
@@ -92,11 +102,11 @@ export function AccountFormScreen() {
       <Card style={{ gap: 16 }}>
         <FormField label="Account name" value={name} onChangeText={setName} placeholder="Everyday" autoFocus={!existing} />
         <AppText variant="label">Type</AppText>
-        <View accessibilityLabel="Account type" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{(['checking', 'cash', 'savings', 'credit', 'wallet'] as AccountType[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={type === item} onPress={() => setType(item)} />)}</View>
+        <View accessibilityLabel={t('Account type')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{(['checking', 'cash', 'savings', 'credit', 'wallet'] as AccountType[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={type === item} onPress={() => setType(item)} />)}</View>
         <FormField label="Currency" value={currency} onChangeText={changeCurrency} maxLength={3} autoCapitalize="characters" editable={!currencyLocked} error={currencyLocked ? undefined : currencyError} hint={currencyLocked ? 'Currency is locked because this account has transaction or schedule history.' : undefined} required />
         <FormField label="Opening balance" value={opening} onChangeText={(value) => { setOpeningTouched(true); setOpening(value); }} keyboardType="decimal-pad" error={openingError} hint="Changing this adjusts the derived account balance." required />
         <AppText variant="label">Color</AppText>
-        <View accessibilityLabel="Account color" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>{COLORS.map((item) => <ColorSwatch key={item} color={item} selected={color === item} label={`Use ${item} account color`} onPress={() => setColor(item)} />)}</View>
+        <View accessibilityLabel={t('Account color')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>{COLORS.map((item) => <ColorSwatch key={item} color={item} selected={color === item} label={`Use ${item} account color`} onPress={() => setColor(item)} />)}</View>
       </Card>
       <ActionButton title={busy ? 'Saving…' : existing ? 'Save account' : 'Create account'} icon="checkmark" onPress={save} disabled={busy || !canSave} busy={busy} />
       {existing && state.accounts.filter((item) => !item.archived).length > 1 ? <ActionButton title="Archive account" variant="danger" onPress={archive} disabled={busy} /> : null}

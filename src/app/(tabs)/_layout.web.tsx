@@ -201,6 +201,7 @@ export default function WebTabsLayout() {
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const theme = useQashyTheme();
+  const { t } = useLocalization();
   const compact = width < 1200;
   const mobile = width < 768;
   const narrow = width < 360;
@@ -213,7 +214,7 @@ export default function WebTabsLayout() {
   return (
     <View style={{ flex: 1, flexDirection: mobile ? 'column' : 'row', backgroundColor: theme.background }}>
       <View
-        accessibilityLabel="Primary"
+        accessibilityLabel={t('Primary')}
         role="navigation"
         style={{
           display: mobile ? 'none' : 'flex',
@@ -244,7 +245,7 @@ export default function WebTabsLayout() {
       </View>
       <View style={{ flex: 1 }}><Slot /></View>
       <View
-        accessibilityLabel="Primary"
+        accessibilityLabel={t('Primary')}
         role="navigation"
         style={{
           display: mobile ? 'flex' : 'none',

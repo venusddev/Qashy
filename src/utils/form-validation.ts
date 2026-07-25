@@ -18,10 +18,9 @@ export function validateLocale(value: string) {
   }
 }
 
-export function validateCurrencyCode(value: string, locale: string) {
+export function validateCurrencyCode(value: string) {
   const currency = value.trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) return 'Use a three-letter currency code such as USD.';
-  void locale;
   return isSupportedCurrencyCode(currency) ? undefined : 'Use a supported ISO 4217 currency code.';
 }
 

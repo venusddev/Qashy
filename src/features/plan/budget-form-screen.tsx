@@ -1,7 +1,8 @@
-import { Redirect, router, useLocalSearchParams } from 'expo-router';
+import { Redirect, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { Switch, View } from 'react-native';
 
+import { useFormSheet } from '@/components/navigation/use-form-sheet';
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
@@ -39,6 +40,10 @@ export function BudgetFormScreen() {
   const [selectedCategories, setSelectedCategories] = useState<string[]>(existing?.filters.categoryIds ?? []);
   const [categoryLimits, setCategoryLimits] = useState<Record<string, string>>(() => Object.fromEntries(existing?.categoryLimits.map((item) => [item.categoryId, toMoneyText(item.limitMinor)]) ?? []));
   const [saving, setSaving] = useState(false);
+  const { closeToOwner } = useFormSheet({
+    ownerRoute: '/plan',
+    values: { name, limit, unit, startDate, endDate, rollover, selectedCategories, categoryLimits },
+  });
   const expenseCategories = state.categories.filter((item) =>
     item.kind === 'expense' &&
     (!item.archived || selectedCategories.includes(item.id)),
@@ -93,7 +98,7 @@ export function BudgetFormScreen() {
         archived: false,
       }, existing?.id, expectedRevision);
       hapticSuccess();
-      router.dismissTo('/plan');
+      closeToOwner();
     } catch (reason) {
       showError('Couldn’t save budget', errorMessage(reason, 'Try again.'));
     } finally {
@@ -107,7 +112,7 @@ export function BudgetFormScreen() {
     setSaving(true);
     try {
       await repository.deleteEntities('budgets', [existing.id]);
-      router.dismissTo('/plan');
+      closeToOwner();
     } catch (reason) {
       showError('Couldn’t delete budget', errorMessage(reason, 'Try again.'));
     } finally {

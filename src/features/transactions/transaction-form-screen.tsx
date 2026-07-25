@@ -2,6 +2,7 @@ import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { View } from 'react-native';
 
+import { useFormSheet } from '@/components/navigation/use-form-sheet';
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
@@ -108,16 +109,14 @@ export function TransactionFormScreen() {
     && !exchangeRateError
     && !destinationError;
   const ownerRoute = returnTo === '/overview' ? '/overview' as const : '/transactions' as const;
+  const { closeToOwner } = useFormSheet({
+    ownerRoute,
+    values: { kind, title, amount, date, accountId, destinationAccountId, categoryId, tagIds, note, exchangeRate, destinationAmount },
+  });
   const toggleTag = (tagId: string) => {
     setTagIds((current) => current.includes(tagId)
       ? current.filter((item) => item !== tagId)
       : [...current, tagId]);
-  };
-  const closeToOwner = () => {
-    router.dismissTo(ownerRoute);
-    if (process.env.EXPO_OS === 'web' && typeof window !== 'undefined') {
-      window.requestAnimationFrame(() => router.replace(ownerRoute));
-    }
   };
 
   const save = async () => {
@@ -126,7 +125,9 @@ export function TransactionFormScreen() {
     try {
       await repository.saveTransaction({
         kind,
-        title: title || (kind === 'transfer' ? 'Transfer' : categories.find((item) => item.id === categoryId)?.name ?? 'Transaction'),
+        // Trimmed like every sibling form: a whitespace-only title is truthy, so it
+        // slipped past the fallback and saved a transaction that rendered blank.
+        title: title.trim() || (kind === 'transfer' ? 'Transfer' : categories.find((item) => item.id === categoryId)?.name ?? 'Transaction'),
         note,
         localDate: date,
         accountId: account.id,

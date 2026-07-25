@@ -95,7 +95,20 @@ export function CsvScreen() {
   };
 
   const previewImport = async () => {
-    if (missingRequiredFields.length) return;
+    if (busy || missingRequiredFields.length) return;
+    setBusy(true);
+    try {
+      await buildPreview();
+    } catch (reason) {
+      // `commit` has always reported its failures; this path silently did nothing,
+      // so a throw from `importCsv` looked like a dead "Preview import" button.
+      showError('Couldn’t preview CSV', errorMessage(reason, 'Check the column mapping and try again.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const buildPreview = async () => {
     const defaultAccount = state.accounts.find((item) => item.id === defaultAccountId)?.name ?? '';
     const defaultCategory = state.categories.find((item) => item.id === defaultCategoryId);
     const value = (record: Record<string, string | number>, field: CsvField) =>
@@ -160,7 +173,7 @@ export function CsvScreen() {
       if (file.exists) file.delete();
       file.create();
       file.write(csv);
-      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(file.uri, { mimeType: 'text/csv', dialogTitle: 'Export Qashy transactions' });
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(file.uri, { mimeType: 'text/csv', dialogTitle: t('Export Qashy transactions') });
     } catch (reason) {
       showError('Couldn’t export CSV', errorMessage(reason, 'Try again.'));
     }
@@ -184,7 +197,7 @@ export function CsvScreen() {
             {CSV_FIELDS.map((field) => (
               <View
                 key={field.key}
-                accessibilityLabel={`Map ${field.label}`}
+                accessibilityLabel={t(`Map ${field.label}`)}
                 role="group"
                 style={{ minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottomWidth: 1, borderBottomColor: theme.border }}>
                 <View style={{ flex: 1, gap: 2 }}>
@@ -206,13 +219,13 @@ export function CsvScreen() {
               </View>
             ))}
             <AppText variant="label">Default account</AppText>
-            <View accessibilityLabel="Default account" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            <View accessibilityLabel={t('Default account')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               {state.accounts.filter((item) => !item.archived).map((account) => (
                 <ChoiceChip key={account.id} literal label={account.name} selected={defaultAccountId === account.id} onPress={() => { setDefaultAccountId(account.id); setPreview(null); }} />
               ))}
             </View>
             <AppText variant="label">Default category</AppText>
-            <View accessibilityLabel="Default category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            <View accessibilityLabel={t('Default category')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               <ChoiceChip label="None" selected={!defaultCategoryId} onPress={() => { setDefaultCategoryId(''); setPreview(null); }} />
               {state.categories.filter((item) => !item.archived).map((category) => (
                 <ChoiceChip key={category.id} literal label={category.name} selected={defaultCategoryId === category.id} onPress={() => { setDefaultCategoryId(category.id); setPreview(null); }} />
@@ -224,7 +237,7 @@ export function CsvScreen() {
                 Map required fields: {missingRequiredFields.map((field) => field.label).join(', ')}.
               </AppText>
             ) : null}
-            <ActionButton title="Preview import" icon="checkmark" onPress={previewImport} disabled={Boolean(missingRequiredFields.length)} />
+            <ActionButton title="Preview import" icon="checkmark" onPress={previewImport} disabled={busy || Boolean(missingRequiredFields.length)} />
           </View>
         ) : null}
         {preview ? (

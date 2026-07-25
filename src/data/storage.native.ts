@@ -11,25 +11,48 @@ const DATABASE_VERSION = 1;
 
 export class PlatformStorageAdapter implements StorageAdapter {
   private database: SQLiteDatabase | null = null;
+  private opening: Promise<SQLiteDatabase> | null = null;
   private listeners = new Set<(source?: object) => void>();
 
+  // `openDatabaseAsync` has no connection cache — every call builds a fresh native
+  // handle. Re-entering this method (the error screen's "Try again", or two callers
+  // racing on first launch) therefore used to strand the previous connection, since
+  // nothing ever closed it. Opening once and sharing the in-flight promise makes the
+  // call idempotent; a failure part-way through closes the handle it opened so the
+  // retry starts clean.
   async initialize() {
-    this.database = await openDatabaseAsync('qashy.db');
-    await this.database.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
-    const row = await this.database.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
-    if ((row?.user_version ?? 0) < 1) {
-      await this.database.execAsync(`
-        CREATE TABLE IF NOT EXISTS records (
-          record_key TEXT PRIMARY KEY NOT NULL,
-          entity_type TEXT NOT NULL,
-          payload TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          deleted_at TEXT
-        );
-        CREATE INDEX IF NOT EXISTS records_entity_type ON records(entity_type);
-      `);
+    if (this.database) return;
+    if (!this.opening) {
+      this.opening = this.openDatabase().finally(() => {
+        this.opening = null;
+      });
     }
-    await this.database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
+    this.database = await this.opening;
+  }
+
+  private async openDatabase() {
+    const database = await openDatabaseAsync('qashy.db');
+    try {
+      await database.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+      const row = await database.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+      if ((row?.user_version ?? 0) < 1) {
+        await database.execAsync(`
+          CREATE TABLE IF NOT EXISTS records (
+            record_key TEXT PRIMARY KEY NOT NULL,
+            entity_type TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            deleted_at TEXT
+          );
+          CREATE INDEX IF NOT EXISTS records_entity_type ON records(entity_type);
+        `);
+      }
+      await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
+      return database;
+    } catch (reason) {
+      await database.closeAsync().catch(() => undefined);
+      throw reason;
+    }
   }
 
   async readAll(type: EntityType) {

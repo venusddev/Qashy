@@ -1,4 +1,7 @@
-import { Ionicons } from '@expo/vector-icons';
+// Deep import on purpose. The `@expo/vector-icons` barrel drags every font family
+// it exports into the bundle — 18 TTFs, ~2.5MB — even though only Ionicons is used,
+// and on web all of that lands in the offline precache too.
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
 import { View, type ColorValue } from 'react-native';
 

@@ -43,10 +43,9 @@ const HEBREW: Record<string, string> = {
   'Search base currency': 'חיפוש מטבע בסיס', 'No matching choices': 'לא נמצאו אפשרויות מתאימות',
   'A quieter view of your finances.': 'מבט רגוע יותר על הכספים שלכם.',
   'YOUR MONEY AT A GLANCE': 'הכסף שלכם במבט אחד', 'CURRENT NET WORTH': 'שווי נקי נוכחי',
-  'INCOME THIS MONTH': 'הכנסות החודש', 'SPENT THIS MONTH': 'הוצאות החודש',
   Income: 'הכנסה', Spent: 'הוצאות', 'Net flow': 'תזרים נטו',
-  'Cash flow': 'תזרים מזומנים', 'Spending rhythm': 'קצב ההוצאות', 'Spending by category': 'הוצאות לפי קטגוריה', 'By category': 'לפי קטגוריה',
-  'Budget pulse': 'מצב התקציב', 'Accounts at a glance': 'חשבונות במבט אחד', 'Open plan': 'פתיחת התכנון',
+  'Spending rhythm': 'קצב ההוצאות', 'Spending by category': 'הוצאות לפי קטגוריה', 'By category': 'לפי קטגוריה',
+  'Budget pulse': 'מצב התקציב', 'Open plan': 'פתיחת התכנון',
   'Over budget — review the categories driving it.': 'חריגה מהתקציב — בדקו אילו קטגוריות גורמות לכך.',
   'Create a flexible monthly or custom budget to see your pace here.': 'צרו תקציב חודשי או מותאם כדי לראות כאן את הקצב שלכם.',
   'Create budget': 'יצירת תקציב', Manage: 'ניהול', 'Coming up': 'בהמשך', Skip: 'דילוג', 'Mark paid': 'סימון כשולם',
@@ -150,7 +149,7 @@ const HEBREW: Record<string, string> = {
   'The default category is used only for rows with the same transaction type. Other rows stay uncategorized.': 'קטגוריית ברירת המחדל משמשת רק שורות מאותו סוג תנועה. שורות אחרות נשארות ללא קטגוריה.',
   'Preview import': 'תצוגה מקדימה לייבוא', Ready: 'מוכן', Duplicates: 'כפילויות', Rejected: 'נדחו',
   'From currency': 'ממטבע', 'Effective date': 'תאריך תחולה', 'Save rate': 'שמירת שער', 'Delete rate': 'מחיקת שער',
-  'Try again.': 'נסו שוב.', 'Check the form and try again.': 'בדקו את הטופס ונסו שוב.',
+  'Try again.': 'נסו שוב.', 'Try again': 'נסו שוב', 'Check the form and try again.': 'בדקו את הטופס ונסו שוב.',
   Target: 'יעד', Contribution: 'הפקדה', 'Contribution date': 'תאריך ההפקדה',
   'Contribution amount': 'סכום ההפקדה', 'Contribution note': 'הערת הפקדה',
   'Start date': 'תאריך התחלה', 'Target date': 'תאריך יעד', 'Repeat interval': 'מרווח חזרה',
@@ -233,8 +232,31 @@ const HEBREW: Record<string, string> = {
   Delete: 'מחיקה', Cancel: 'ביטול', 'Primary': 'ראשי', 'A fresh version is ready': 'גרסה חדשה מוכנה', Later: 'אחר כך', Reload: 'טעינה מחדש',
   'Reload when you’re ready. Your finance data stays in IndexedDB.': 'טענו מחדש כשתהיו מוכנים. המידע הפיננסי נשאר ב־IndexedDB.',
   'LOCAL-FIRST FINANCE': 'כספים מקומיים תחילה', 'Your data stays on this device.': 'הנתונים שלכם נשארים במכשיר הזה.',
-  Groceries: 'מצרכים', Dining: 'מסעדות', Transport: 'תחבורה', Home: 'בית', Health: 'בריאות', Fun: 'פנאי',
-  Salary: 'משכורת', 'Other income': 'הכנסה אחרת',
+  // Seeded category and account names are rendered with `literal`, so they never
+  // reach this dictionary — the Hebrew that actually ships lives in
+  // `domain/defaults.ts`. Keeping a second copy here meant two unenforced sources
+  // of truth for the same eight strings.
+  Welcome: 'ברוכים הבאים', 'Page not found': 'הדף לא נמצא', 'Go to Overview': 'מעבר לסקירה',
+  'That address doesn’t match anything in Qashy. Your data is untouched.': 'הכתובת הזו אינה תואמת לדבר ב־Qashy. הנתונים שלכם לא נפגעו.',
+  'Choose an account before entering an amount.': 'בחרו חשבון לפני הזנת סכום.',
+  'Leave blank to calculate through your effective exchange rates.': 'השאירו ריק כדי לחשב לפי שערי החליפין שלכם.',
+  'Importing…': 'מייבא…', 'Rent, salary, subscription…': 'שכר דירה, משכורת, מנוי…',
+  'Kind is locked because transactions, budgets, goals, or schedules reference this category.': 'סוג הקטגוריה נעול מפני שתנועות, תקציבים, יעדים או תזמונים מפנים אליה.',
+  'CSV is transaction portability, not a complete backup. Budgets, goals, schedules, and appearance settings are not included.': 'CSV מיועד להעברת תנועות, לא לגיבוי מלא. תקציבים, יעדים, תזמונים והגדרות מראה אינם נכללים.',
+  'This schedule stays paused until its archived account and category are restored.': 'התזמון יישאר מושהה עד לשחזור החשבון והקטגוריה שבארכיון.',
+  'Discard changes?': 'לבטל את השינויים?', 'This form has unsaved changes.': 'בטופס יש שינויים שלא נשמרו.',
+  Discard: 'ביטול שינויים',
+  'Couldn’t preview CSV': 'לא ניתן להציג תצוגה מקדימה של ה־CSV',
+  'Check the column mapping and try again.': 'בדקו את מיפוי העמודות ונסו שוב.',
+  'Qashy could not reload its local database.': 'Qashy לא הצליח לטעון מחדש את מסד הנתונים המקומי.',
+  'Qashy couldn’t refresh': 'Qashy לא הצליח לרענן',
+  'What you see may be out of date. Your saved data is untouched.': 'ייתכן שהמוצג אינו מעודכן. הנתונים השמורים שלכם לא נפגעו.',
+  Dismiss: 'סגירה',
+  'Export Qashy transactions': 'ייצוא תנועות מ־Qashy',
+  'Account color': 'צבע החשבון', 'Category kind': 'סוג הקטגוריה',
+  'Category icon': 'אייקון הקטגוריה', 'Category color': 'צבע הקטגוריה',
+  'Accent color': 'צבע הדגשה', 'Transaction type filter': 'סינון לפי סוג תנועה',
+  'Goal type': 'סוג היעד',
 };
 
 function translateDynamic(message: string) {
@@ -272,6 +294,8 @@ function translateDynamic(message: string) {
     [/^(.+) can have at most (\d+) decimal places\.$/, (label, digits) => `ל${translateField(label)} יכולות להיות לכל היותר ${digits} ספרות אחרי הנקודה.`],
     [/^(.+) is outside the supported range\.$/, (label) => `${translateField(label)} מחוץ לטווח הנתמך.`],
     [/^Choose a valid (expense|income) category\.$/, (kind) => `בחרו קטגוריית ${translateMessage(kind, 'he')} תקינה.`],
+    [/^Choose a currency other than (.+)\.$/, (currency) => `בחרו מטבע אחר מ־${currency}.`],
+    [/^Map (.+)$/, (field) => `מיפוי ${translateField(field)}`],
     [/^Choose valid (.+) values\.$/, (label) => `בחרו ערכי ${translateField(label)} תקינים.`],
     [/^Could not find the (.+) to update\.$/, (label) => `לא נמצאה רשומת ${translateField(label)} לעדכון.`],
     [/^(.+) is already in use\.$/, (name) => `השם ${name} כבר בשימוש.`],
@@ -315,7 +339,12 @@ export function translateMessage(message: string, language: AppLanguage) {
   const leading = message.match(/^\s*/)?.[0] ?? '';
   const trailing = message.match(/\s*$/)?.[0] ?? '';
   const core = message.slice(leading.length, message.length - trailing.length || undefined);
-  const translated = HEBREW[core] ?? translateDynamic(core);
+  // `hasOwn`, not a bare lookup: HEBREW is an object literal, so a message that
+  // happens to name an Object.prototype member ("constructor", "toString", a
+  // user-entered account called "valueOf") would resolve to the inherited function
+  // and interpolate it into the UI. Nothing reaches this with free-form text today,
+  // but the dictionary should not be able to answer for keys it does not hold.
+  const translated = Object.hasOwn(HEBREW, core) ? HEBREW[core] : translateDynamic(core);
   return `${leading}${translated}${trailing}`;
 }
 

@@ -138,6 +138,13 @@ export function SpendLineChart({ points, currency, locale }: { points: Dashboard
 
 const DONUT_TOP_COUNT = 5;
 
+// An SVG transform string rather than the `rotation`/`origin` convenience props.
+// react-native-svg's web shim turns `origin` into a literal `transform-origin`
+// DOM attribute, which React rejects as a hyphenated property name ("Did you mean
+// transformOrigin?") on every render, and passes `rotation` through as a bogus
+// attribute besides. Both platforms parse this string form natively instead.
+const RING_ROTATION = 'rotate(-90 63 63)';
+
 export function CategoryDonut({ items, currency, locale }: { items: DashboardSummary['categorySpend']; currency: string; locale: string }) {
   const theme = useQashyTheme();
   const { t } = useLocalization();
@@ -218,8 +225,7 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
                 strokeDasharray={`${length} ${circumference - length}`}
                 strokeDashoffset={-offset}
                 strokeLinecap="butt"
-                rotation="-90"
-                origin="63, 63"
+                transform={RING_ROTATION}
               />
           ))}
           <AnimatedCircle
@@ -232,8 +238,7 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
             strokeWidth="17"
             strokeDasharray={`${circumference} ${circumference}`}
             strokeLinecap="butt"
-            rotation="-90"
-            origin="63, 63"
+            transform={RING_ROTATION}
           />
           <SvgText x="63" y="59" textAnchor="middle" fill={theme.textMuted as string} fontSize="10">SPENT</SvgText>
           <SvgText x="63" y="77" textAnchor="middle" fill={theme.text as string} fontSize="13" fontWeight="700">

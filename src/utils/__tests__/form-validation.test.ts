@@ -30,9 +30,9 @@ describe('form validation', () => {
   });
 
   it('validates supported currencies and positive whole intervals', () => {
-    expect(validateCurrencyCode('USD', 'en-US')).toBeUndefined();
-    expect(validateCurrencyCode('ZZZ', 'en-US')).toContain('ISO 4217');
-    expect(validateCurrencyCode('US', 'en-US')).toContain('three-letter');
+    expect(validateCurrencyCode('USD')).toBeUndefined();
+    expect(validateCurrencyCode('ZZZ')).toContain('ISO 4217');
+    expect(validateCurrencyCode('US')).toContain('three-letter');
     expect(validatePositiveInteger('2', 'Interval')).toBeUndefined();
     expect(validatePositiveInteger('1.5', 'Interval')).toContain('whole number');
   });

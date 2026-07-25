@@ -82,7 +82,11 @@ export function parseMoney(value: string, currency: CurrencyCode, locale = 'en-U
       locale,
     );
   } catch (reason) {
-    if (reason instanceof Error && reason.message.startsWith('Amount ')) throw reason;
+    // Preserve anything that already explains itself. Collapsing every failure to
+    // "Enter a valid amount." also swallowed `Unsupported currency or locale: …`
+    // from `currencyDigits`, which points at a configuration problem the user
+    // cannot fix by retyping the number.
+    if (reason instanceof Error && (reason.message.startsWith('Amount ') || reason.message.startsWith('Unsupported currency or locale'))) throw reason;
     throw new Error('Enter a valid amount.');
   }
 }
@@ -94,7 +98,11 @@ export function parseInvariantMoney(value: string, currency: CurrencyCode, local
   try {
     return minorFromDecimal(new Decimal(value.trim()), currency, locale);
   } catch (reason) {
-    if (reason instanceof Error && reason.message.startsWith('Amount ')) throw reason;
+    // Preserve anything that already explains itself. Collapsing every failure to
+    // "Enter a valid amount." also swallowed `Unsupported currency or locale: …`
+    // from `currencyDigits`, which points at a configuration problem the user
+    // cannot fix by retyping the number.
+    if (reason instanceof Error && (reason.message.startsWith('Amount ') || reason.message.startsWith('Unsupported currency or locale'))) throw reason;
     throw new Error('Enter a valid amount.');
   }
 }

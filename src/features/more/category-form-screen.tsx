@@ -1,7 +1,8 @@
-import { Redirect, router, useLocalSearchParams } from 'expo-router';
+import { Redirect, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
 
+import { useFormSheet } from '@/components/navigation/use-form-sheet';
 import { ActionButton } from '@/components/ui/action-button';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
@@ -10,6 +11,7 @@ import { ColorSwatch } from '@/components/ui/color-swatch';
 import { FormField } from '@/components/ui/form-field';
 import { FormScreen } from '@/components/ui/form-screen';
 import type { CategoryKind } from '@/domain/models';
+import { useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { hapticSuccess } from '@/utils/haptics';
@@ -34,6 +36,7 @@ export function CategoryFormScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const repository = useFinanceRepository();
   const state = useFinanceState();
+  const { t } = useLocalization();
   const existing = id ? state.categories.find((item) => item.id === id) : undefined;
   const [expectedRevision] = useState(existing?.revision);
   const [name, setName] = useState(existing?.name ?? '');
@@ -42,6 +45,10 @@ export function CategoryFormScreen() {
   const [icon, setIcon] = useState(existing?.icon ?? ICONS[existing?.kind ?? 'expense'][0][0]);
   const [parentId, setParentId] = useState(existing?.parentId ?? '');
   const [busy, setBusy] = useState(false);
+  const { closeToOwner } = useFormSheet({
+    ownerRoute: '/more',
+    values: { name, kind, color, icon, parentId },
+  });
   // Mirrors the repository rule that a referenced category cannot change kind,
   // matching the account form's locked-currency treatment.
   const kindLocked = !!existing && (
@@ -66,7 +73,7 @@ export function CategoryFormScreen() {
     try {
       await repository.saveCategory({ name: name.trim() || 'Category', kind, color, icon, parentId: selectedParentId || null, archived: false }, existing?.id, expectedRevision);
       hapticSuccess();
-      router.dismissTo('/more');
+      closeToOwner();
     } catch (reason) {
       showError('Couldn’t save category', errorMessage(reason, 'Check the form and try again.'));
     } finally {
@@ -80,7 +87,7 @@ export function CategoryFormScreen() {
     setBusy(true);
     try {
       await repository.saveCategory({ ...existing, archived: true }, existing.id, expectedRevision);
-      router.dismissTo('/more');
+      closeToOwner();
     } catch (reason) {
       showError('Couldn’t archive category', errorMessage(reason, 'Try again.'));
     } finally {
@@ -94,7 +101,7 @@ export function CategoryFormScreen() {
     <FormScreen contentContainerStyle={{ gap: 16 }}>
       <Card style={{ gap: 16 }}>
         <FormField label="Category name" value={name} onChangeText={setName} autoFocus={!existing} />
-        <View accessibilityLabel="Category kind" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>{(['expense', 'income'] as CategoryKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} disabled={kindLocked && kind !== item} onPress={() => {
+        <View accessibilityLabel={t('Category kind')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>{(['expense', 'income'] as CategoryKind[]).map((item) => <View key={item} style={{ flex: 1 }}><ChoiceChip label={item[0].toUpperCase() + item.slice(1)} selected={kind === item} disabled={kindLocked && kind !== item} onPress={() => {
           if (item === kind) return;
           setKind(item);
           setParentId('');
@@ -102,13 +109,13 @@ export function CategoryFormScreen() {
         }} /></View>)}</View>
         {kindLocked ? <AppText variant="caption" muted>Kind is locked because transactions, budgets, goals, or schedules reference this category.</AppText> : null}
         <AppText variant="label">Icon</AppText>
-        <View accessibilityLabel="Category icon" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+        <View accessibilityLabel={t('Category icon')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
           {ICONS[kind].map(([value, label]) => <ChoiceChip key={value} label={label} icon={value} selected={icon === value} onPress={() => setIcon(value)} />)}
         </View>
         <AppText variant="label">Color</AppText>
-        <View accessibilityLabel="Category color" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>{COLORS.map((item) => <ColorSwatch key={item} color={item} selected={color === item} label={`Use ${item} category color`} onPress={() => setColor(item)} />)}</View>
+        <View accessibilityLabel={t('Category color')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>{COLORS.map((item) => <ColorSwatch key={item} color={item} selected={color === item} label={`Use ${item} category color`} onPress={() => setColor(item)} />)}</View>
         <AppText variant="label">Parent category</AppText>
-        <View accessibilityLabel="Parent category" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!selectedParentId} onPress={() => setParentId('')} />{parentChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived || hasChildren} selected={selectedParentId === item.id} onPress={() => setParentId(item.id)} />)}</View>
+        <View accessibilityLabel={t('Parent category')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}><ChoiceChip label="None" selected={!selectedParentId} onPress={() => setParentId('')} />{parentChoices.map((item) => <ChoiceChip key={item.id} literal label={`${item.name}${item.archived ? ' (archived)' : ''}`} disabled={item.archived || hasChildren} selected={selectedParentId === item.id} onPress={() => setParentId(item.id)} />)}</View>
         {hasChildren ? <AppText variant="caption" muted>A category with child categories must stay at the top level.</AppText> : null}
       </Card>
       <ActionButton title={busy ? 'Saving…' : existing ? 'Save category' : 'Create category'} icon="checkmark" onPress={save} disabled={busy} busy={busy} />

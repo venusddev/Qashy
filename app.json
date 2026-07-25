@@ -27,10 +27,10 @@
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png",
-      "name": "Qashy",
+      "name": "Qashy — Calm Budgeting",
       "shortName": "Qashy",
       "themeColor": "#5966E9",
-      "backgroundColor": "#F7F7FB"
+      "backgroundColor": "#F6F7F9"
     },
     "plugins": [
       "expo-router",

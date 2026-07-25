@@ -136,7 +136,12 @@ export class LocalFinanceRepository implements FinanceRepository {
         this.pendingExternalRefresh = true;
         return;
       }
-      void this.refresh();
+      // Mirror `drainExternalRefresh`: a failed reload must not be dropped, or the
+      // tab keeps rendering a snapshot it already knows is out of date. Re-arm so
+      // the next settled mutation retries.
+      this.refresh().catch(() => {
+        this.pendingExternalRefresh = true;
+      });
     });
   }
 
@@ -150,6 +155,8 @@ export class LocalFinanceRepository implements FinanceRepository {
     await this.migrateLoadedState();
     if (!settingsRecords.length) await this.persist('settings', [this.state.settings]);
     await this.generateRecurringNow(addRecurrence(todayLocal(), 'month', 1));
+    // Only now is the snapshot complete enough for screens to render against.
+    this.state = { ...this.state, ready: true };
     this.emit();
   }
 
@@ -649,7 +656,11 @@ export class LocalFinanceRepository implements FinanceRepository {
         !query.accountIds.includes(transaction.accountId) &&
         !(transaction.kind === 'transfer' && transaction.destinationAccountId && query.accountIds.includes(transaction.destinationAccountId))
       ) return false;
-      if (query.categoryIds?.length && (!transaction.categoryId || !query.categoryIds.includes(transaction.categoryId))) return false;
+      // Hierarchy-aware, matching `budgetSpend` and goal progress. Selecting a
+      // parent category used to return nothing for transactions filed under its
+      // children, so the same category could read "spent 240.00" in a budget while
+      // the transaction list filtered to it came back empty.
+      if (query.categoryIds?.length && !this.categoryMatches(transaction.categoryId, query.categoryIds)) return false;
       if (query.tagIds?.length && !query.tagIds.some((id) => transaction.tagIds.includes(id))) return false;
       if (query.kinds?.length && !query.kinds.includes(transaction.kind)) return false;
       if (query.statuses?.length && !query.statuses.includes(transaction.status)) return false;
@@ -1070,10 +1081,22 @@ export class LocalFinanceRepository implements FinanceRepository {
 
     const ruleChanges = this.state.recurringRules.flatMap((rule) => {
       if (type === 'categories' && rule.template.categoryId && deletedIds.has(rule.template.categoryId)) {
-        return [updateEntity(rule, {
-          template: { ...rule.template, categoryId: null },
-          pausedByDependency: false,
-        })];
+        const template = { ...rule.template, categoryId: null };
+        // Dropping the category removes one blocker, not necessarily every one:
+        // clearing `pausedByDependency` unconditionally used to strand a rule whose
+        // account is still archived, because both reactivation gates key off that
+        // flag. Only a rule that is paused *and* now has all of its dependencies
+        // satisfied may come back; a user-paused rule is left exactly as it is.
+        if (!rule.active && rule.pausedByDependency) {
+          const candidate = { ...rule, template };
+          const restored = this.canActivateRecurringRule(candidate, this.state.accounts, this.state.categories);
+          return [updateEntity(rule, {
+            template,
+            active: restored,
+            pausedByDependency: !restored,
+          })];
+        }
+        return [updateEntity(rule, { template })];
       }
       if (type === 'tags' && rule.template.tagIds.some((id) => deletedIds.has(id))) {
         return [updateEntity(rule, {
@@ -1082,6 +1105,9 @@ export class LocalFinanceRepository implements FinanceRepository {
       }
       return [];
     });
+    const reactivatedRule = ruleChanges.some((rule) =>
+      rule.active && this.state.recurringRules.some((item) => item.id === rule.id && !item.active),
+    );
     const contributions = type === 'goals'
       ? this.state.contributions
         .filter((item) => deletedIds.has(item.goalId))
@@ -1195,6 +1221,12 @@ export class LocalFinanceRepository implements FinanceRepository {
     }
     this.state = nextState;
     this.emit();
+    // A rule that came back off dependency-pause has to catch up on the occurrences
+    // it missed while paused, exactly as it does when the blocking account or
+    // category is un-archived.
+    if (reactivatedRule) {
+      await this.generateRecurringNow(addRecurrence(todayLocal(), 'month', 1));
+    }
   }
 
   importCsv(rows: CsvImportRow[], commit = false) {
@@ -1214,11 +1246,20 @@ export class LocalFinanceRepository implements FinanceRepository {
         continue;
       }
       const row = parsed.data;
+      // Match archived accounts too. Names stay unique across archived and active
+      // accounts, so this cannot become ambiguous, and `buildTransaction` still
+      // refuses to post new rows to an archived account. Excluding them from the
+      // lookup instead reported "Unknown account" for a name that plainly exists,
+      // which reads as a corrupt export rather than an archived destination.
       const account = this.active(this.state.accounts).find((item) =>
-        !item.archived && item.name.toLowerCase() === row.account.toLowerCase(),
+        item.name.toLowerCase() === row.account.toLowerCase(),
       );
       if (!account) {
         result.rejectedRows.push({ rowNumber: row.rowNumber, reason: `Unknown account: ${row.account}` });
+        continue;
+      }
+      if (account.archived) {
+        result.rejectedRows.push({ rowNumber: row.rowNumber, reason: `Account ${account.name} is archived.` });
         continue;
       }
       try {
@@ -1228,19 +1269,24 @@ export class LocalFinanceRepository implements FinanceRepository {
         const amountMinor = parseInvariantMoney(row.amount, row.currency, this.state.settings.locale);
         const destination = row.destinationAccount
           ? this.active(this.state.accounts).find((item) =>
-            !item.archived && item.name.toLowerCase() === row.destinationAccount.toLowerCase(),
+            item.name.toLowerCase() === row.destinationAccount.toLowerCase(),
           )
           : undefined;
         if (row.type === 'transfer' && !destination) {
           result.rejectedRows.push({ rowNumber: row.rowNumber, reason: `Unknown destination account: ${row.destinationAccount || 'missing'}` });
           continue;
         }
+        if (destination?.archived) {
+          result.rejectedRows.push({ rowNumber: row.rowNumber, reason: `Account ${destination.name} is archived.` });
+          continue;
+        }
         const category = row.category
           ? this.active(this.state.categories).find((item) =>
-            !item.archived && item.name.toLowerCase() === row.category.toLowerCase(),
+            item.name.toLowerCase() === row.category.toLowerCase(),
           )
           : undefined;
         if (row.category && !category) throw new Error(`Unknown category: ${row.category}`);
+        if (category?.archived) throw new Error(`Category ${category.name} is archived.`);
         const tagNames = [...new Map(
           row.tags
             .split('|')
@@ -1392,7 +1438,11 @@ export class LocalFinanceRepository implements FinanceRepository {
         .filter((transaction) => transaction.deletedAt && transaction.occurrenceKey)
         .map((transaction) => transaction.occurrenceKey!),
     );
-    const next = { ...createInitialState(), settings, ready: true } as FinanceState;
+    // Carry the current readiness rather than asserting it. Hydration is only the
+    // first step of `initializeNow`; migrations, the settings seed, and recurring
+    // generation still follow. Flipping `ready` here published a half-initialized
+    // snapshot to any render that polled `getSnapshot` before `emit()` ran.
+    const next = { ...createInitialState(), settings, ready: this.state.ready } as FinanceState;
     ENTITY_TYPES.forEach((type, index) => {
       (next[type] as FinanceEntity[]) = loaded[index].filter((entity) => !entity.deletedAt);
     });
@@ -1722,6 +1772,15 @@ export class LocalFinanceRepository implements FinanceRepository {
     return periods.length;
   }
 
+  // A snapshot belongs to the budget's current period definition only if resolving
+  // that definition on the snapshot's own start date reproduces the same window.
+  // Snapshots do not store the definition they were built from, so this is how a
+  // stale one is recognised after the user edits unit, interval, or anchor date.
+  private matchesPeriodDefinition(budget: Budget, snapshot: BudgetPeriodSnapshot) {
+    const bounds = resolvePeriod(budget.period, snapshot.periodStart);
+    return bounds.start === snapshot.periodStart && bounds.end === snapshot.periodEnd;
+  }
+
   private buildBudgetSnapshots(
     budget: Budget,
     updateCurrent: boolean,
@@ -1741,9 +1800,17 @@ export class LocalFinanceRepository implements FinanceRepository {
       })];
     }
     const history = this.state.budgetPeriods
-      .filter((item) => item.budgetId === budget.id && item.periodStart < bounds.start)
+      // `periodEnd`, not `periodStart`: a snapshot that merely *started* earlier can
+      // still be running. Editing a budget's unit/interval/anchor moves `bounds.start`
+      // off every stored snapshot, and the old selection then rolled over from a
+      // window whose spend total was not final yet.
+      .filter((item) => item.budgetId === budget.id && item.periodEnd < bounds.start)
       .sort((a, b) => a.periodStart.localeCompare(b.periodStart));
-    const latest = history.at(-1);
+    const candidate = history.at(-1);
+    // Roll over only from a window the current definition would still produce.
+    // Otherwise a budget switched from monthly to weekly inherits a whole month's
+    // unspent limit into its first week.
+    const latest = candidate && this.matchesPeriodDefinition(budget, candidate) ? candidate : undefined;
     const makePeriod = (periodStart: string, periodEnd: string, previous?: BudgetPeriodSnapshot) => {
       const values = {
         budgetId: budget.id,
@@ -2348,7 +2415,11 @@ export class LocalFinanceRepository implements FinanceRepository {
       throw new Error('Exchange rate must be a positive number.');
     }
     if (!rate.isFinite() || !rate.isPositive()) throw new Error('Exchange rate must be a positive number.');
-    return rate.toSignificantDigits(20).toString();
+    // `toFixed`, not `toString`: decimal.js switches to exponential notation below
+    // 1e-7 (`toExpNeg`), which real pairs such as IRR→BHD reach. Rates are stored as
+    // decimal strings, and `normalizeDecimalString` would reject "8.9e-9" if such a
+    // value were ever fed back through form input.
+    return rate.toSignificantDigits(20).toFixed();
   }
 
   private assertLocale(value: string) {

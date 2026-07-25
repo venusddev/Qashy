@@ -76,4 +76,14 @@ describe('CSV utilities', () => {
     const table = parseCsvTable(`title\n${escapeCsv("'=SUM(A1:A9)")}`);
     expect(table.rows[0].title).toBe("'=SUM(A1:A9)");
   });
+
+  it('round-trips values that already start with two apostrophes', () => {
+    // The export guard's character class has to match the importer's strip
+    // lookahead exactly. While it omitted the apostrophe, a title beginning `''`
+    // came back one apostrophe shorter on every export/import cycle.
+    for (const value of ["''hello", "''=SUM(A1)", "'''x", "'hello", '=SUM(A1)', '-5', '-abc', "''"]) {
+      const table = parseCsvTable(`title\n${escapeCsv(value)}`);
+      expect(table.rows[0].title).toBe(value);
+    }
+  });
 });

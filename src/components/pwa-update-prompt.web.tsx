@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -16,32 +16,40 @@ declare global {
 
 export function PwaUpdatePrompt() {
   const [visible, setVisible] = useState(false);
+  const controllerChanged = useRef(false);
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const theme = useQashyTheme();
   useEffect(() => {
-    const show = () => setVisible(true);
-    window.addEventListener('qashy-sw-update', show);
     const canRegister =
       'serviceWorker' in navigator &&
       (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1');
-    if (canRegister) {
-      navigator.serviceWorker.register('/sw.js').then((registration) => {
-        const announce = (worker: ServiceWorker) => {
-          window.__qashyWaitingWorker = worker;
-          setVisible(true);
-        };
-        if (registration.waiting) announce(registration.waiting);
-        registration.addEventListener('updatefound', () => {
-          const worker = registration.installing;
-          if (!worker) return;
-          worker.addEventListener('statechange', () => {
-            if (worker.state === 'installed' && navigator.serviceWorker.controller) announce(worker);
-          });
+    if (!canRegister) return;
+    // `clientsClaim` means the worker another tab activates claims this one too, and
+    // that `controllerchange` fires exactly once. Listening only from inside the
+    // Reload handler missed it, so the second tab's Reload then waited forever on a
+    // transition that had already happened and stayed on the old bundle. Watch from
+    // mount and just record it; reloading uninvited would discard whatever the user
+    // is in the middle of typing.
+    const onControllerChange = () => {
+      controllerChanged.current = true;
+    };
+    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+    navigator.serviceWorker.register('/sw.js').then((registration) => {
+      const announce = (worker: ServiceWorker) => {
+        window.__qashyWaitingWorker = worker;
+        setVisible(true);
+      };
+      if (registration.waiting) announce(registration.waiting);
+      registration.addEventListener('updatefound', () => {
+        const worker = registration.installing;
+        if (!worker) return;
+        worker.addEventListener('statechange', () => {
+          if (worker.state === 'installed' && navigator.serviceWorker.controller) announce(worker);
         });
-      }).catch(() => undefined);
-    }
-    return () => window.removeEventListener('qashy-sw-update', show);
+      });
+    }).catch(() => undefined);
+    return () => navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
   }, []);
   if (!visible) return null;
   return (
@@ -66,11 +74,13 @@ export function PwaUpdatePrompt() {
             <TextButton title="Later" tone="muted" onPress={() => setVisible(false)} />
             <TextButton title="Reload" onPress={() => {
               const worker = window.__qashyWaitingWorker;
-              if (!worker) {
+              // Nothing waiting, or another tab already promoted it: the new worker
+              // is live, so a plain reload picks it up. Waiting on `controllerchange`
+              // here would hang, because that event has already been and gone.
+              if (!worker || controllerChanged.current || worker.state === 'activated') {
                 window.location.reload();
                 return;
               }
-              setVisible(false);
               navigator.serviceWorker.addEventListener(
                 'controllerchange',
                 () => window.location.reload(),

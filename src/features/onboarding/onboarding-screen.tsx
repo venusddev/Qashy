@@ -21,7 +21,7 @@ import { FormField } from '@/components/ui/form-field';
 import { MotionView } from '@/components/ui/motion';
 import { defaultAccountName, initialLocalePreferences, QASHY_ACCENT } from '@/domain/defaults';
 import type { AccountType, AccentSource, ThemeMode } from '@/domain/models';
-import { APP_LANGUAGE_OPTIONS, languageFromLocale } from '@/localization/localization';
+import { APP_LANGUAGE_OPTIONS, languageFromLocale, useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { ACCENT_PRESETS, radius } from '@/theme/tokens';
@@ -76,6 +76,7 @@ export function OnboardingScreen() {
   const repository = useFinanceRepository();
   const { settings } = useFinanceState();
   const theme = useQashyTheme();
+  const { t } = useLocalization();
   const { width } = useWindowDimensions();
   const [startingPreferences] = useState(() => initialLocalePreferences(settings));
   const [step, setStep] = useState(0);
@@ -118,7 +119,7 @@ export function OnboardingScreen() {
   };
   const localeError = validateLocale(locale);
   const localeValid = !localeError;
-  const currencyError = validateCurrencyCode(currency, localeValid ? locale : 'en-US');
+  const currencyError = validateCurrencyCode(currency);
   const currencyValid = !currencyError;
   const openingError = localeValid && currencyValid
     ? validateMoneyInput(openingBalance, currency, locale, { label: 'Opening balance' })
@@ -258,7 +259,7 @@ export function OnboardingScreen() {
               <View style={{ gap: 16 }}>
                 <FormField label="Account name" value={accountName} onChangeText={setAccountName} placeholder="Everyday" />
                 <AppText variant="label">Account type</AppText>
-                <View accessibilityLabel="Account type" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                <View accessibilityLabel={t('Account type')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                   {(['checking', 'cash', 'savings', 'credit', 'wallet'] as AccountType[]).map((item) => (
                     <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={accountType === item} onPress={() => setAccountType(item)} />
                   ))}
@@ -270,11 +271,11 @@ export function OnboardingScreen() {
             {step === 3 ? (
               <View style={{ gap: 18 }}>
                 <AppText variant="label">Appearance</AppText>
-                <View accessibilityLabel="Appearance" accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                <View accessibilityLabel={t('Appearance')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                   {(['system', 'light', 'dark'] as ThemeMode[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={themeMode === item} onPress={() => { setThemeMode(item); applySetupSettings({ themeMode: item }); }} />)}
                 </View>
                 <AppText variant="label">Accent</AppText>
-                <View accessibilityLabel="Accent color" accessibilityRole="radiogroup" style={{ gap: 12 }}>
+                <View accessibilityLabel={t('Accent color')} accessibilityRole="radiogroup" style={{ gap: 12 }}>
                   <ChoiceChip label="System accent" selected={accentSource === 'system'} onPress={() => { setAccentSource('system'); applySetupSettings({ accentSource: 'system' }); }} icon="paintbrush" />
                   <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
                     {ACCENT_PRESETS.map((color) => (

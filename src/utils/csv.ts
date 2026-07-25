@@ -191,8 +191,11 @@ export function escapeCsv(value: unknown) {
   // character has to be escaped too: the importer strips one leading
   // apostrophe, so exporting a literal `'=SUM(A1)` unchanged would re-import it
   // as the live formula `=SUM(A1)`.
+  // This class must stay identical to the lookahead in `unescapeCsvFormula`: any
+  // value the importer would strip an apostrophe from has to be doubled here, and
+  // that includes a value already starting with two apostrophes.
   const dangerous = /^[=+@\t\r-]/.test(text) && !/^-?\d+(\.\d+)?$/.test(text);
-  if (dangerous || /^'[=+@\t\r-]/.test(text)) text = `'${text}`;
+  if (dangerous || /^'['=+@\t\r-]/.test(text)) text = `'${text}`;
   if (!/[",\r\n]/.test(text)) return text;
   return `"${text.replace(/"/g, '""')}"`;
 }

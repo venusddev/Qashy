@@ -44,6 +44,19 @@ const timingConfig = {
   reduceMotion: ReduceMotion.System,
 } as const;
 
+// Layout animations only. Reanimated's web implementation runs entering/exiting/
+// layout through CSS, and it can only translate a bare `WebEasings` name or an
+// `Easing.bezier`. A composed easing like `Easing.out(Easing.cubic)` is neither, so
+// it warned "Selected easing is not currently supported on web" for every animated
+// mount — dozens per screen — and then silently ran the animation *linear*. These
+// are the standard cubic-bezier forms of the same two curves, so the warning goes
+// away and web finally eases the way native already did.
+//
+// `timingConfig` above stays as-is: `withTiming` runs on the worklet path, which
+// evaluates any easing correctly on both platforms.
+const EASE_OUT_CUBIC = Easing.bezier(0.33, 1, 0.68, 1);
+const EASE_IN_CUBIC = Easing.bezier(0.32, 0, 0.67, 0);
+
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 const REST_STATE: PressableStateCallbackType = { pressed: false, hovered: false };
@@ -117,7 +130,7 @@ function enteringAnimation(variant: MotionVariant, delay: number, duration = 220
   return animation
     .duration(duration)
     .delay(delay)
-    .easing(Easing.out(Easing.cubic))
+    .easing(EASE_OUT_CUBIC)
     .reduceMotion(ReduceMotion.System);
 }
 
@@ -135,7 +148,7 @@ function exitingAnimation(variant: MotionVariant) {
             : FadeOut;
   return animation
     .duration(140)
-    .easing(Easing.in(Easing.cubic))
+    .easing(EASE_IN_CUBIC)
     .reduceMotion(ReduceMotion.System);
 }
 
@@ -157,7 +170,7 @@ export function MotionView({
   const exiting = useMemo(() => exit ? exitingAnimation(variant) : undefined, [exit, variant]);
   const layout = useMemo(
     () => animateLayout
-      ? LinearTransition.duration(180).easing(Easing.out(Easing.cubic)).reduceMotion(ReduceMotion.System)
+      ? LinearTransition.duration(180).easing(EASE_OUT_CUBIC).reduceMotion(ReduceMotion.System)
       : undefined,
     [animateLayout],
   );

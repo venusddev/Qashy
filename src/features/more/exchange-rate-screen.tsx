@@ -1,6 +1,7 @@
-import { Redirect, router, useLocalSearchParams } from 'expo-router';
+import { Redirect, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 
+import { useFormSheet } from '@/components/navigation/use-form-sheet';
 import { ActionButton } from '@/components/ui/action-button';
 import { Card } from '@/components/ui/card';
 import { FormField } from '@/components/ui/form-field';
@@ -31,7 +32,11 @@ export function ExchangeRateScreen() {
     : '1');
   const [effectiveDate, setEffectiveDate] = useState(existing?.effectiveDate ?? todayLocal());
   const [saving, setSaving] = useState(false);
-  const currencyError = validateCurrencyCode(fromCurrency, state.settings.locale)
+  const { closeToOwner } = useFormSheet({
+    ownerRoute: '/more',
+    values: { fromCurrency, rate, effectiveDate },
+  });
+  const currencyError = validateCurrencyCode(fromCurrency)
     ?? (fromCurrency.toUpperCase() === state.settings.baseCurrency
       ? `Choose a currency other than ${state.settings.baseCurrency}.`
       : undefined);
@@ -49,7 +54,7 @@ export function ExchangeRateScreen() {
         effectiveDate,
       }, existing?.id, expectedRevision);
       hapticSuccess();
-      router.dismissTo('/more');
+      closeToOwner();
     } catch (reason) {
       showError('Couldn’t save rate', errorMessage(reason, 'Check the form and try again.'));
     } finally {
@@ -62,7 +67,7 @@ export function ExchangeRateScreen() {
     setSaving(true);
     try {
       await repository.deleteEntities('exchangeRates', [existing.id]);
-      router.dismissTo('/more');
+      closeToOwner();
     } catch (reason) {
       showError('Couldn’t delete rate', errorMessage(reason, 'Try again.'));
     } finally {

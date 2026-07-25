@@ -1,4 +1,4 @@
-import { createContext, use, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, use, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { ActivityIndicator, AppState, Pressable, Text, View, useColorScheme } from 'react-native';
 
 import type { FinanceRepository } from '@/data/repository';
@@ -14,8 +14,20 @@ interface FinanceContextValue {
 
 const FinanceContext = createContext<FinanceContextValue | null>(null);
 
+interface FinanceReloadValue {
+  /** Set when a resume-time reconcile failed. The snapshot on screen is stale. */
+  error: string | null;
+  retry: () => void;
+  dismiss: () => void;
+}
+
+// Separate from FinanceContext so a failed background reload re-renders only the
+// banner that reports it, not every screen subscribed to the finance snapshot.
+const FinanceReloadContext = createContext<FinanceReloadValue | null>(null);
+
 export function FinanceProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
+  const [reloadError, setReloadError] = useState<string | null>(null);
   // This component renders above QashyThemeProvider, so it themes its own
   // loading and error states from the static token sets.
   const scheme = useColorScheme();
@@ -33,13 +45,24 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const reconcile = useCallback(() => {
+    if (!financeRepository.getSnapshot().ready) return;
+    financeRepository.refresh()
+      .then(() => financeRepository.generateRecurring())
+      .then(() => setReloadError(null))
+      .catch((reason: unknown) => {
+        // Storage can become unusable while the app is backgrounded — an evicted
+        // native handle, or IndexedDB hitting its quota. Discarding this left the app
+        // showing stale figures with no sign anything had failed. Reporting it as a
+        // startup error was the opposite mistake: a *background* refresh would then
+        // unmount the whole tree and take any half-filled form down with it, and a
+        // rule that throws during generation would repeat that on every resume.
+        // Report it in place so the user can retry, or keep working and ignore it.
+        setReloadError(reason instanceof Error ? reason.message : 'Qashy could not reload its local database.');
+      });
+  }, []);
+
   useEffect(() => {
-    const reconcile = () => {
-      if (!financeRepository.getSnapshot().ready) return;
-      financeRepository.refresh()
-        .then(() => financeRepository.generateRecurring())
-        .catch(() => undefined);
-    };
     if (typeof document !== 'undefined') {
       const onVisibilityChange = () => {
         if (document.visibilityState === 'visible') reconcile();
@@ -59,7 +82,16 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       previousState = nextState;
     });
     return () => subscription.remove();
-  }, []);
+  }, [reconcile]);
+
+  const reloadValue = useMemo(() => ({
+    error: reloadError,
+    retry: () => {
+      setReloadError(null);
+      reconcile();
+    },
+    dismiss: () => setReloadError(null),
+  }), [reloadError, reconcile]);
 
   if (error) {
     return (
@@ -89,7 +121,19 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     );
   }
 
-  return <FinanceContext value={contextValue}>{children}</FinanceContext>;
+  return (
+    <FinanceContext value={contextValue}>
+      <FinanceReloadContext value={reloadValue}>{children}</FinanceReloadContext>
+    </FinanceContext>
+  );
+}
+
+/**
+ * Reports a failed resume-time reload. Returns null outside the provider so the
+ * banner can be rendered from the root navigator without asserting ordering.
+ */
+export function useFinanceReload() {
+  return use(FinanceReloadContext);
 }
 
 export function useFinanceRepository() {
