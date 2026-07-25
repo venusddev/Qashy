@@ -1,7 +1,7 @@
 import { useWindowDimensions, type ViewProps, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { MotionView } from '@/components/ui/motion';
+import { ScreenTransition } from '@/components/ui/motion';
 
 const IS_WEB = process.env.EXPO_OS === 'web';
 
@@ -42,9 +42,8 @@ export function ScreenContainer({ style, ...props }: ViewProps) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   return (
-    <MotionView
+    <ScreenTransition
       {...props}
-      variant="up"
       style={[screenContentMetrics(width, insets), { gap: 20 }, style]}
     />
   );

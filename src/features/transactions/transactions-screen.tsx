@@ -11,7 +11,7 @@ import { Card } from '@/components/ui/card';
 import { ChoiceChip } from '@/components/ui/choice-chip';
 import { FloatingActionButton } from '@/components/ui/floating-action-button';
 import { IconButton } from '@/components/ui/icon-button';
-import { MotionView } from '@/components/ui/motion';
+import { MotionView, ScreenTransition } from '@/components/ui/motion';
 import { PageHeading } from '@/components/ui/page-heading';
 import { screenContentMetrics } from '@/components/ui/screen-container';
 import { TextButton } from '@/components/ui/text-button';
@@ -103,7 +103,7 @@ export function TransactionsScreen() {
 
   return (
     <View collapsable={false} style={{ flex: 1, backgroundColor: theme.background }}>
-      <MotionView variant="fade" style={{ flex: 1 }}>
+      <ScreenTransition style={{ flex: 1 }}>
       <SectionList
       contentInsetAdjustmentBehavior="automatic"
       onScroll={onScroll}
@@ -202,8 +202,8 @@ export function TransactionsScreen() {
           <AppText literal variant="caption" muted>{shortDate(section.title, state.settings.locale).toUpperCase()}</AppText>
         </View>
       )}
-      renderItem={({ item, index, section }) => (
-        <MotionView delay={Math.min(index, 5) * 24} animateLayout exit>
+      renderItem={({ item }) => (
+        <MotionView entrance={false} animateLayout exit>
           <Card style={{ paddingVertical: 0, paddingHorizontal: 14, marginBottom: 4, backgroundColor: selectedIds.includes(item.id) ? theme.accentContainer : theme.surface }}>
             <TransactionRow
               transaction={item}
@@ -220,7 +220,7 @@ export function TransactionsScreen() {
         </MotionView>
       )}
       ListEmptyComponent={
-        <MotionView variant="zoom" style={{ alignItems: 'center', gap: 12, paddingVertical: 72 }}>
+        <MotionView variant="down" style={{ alignItems: 'center', gap: 12, paddingVertical: 72 }}>
           <View style={{ width: 58, height: 58, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="magnifyingglass" color={theme.accent} size={24} /></View>
           <AppText variant="headline">{search || kind !== 'all' ? 'Nothing matches' : 'No transactions yet'}</AppText>
           <AppText muted style={{ textAlign: 'center' }}>{search || kind !== 'all' ? 'Try another search or filter.' : 'Add your first income, expense, or transfer.'}</AppText>
@@ -228,7 +228,7 @@ export function TransactionsScreen() {
       }
       ListFooterComponent={<View style={{ height: 72 }} />}
       />
-      </MotionView>
+      </ScreenTransition>
       <FloatingActionButton
         label="Add transaction"
         visibility={fabVisibility}

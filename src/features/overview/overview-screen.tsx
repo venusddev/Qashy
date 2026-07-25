@@ -177,8 +177,8 @@ export function OverviewScreen() {
           </Card>
           <Card style={{ flex: 1, gap: 14 }}>
             <SectionHeader title="Accounts" action="Manage" onAction={() => router.push('/more')} />
-            {summary.accountBalances.map(({ account, balanceMinor }, index) => (
-              <MotionView key={account.id} delay={Math.min(index, 5) * 35} variant="right">
+            {summary.accountBalances.map(({ account, balanceMinor }) => (
+              <MotionView key={account.id} variant="fade" animateLayout exit>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                   <View style={{ width: 38, height: 38, borderRadius: radius.control, backgroundColor: account.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="wallet" color={readableTextColor(account.color)} size={17} /></View>
                   <View style={{ flex: 1 }}><AppText literal variant="label">{account.name}</AppText><AppText literal variant="caption" muted>{`${account.currency} · ${t(account.type)}`}</AppText></View>
@@ -192,8 +192,8 @@ export function OverviewScreen() {
         {summary.upcomingTransactions.length ? (
           <Card style={{ gap: 6 }}>
             <SectionHeader title="Coming up" />
-            {summary.upcomingTransactions.map((transaction, index) => (
-              <MotionView key={transaction.id} delay={Math.min(index, 4) * 35} animateLayout exit style={{ gap: 2 }}>
+            {summary.upcomingTransactions.map((transaction) => (
+              <MotionView key={transaction.id} variant="fade" animateLayout exit style={{ gap: 2 }}>
                 <TransactionRow transaction={transaction} compact returnTo="/overview" />
                 <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
                   <TextButton title="Skip" tone="muted" disabled={pendingUpcomingId !== null} onPress={() => resolveUpcoming(transaction.id, 'skip')} />
@@ -206,12 +206,12 @@ export function OverviewScreen() {
 
         <Card style={{ gap: 4 }}>
           <SectionHeader title="Recent activity" action="See all" onAction={() => router.push('/transactions')} />
-          {summary.recentTransactions.length ? summary.recentTransactions.map((transaction, index) => (
-            <MotionView key={transaction.id} delay={Math.min(index, 5) * 30} variant="right">
+          {summary.recentTransactions.length ? summary.recentTransactions.map((transaction) => (
+            <MotionView key={transaction.id} variant="fade" animateLayout exit>
               <TransactionRow transaction={transaction} returnTo="/overview" />
             </MotionView>
           )) : (
-            <MotionView variant="zoom" style={{ alignItems: 'center', gap: 12, paddingVertical: 28 }}>
+            <MotionView variant="down" style={{ alignItems: 'center', gap: 12, paddingVertical: 28 }}>
               <View style={{ width: 52, height: 52, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="arrow.left.arrow.right" color={theme.onAccentContainer} size={24} /></View>
               <AppText variant="headline">{state.transactions.length ? `No activity in ${monthLabel(month, locale)}` : 'Your ledger is ready'}</AppText>
               <AppText muted style={{ textAlign: 'center' }}>{state.transactions.length ? 'Choose another month or open the full transaction list.' : 'Add the first transaction and Qashy will turn it into useful context.'}</AppText>

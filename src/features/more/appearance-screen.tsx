@@ -67,7 +67,7 @@ export function AppearanceScreen() {
           <View accessibilityLabel={t('Appearance')} accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{(['system', 'light', 'dark'] as ThemeMode[]).map((item) => <ChoiceChip key={item} label={item[0].toUpperCase() + item.slice(1)} selected={mode === item} onPress={() => { setMode(item); setSaved(false); }} />)}</View>
         </Card>
       </MotionView>
-      <MotionView delay={45}>
+      <MotionView>
         <Card style={{ gap: 16 }}>
           <AppText variant="headline">Accent source</AppText>
           <View accessibilityLabel={t('Accent source')} accessibilityRole="radiogroup" style={{ gap: 12 }}>
@@ -81,14 +81,14 @@ export function AppearanceScreen() {
           <FormField label="Custom accent" value={hex} onChangeText={(value) => { setSource('custom'); setHex(value); setSaved(false); }} autoCapitalize="characters" maxLength={7} error={customError} hint="Only the accent changes. Qashy gently adjusts unsafe colors to preserve contrast." />
         </Card>
       </MotionView>
-      <MotionView key={`${mode}-${source}-${hex}`} variant="zoom" exit animateLayout>
+      <MotionView key={`${mode}-${source}-${hex}`} variant="fade" exit animateLayout>
         <Card style={{ backgroundColor: preview.accent, gap: 6 }}>
           <AppText variant="caption" style={previewMutedStyle}>PREVIEW</AppText>
           <AppText variant="headline" style={{ color: preview.onAccent }}>Color, contrast, and clarity</AppText>
           <AppText style={previewMutedStyle}>Qashy adapts the same hierarchy across iOS, Android, and desktop.</AppText>
         </Card>
       </MotionView>
-      <MotionView delay={90}>
+      <MotionView>
         <ActionButton title={saving ? 'Saving…' : saved ? 'Saved' : 'Save appearance'} icon="checkmark" disabled={saving || Boolean(customError)} busy={saving} onPress={save} />
       </MotionView>
     </ScrollView>

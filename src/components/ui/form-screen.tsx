@@ -1,6 +1,6 @@
 import { KeyboardAvoidingView, ScrollView, type ScrollViewProps } from 'react-native';
 
-import { MotionView } from '@/components/ui/motion';
+import { ScreenTransition } from '@/components/ui/motion';
 import { useQashyTheme } from '@/theme/theme';
 
 // Shared scroll container for form screens: taps on chips and buttons land on
@@ -9,7 +9,7 @@ import { useQashyTheme } from '@/theme/theme';
 export function FormScreen({ children, contentContainerStyle, maxWidth = 680, ...props }: ScrollViewProps & { maxWidth?: number }) {
   const theme = useQashyTheme();
   const scroll = (
-    <MotionView variant="fade" style={{ flex: 1 }}>
+    <ScreenTransition style={{ flex: 1 }}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
@@ -21,7 +21,7 @@ export function FormScreen({ children, contentContainerStyle, maxWidth = 680, ..
         {...props}>
         {children}
       </ScrollView>
-    </MotionView>
+    </ScreenTransition>
   );
   if (process.env.EXPO_OS === 'web') return scroll;
   return (

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -15,20 +15,47 @@ import Animated, {
   FadeInRight,
   FadeInUp,
   FadeOut,
-  FadeOutDown,
-  FadeOutLeft,
-  FadeOutRight,
-  FadeOutUp,
   LinearTransition,
   ReduceMotion,
   ZoomIn,
-  ZoomOut,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
+
+// ── The motion system ───────────────────────────────────────────────────────
+// One curve family, two durations, one travel distance, no overshoot. Motion
+// here exists to explain a change, never to announce itself: content settles
+// into the place it already belongs instead of flying in from off-screen, and
+// nothing bounces — an overshoot on a surface the user did not physically drag
+// is the single thing that makes an interface read as a toy.
+export const motionDurations = {
+  /** Anything arriving or changing in place. */
+  enter: 200,
+  /** Anything leaving. Exits are always faster than entrances. */
+  exit: 120,
+  /** Reflow after an insert, delete, or resize. */
+  layout: 200,
+  /** A whole screen cross-fading in behind a navigation. */
+  screen: 180,
+} as const;
+
+// How far anything travels while it fades. Small enough to read as a settle
+// rather than a flight; the fade carries the change, the offset only hints at
+// where it came from.
+const TRAVEL = 8;
+
+// Reanimated's web implementation runs entering/exiting/layout through CSS, and
+// it can only translate a bare `WebEasings` name or an `Easing.bezier`. A
+// composed easing like `Easing.out(Easing.cubic)` is neither, so it warned
+// "Selected easing is not currently supported on web" for every animated mount
+// — dozens per screen — and then silently ran the animation *linear*. Both
+// curves below are `Easing.bezier`, so they resolve identically on the CSS path
+// and the worklet path and can be shared by every animation in the app.
+const EASE_STANDARD = Easing.bezier(0.2, 0, 0, 1);
+const EASE_EXIT = Easing.bezier(0.4, 0, 1, 1);
 
 const springConfig = {
   damping: 20,
@@ -39,23 +66,10 @@ const springConfig = {
 } as const;
 
 const timingConfig = {
-  duration: 150,
-  easing: Easing.out(Easing.cubic),
+  duration: motionDurations.exit,
+  easing: EASE_STANDARD,
   reduceMotion: ReduceMotion.System,
 } as const;
-
-// Layout animations only. Reanimated's web implementation runs entering/exiting/
-// layout through CSS, and it can only translate a bare `WebEasings` name or an
-// `Easing.bezier`. A composed easing like `Easing.out(Easing.cubic)` is neither, so
-// it warned "Selected easing is not currently supported on web" for every animated
-// mount — dozens per screen — and then silently ran the animation *linear*. These
-// are the standard cubic-bezier forms of the same two curves, so the warning goes
-// away and web finally eases the way native already did.
-//
-// `timingConfig` above stays as-is: `withTiming` runs on the worklet path, which
-// evaluates any easing correctly on both platforms.
-const EASE_OUT_CUBIC = Easing.bezier(0.33, 1, 0.68, 1);
-const EASE_IN_CUBIC = Easing.bezier(0.32, 0, 0.67, 0);
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -133,49 +147,109 @@ function isWorkletSafe(value: unknown) {
   return typeof value === 'number' || typeof value === 'string';
 }
 
-function enteringAnimation(variant: MotionVariant, delay: number, duration = 220) {
+// The presets ship with a 25px offset and ZoomIn starts from scale 0, which is
+// what made every mount look like it was being performed. `withInitialValues`
+// is honoured on both the worklet path and the CSS path, so overriding the
+// start state keeps one implementation for both platforms.
+function enteringAnimation(variant: MotionVariant, delay: number, duration: number = motionDurations.enter) {
+  // Every branch has to be a builder *instance* rather than the class, or the
+  // union of them loses the chainable config methods below.
   const animation = variant === 'fade'
-    ? FadeIn
+    ? FadeIn.withInitialValues({ opacity: 0 })
     : variant === 'down'
-      ? FadeInDown
+      ? FadeInDown.withInitialValues({ transform: [{ translateY: TRAVEL }] })
       : variant === 'left'
-        ? FadeInLeft
+        ? FadeInLeft.withInitialValues({ transform: [{ translateX: -TRAVEL }] })
         : variant === 'right'
-          ? FadeInRight
+          ? FadeInRight.withInitialValues({ transform: [{ translateX: TRAVEL }] })
           : variant === 'zoom'
-            ? ZoomIn
-            : FadeInUp;
+            ? ZoomIn.withInitialValues({ transform: [{ scale: 0.94 }] })
+            : FadeInUp.withInitialValues({ transform: [{ translateY: -TRAVEL }] });
   return animation
     .duration(duration)
     .delay(delay)
-    .easing(EASE_OUT_CUBIC)
+    .easing(EASE_STANDARD)
     .reduceMotion(ReduceMotion.System);
 }
 
-function exitingAnimation(variant: MotionVariant) {
-  const animation = variant === 'down'
-    ? FadeOutDown
-    : variant === 'left'
-      ? FadeOutRight
-      : variant === 'right'
-        ? FadeOutLeft
-        : variant === 'up'
-          ? FadeOutUp
-          : variant === 'zoom'
-            ? ZoomOut
-            : FadeOut;
-  return animation
-    .duration(140)
-    .easing(EASE_IN_CUBIC)
+// Every exit is a plain fade, whatever the entrance was. Direction is
+// information about where content is *going*, and content being removed isn't
+// going anywhere — the incoming element already carries the direction. Keeping
+// exits uniform also sidesteps the presets' fixed 25px exit offset, which
+// `withInitialValues` cannot reach because it only overrides the start state.
+function exitingAnimation() {
+  return FadeOut
+    .duration(motionDurations.exit)
+    .easing(EASE_EXIT)
     .reduceMotion(ReduceMotion.System);
+}
+
+type SettledRef = { current: boolean };
+
+const ScreenEntranceContext = createContext<SettledRef | null>(null);
+
+/**
+ * Whether an element that is mounting right now has earned an entrance.
+ *
+ * Reanimated fires `entering` whenever a node mounts, and navigating to a tab
+ * mounts every node on that screen at once — so the whole screen replayed its
+ * choreography on every single visit. That reads as a performance rather than a
+ * response. Inside a `ScreenTransition`, anything mounting as part of the
+ * screen's first paint skips its entrance and simply arrives with the screen's
+ * own cross-fade; anything mounting *later* — a new transaction, an expanded
+ * section, a filter result — still animates, because there the motion is
+ * feedback for something the user just did.
+ *
+ * The answer is captured once, at mount, so an element that arrived with the
+ * screen cannot start animating later just because it re-rendered.
+ */
+function useEntranceAllowed(enabled: boolean) {
+  const settled = useContext(ScreenEntranceContext);
+  const [allowedAtMount] = useState(() => settled === null || settled.current);
+  return enabled && allowedAtMount;
+}
+
+/**
+ * Wraps a screen's content: cross-fades the screen itself and suppresses the
+ * per-element entrances underneath it for that first paint.
+ */
+export function ScreenTransition({ style, ...props }: ViewProps) {
+  const settled = useRef(false);
+
+  useEffect(() => {
+    // Two frames: one for this commit to paint, one for children that only
+    // mount after measuring themselves (the charts size from `onLayout`).
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => {
+        settled.current = true;
+      });
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+    };
+  }, []);
+
+  const entering = useMemo(
+    () => FadeIn.duration(motionDurations.screen).easing(EASE_STANDARD).reduceMotion(ReduceMotion.System),
+    [],
+  );
+
+  return (
+    <ScreenEntranceContext.Provider value={settled}>
+      <Animated.View {...props} entering={entering} style={style} />
+    </ScreenEntranceContext.Provider>
+  );
 }
 
 export function MotionView({
   variant = 'up',
   delay = 0,
-  duration = 220,
+  duration = motionDurations.enter,
   animateLayout = false,
   exit = false,
+  entrance = true,
   ...props
 }: ViewProps & {
   variant?: MotionVariant;
@@ -183,12 +257,21 @@ export function MotionView({
   duration?: number;
   animateLayout?: boolean;
   exit?: boolean;
+  /**
+   * Opt out of the entrance entirely. For virtualised rows, where "mounting"
+   * only means the row scrolled into the render window.
+   */
+  entrance?: boolean;
 }) {
-  const entering = useMemo(() => enteringAnimation(variant, delay, duration), [delay, duration, variant]);
-  const exiting = useMemo(() => exit ? exitingAnimation(variant) : undefined, [exit, variant]);
+  const allowEntrance = useEntranceAllowed(entrance);
+  const entering = useMemo(
+    () => allowEntrance ? enteringAnimation(variant, delay, duration) : undefined,
+    [allowEntrance, delay, duration, variant],
+  );
+  const exiting = useMemo(() => exit ? exitingAnimation() : undefined, [exit]);
   const layout = useMemo(
     () => animateLayout
-      ? LinearTransition.duration(180).easing(EASE_OUT_CUBIC).reduceMotion(ReduceMotion.System)
+      ? LinearTransition.duration(motionDurations.layout).easing(EASE_STANDARD).reduceMotion(ReduceMotion.System)
       : undefined,
     [animateLayout],
   );
@@ -315,9 +398,10 @@ export function MotionPressable({
 
   const { wrapperStyle, contentStyle: pressableStyle } = splitWrapperStyle(flattenedStyle);
   const resolvedChildren = typeof children === 'function' ? children(state) : children;
+  const allowEntrance = useEntranceAllowed(Boolean(enteringVariant));
   const entering = useMemo(
-    () => enteringVariant ? enteringAnimation(enteringVariant, enteringDelay) : undefined,
-    [enteringDelay, enteringVariant],
+    () => allowEntrance && enteringVariant ? enteringAnimation(enteringVariant, enteringDelay) : undefined,
+    [allowEntrance, enteringDelay, enteringVariant],
   );
 
   return (

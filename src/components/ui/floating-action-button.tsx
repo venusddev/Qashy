@@ -51,8 +51,9 @@ export function FloatingActionButton({
         variant="accent"
         size={58}
         iconSize={25}
-        enteringVariant="zoom"
-        enteringDelay={140}
+        // No entrance: the button is positioned outside the screen's transition
+        // boundary, so an entrance here would replay on every visit to the tab.
+        // Its motion is `visibility` — tucking away as the list scrolls.
         style={(state) => ({
           boxShadow: shadow,
           opacity: isDisabled ? 0.4 : state.pressed ? 0.82 : 1,

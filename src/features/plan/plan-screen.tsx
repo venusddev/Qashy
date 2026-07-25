@@ -39,7 +39,7 @@ export function PlanScreen() {
         <View style={{ flexDirection: wide ? 'row' : 'column', gap: 18, alignItems: 'flex-start' }}>
           <View style={{ flex: 1, width: '100%', gap: 14 }}>
             <SectionHeader title="Budgets" />
-            {budgets.length ? budgets.map(({ budget, snapshot, spentMinor, effectiveLimitMinor, categorySpend }, index) => {
+            {budgets.length ? budgets.map(({ budget, snapshot, spentMinor, effectiveLimitMinor, categorySpend }) => {
               const ratio = effectiveLimitMinor > 0 ? spentMinor / effectiveLimitMinor : spentMinor > 0 ? 1 : 0;
               const customState = budget.period.unit === 'custom'
                 ? today > snapshot.periodEnd
@@ -53,7 +53,7 @@ export function PlanScreen() {
               // then rendered verbatim.
               const periodSummary = `${customState}${t(budget.period.unit)} · ${snapshot.periodStart} ${t('to')} ${snapshot.periodEnd}${budget.rollover ? ` · ${t('rollover')} ${formatMoney(snapshot.rolloverMinor, state.settings.baseCurrency, state.settings.locale, { sign: true })}` : ''}`;
               return (
-                <MotionView key={budget.id} delay={Math.min(index, 5) * 45} animateLayout exit>
+                <MotionView key={budget.id} variant="fade" animateLayout exit>
                   <Card style={{ gap: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <View style={{ width: 44, height: 44, borderRadius: radius.control, backgroundColor: budget.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="chart" color={readableTextColor(budget.color)} size={20} /></View>
@@ -77,7 +77,7 @@ export function PlanScreen() {
                 </MotionView>
               );
             }) : (
-              <MotionView variant="zoom">
+              <MotionView variant="down">
                 <Card style={{ alignItems: 'center', gap: 12, paddingVertical: 34 }}>
                   <View style={{ width: 54, height: 54, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="chart" color={theme.onAccentContainer} size={24} /></View>
                   <AppText variant="headline">Give spending a gentle boundary</AppText>
@@ -90,12 +90,12 @@ export function PlanScreen() {
 
           <View style={{ flex: 1, width: '100%', gap: 14 }}>
             <SectionHeader title="Goals" />
-            {goals.length ? goals.map((goal, index) => {
+            {goals.length ? goals.map((goal) => {
               const progress = repository.getGoalProgress(goal.id);
               const displayProgress = Math.max(0, progress);
               const ratio = goal.targetMinor > 0 ? displayProgress / goal.targetMinor : 0;
               return (
-                <MotionView key={goal.id} delay={70 + Math.min(index, 5) * 45} animateLayout exit>
+                <MotionView key={goal.id} variant="fade" animateLayout exit>
                   <Card style={{ gap: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <View style={{ width: 44, height: 44, borderRadius: radius.control, backgroundColor: goal.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="target" color={readableTextColor(goal.color)} size={21} /></View>
@@ -115,7 +115,7 @@ export function PlanScreen() {
                 </MotionView>
               );
             }) : (
-              <MotionView variant="zoom" delay={70}>
+              <MotionView variant="down">
                 <Card style={{ alignItems: 'center', gap: 12, paddingVertical: 34 }}>
                   <View style={{ width: 54, height: 54, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="target" color={theme.onAccentContainer} size={24} /></View>
                   <AppText variant="headline">Save toward something real</AppText>

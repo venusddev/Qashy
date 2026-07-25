@@ -1,12 +1,15 @@
 import { Link, Slot, usePathname } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
-import { Pressable, View, useWindowDimensions } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Pressable, View, useWindowDimensions, type LayoutRectangle } from 'react-native';
 import Animated, {
+  Easing,
   ReduceMotion,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
   withSpring,
+  withTiming,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -33,35 +36,23 @@ const pressSpring = {
   reduceMotion: ReduceMotion.System,
 } as const;
 
-const popSpring = {
-  damping: 14,
-  stiffness: 320,
-  mass: 0.8,
+// The selected indicator travels between sections rather than each item fading
+// its own background in and out. Two discrete fades read as two unrelated
+// events; one continuous movement reads as a single surface responding, and it
+// is the difference between the navigation looking animated and looking fluid.
+const indicatorTiming = {
+  duration: 260,
+  easing: Easing.bezier(0.2, 0, 0, 1),
   reduceMotion: ReduceMotion.System,
 } as const;
 
-function NavIcon({ name, color, size, active }: { name: string; color: string; size: number; active: boolean }) {
-  const reduceMotion = useReducedMotion();
-  const scale = useSharedValue(1);
-  const wasActive = useRef(active);
+type NavItem = typeof NAV_ITEMS[number];
+type NavMetrics = Pick<LayoutRectangle, 'x' | 'y' | 'width' | 'height'>;
 
-  useEffect(() => {
-    if (active && !wasActive.current && !reduceMotion) {
-      scale.set(1.2);
-      scale.set(withSpring(1, popSpring));
-    }
-    wasActive.current = active;
-  }, [active, reduceMotion, scale]);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
-  return (
-    <Animated.View style={animatedStyle}>
-      <AppIcon name={name} color={color} size={size} />
-    </Animated.View>
-  );
+function isActiveItem(item: NavItem, pathname: string) {
+  return pathname === item.match
+    || pathname.startsWith(`${item.match}/`)
+    || (item.match === '/overview' && pathname === '/');
 }
 
 function NavigationItem({
@@ -70,13 +61,15 @@ function NavigationItem({
   compact,
   mobile,
   narrow,
+  onMeasure,
 }: {
-  item: typeof NAV_ITEMS[number];
+  item: NavItem;
   active: boolean;
   compact: boolean;
   mobile: boolean;
   /** Viewports where a quarter of the bar is too tight for "Transactions". */
   narrow: boolean;
+  onMeasure: (href: string, metrics: NavMetrics) => void;
 }) {
   const theme = useQashyTheme();
   const { t } = useLocalization();
@@ -102,6 +95,10 @@ function NavigationItem({
         onFocus={() => setShowTooltip(true)}
         onHoverIn={() => setShowTooltip(true)}
         onHoverOut={() => setShowTooltip(false)}
+        onLayout={(event) => {
+          const { x, y, width, height } = event.nativeEvent.layout;
+          onMeasure(item.href, { x, y, width, height });
+        }}
         onPressIn={() => pressScale.set(withSpring(0.95, pressSpring))}
         onPressOut={() => pressScale.set(withSpring(1, pressSpring))}
         style={{
@@ -115,23 +112,6 @@ function NavigationItem({
           position: 'relative',
           zIndex: showTooltip ? 20 : undefined,
         }}>
-        {active ? (
-          <MotionView
-            variant="fade"
-            exit
-            animateLayout
-            style={{
-              position: 'absolute',
-              top: 0,
-              right: 0,
-              bottom: 0,
-              left: 0,
-              borderRadius: 16,
-              borderCurve: 'continuous',
-              backgroundColor: theme.accentContainer,
-            }}
-          />
-        ) : null}
         {!active && showTooltip ? (
           <MotionView
             variant="fade"
@@ -162,7 +142,7 @@ function NavigationItem({
             },
             contentStyle,
           ]}>
-          <NavIcon name={item.icon} color={foreground as string} size={mobile ? 22 : 20} active={active} />
+          <AppIcon name={item.icon} color={foreground as string} size={mobile ? 22 : 20} />
           {mobile || !compact ? (
             <AppText selectable={false} variant="label" numberOfLines={1} style={{ color: foreground, fontSize: mobile ? (narrow ? 10 : 11) : 15, letterSpacing: mobile && narrow ? -0.2 : undefined }}>
               {item.label}
@@ -196,6 +176,114 @@ function NavigationItem({
   );
 }
 
+/**
+ * The items plus the indicator that slides between them.
+ *
+ * The items live in their own container rather than directly in the padded
+ * navigation surface, so `onLayout` coordinates and the absolutely positioned
+ * indicator resolve against exactly the same box — the bottom bar's top border
+ * would otherwise offset one against the other.
+ */
+function NavigationBar({
+  mobile,
+  compact,
+  narrow,
+  pathname,
+}: {
+  mobile: boolean;
+  compact: boolean;
+  narrow: boolean;
+  pathname: string;
+}) {
+  const theme = useQashyTheme();
+  const reduceMotion = useReducedMotion();
+  const [metrics, setMetrics] = useState<Record<string, NavMetrics>>({});
+  const activeHref = NAV_ITEMS.find((item) => isActiveItem(item, pathname))?.href;
+  const activeMetrics = activeHref ? metrics[activeHref] : undefined;
+
+  const x = useSharedValue(0);
+  const y = useSharedValue(0);
+  const width = useSharedValue(0);
+  const height = useSharedValue(0);
+  const shown = useSharedValue(0);
+
+  useEffect(() => {
+    // Both bars are always mounted and one is `display: none`, so the hidden
+    // one measures zero. There is nothing to position until it is on screen.
+    if (!activeMetrics || activeMetrics.width === 0 || activeMetrics.height === 0) return;
+    // A first measurement has nowhere to slide from, so it is placed rather
+    // than moved — otherwise the indicator flies in from the corner on load.
+    const place = shown.get() === 0 || reduceMotion;
+    const apply = (value: SharedValue<number>, next: number) => {
+      value.set(place ? next : withTiming(next, indicatorTiming));
+    };
+    apply(x, activeMetrics.x);
+    apply(y, activeMetrics.y);
+    apply(width, activeMetrics.width);
+    apply(height, activeMetrics.height);
+    shown.set(place ? 1 : withTiming(1, indicatorTiming));
+  }, [activeMetrics, height, reduceMotion, shown, width, x, y]);
+
+  const indicatorStyle = useAnimatedStyle(() => ({
+    opacity: shown.value,
+    width: width.value,
+    height: height.value,
+    transform: [{ translateX: x.value }, { translateY: y.value }],
+  }));
+
+  const handleMeasure = useCallback((href: string, next: NavMetrics) => {
+    setMetrics((current) => {
+      const previous = current[href];
+      if (previous
+        && previous.x === next.x
+        && previous.y === next.y
+        && previous.width === next.width
+        && previous.height === next.height) {
+        return current;
+      }
+      return { ...current, [href]: next };
+    });
+  }, []);
+
+  return (
+    <View
+      style={{
+        position: 'relative',
+        flexDirection: mobile ? 'row' : 'column',
+        alignItems: mobile ? 'center' : 'stretch',
+        flex: mobile ? 1 : undefined,
+        gap: mobile ? 0 : 8,
+        zIndex: mobile ? undefined : 10,
+      }}>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          {
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            borderRadius: 16,
+            borderCurve: 'continuous',
+            backgroundColor: theme.accentContainer,
+          },
+          indicatorStyle,
+        ]}
+      />
+      {NAV_ITEMS.map((item) => (
+        <NavigationItem
+          key={item.label}
+          item={item}
+          active={item.href === activeHref}
+          compact={compact}
+          mobile={mobile}
+          narrow={narrow}
+          onMeasure={handleMeasure}
+        />
+      ))}
+    </View>
+  );
+}
+
 export default function WebTabsLayout() {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -205,11 +293,6 @@ export default function WebTabsLayout() {
   const compact = width < 1200;
   const mobile = width < 768;
   const narrow = width < 360;
-
-  const renderNavigation = (targetMobile: boolean) => NAV_ITEMS.map((item) => {
-    const active = pathname === item.match || pathname.startsWith(`${item.match}/`) || (item.match === '/overview' && pathname === '/');
-    return <NavigationItem key={item.label} item={item} active={active} compact={targetMobile ? false : compact} mobile={targetMobile} narrow={narrow} />;
-  });
 
   return (
     <View style={{ flex: 1, flexDirection: mobile ? 'column' : 'row', backgroundColor: theme.background }}>
@@ -235,7 +318,7 @@ export default function WebTabsLayout() {
           </View>
           {!compact ? <AppText variant="headline">Qashy</AppText> : null}
         </View>
-        <View style={{ gap: 8, zIndex: 10 }}>{renderNavigation(false)}</View>
+        <NavigationBar mobile={false} compact={compact} narrow={narrow} pathname={pathname} />
         {!compact ? (
           <View style={{ marginTop: 'auto', gap: 4 }}>
             <AppText variant="caption" muted>LOCAL-FIRST FINANCE</AppText>
@@ -265,7 +348,7 @@ export default function WebTabsLayout() {
           borderTopColor: theme.border,
           boxShadow: '0 -2px 12px rgba(25,27,32,0.06)',
         }}>
-        {renderNavigation(true)}
+        <NavigationBar mobile compact={false} narrow={narrow} pathname={pathname} />
       </View>
     </View>
   );
