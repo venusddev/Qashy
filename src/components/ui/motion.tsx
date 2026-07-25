@@ -106,6 +106,24 @@ const mirroredStyleKeys = ['width', 'height'] as const satisfies readonly (keyof
 
 const wrapperStyleKeySet: ReadonlySet<string> = new Set<string>(wrapperStyleKeys);
 
+function splitWrapperStyle(style: ViewProps['style']) {
+  const flattenedStyle = (StyleSheet.flatten(style) ?? {}) as ViewStyle;
+  const wrapperStyle: ViewStyle = {};
+  const contentStyle: ViewStyle = { ...flattenedStyle };
+  wrapperStyleKeys.forEach((key) => {
+    const value = flattenedStyle[key];
+    if (value === undefined) return;
+    Object.assign(wrapperStyle, { [key]: value });
+    delete contentStyle[key];
+  });
+  mirroredStyleKeys.forEach((key) => {
+    const value = flattenedStyle[key];
+    if (value === undefined) return;
+    Object.assign(wrapperStyle, { [key]: value });
+  });
+  return { wrapperStyle, contentStyle };
+}
+
 /**
  * Reanimated can only carry primitives across to the UI thread. A PlatformColor
  * (Material You) is an opaque object, so a style that swaps one on press has to
@@ -175,7 +193,26 @@ export function MotionView({
     [animateLayout],
   );
 
-  return <Animated.View {...props} entering={entering} exiting={exiting} layout={layout} />;
+  if (!animateLayout) {
+    return <Animated.View {...props} entering={entering} exiting={exiting} />;
+  }
+
+  // Reanimated layout transitions and directional entering/exiting presets both
+  // write `transform`. Keeping them on one node makes one overwrite the other.
+  // The outer view owns layout participation; the inner view owns visual motion.
+  // `collapsable={false}` also keeps the wrapper alive for its child's exit.
+  const { style, ...viewProps } = props;
+  const { wrapperStyle, contentStyle } = splitWrapperStyle(style);
+  return (
+    <Animated.View collapsable={false} layout={layout} style={wrapperStyle}>
+      <Animated.View
+        {...viewProps}
+        entering={entering}
+        exiting={exiting}
+        style={contentStyle}
+      />
+    </Animated.View>
+  );
 }
 
 export function MotionPressable({
@@ -276,19 +313,7 @@ export function MotionPressable({
     return next as ViewStyle;
   });
 
-  const wrapperStyle: ViewStyle = {};
-  const pressableStyle: ViewStyle = { ...flattenedStyle };
-  wrapperStyleKeys.forEach((key) => {
-    const value = flattenedStyle[key];
-    if (value === undefined) return;
-    Object.assign(wrapperStyle, { [key]: value });
-    delete pressableStyle[key];
-  });
-  mirroredStyleKeys.forEach((key) => {
-    const value = flattenedStyle[key];
-    if (value === undefined) return;
-    Object.assign(wrapperStyle, { [key]: value });
-  });
+  const { wrapperStyle, contentStyle: pressableStyle } = splitWrapperStyle(flattenedStyle);
   const resolvedChildren = typeof children === 'function' ? children(state) : children;
   const entering = useMemo(
     () => enteringVariant ? enteringAnimation(enteringVariant, enteringDelay) : undefined,
@@ -297,52 +322,55 @@ export function MotionPressable({
 
   return (
     <Animated.View
+      collapsable={false}
       entering={entering}
-      style={[wrapperStyle, animatedStyle]}>
-      <AnimatedPressable
-        {...props}
-        disabled={disabled}
-        onHoverIn={(event) => {
-          hoveredRef.current = true;
-          isHovered.set(1);
-          if (usesJsState) setJsHovered(true);
-          if (!pressedRef.current && !disabled) {
-            scale.set(withTiming(hoverScale, timingConfig));
-            translateY.set(withTiming(liftOnHover ? -1 : 0, timingConfig));
-          }
-          onHoverIn?.(event);
-        }}
-        onHoverOut={(event) => {
-          hoveredRef.current = false;
-          isHovered.set(0);
-          if (usesJsState) setJsHovered(false);
-          if (!pressedRef.current) {
-            scale.set(withTiming(1, timingConfig));
-            translateY.set(withTiming(0, timingConfig));
-          }
-          onHoverOut?.(event);
-        }}
-        onPressIn={(event) => {
-          pressedRef.current = true;
-          isPressed.set(1);
-          if (usesJsState) setJsPressed(true);
-          if (!disabled) {
-            scale.set(withSpring(pressedScale, springConfig));
-            translateY.set(withTiming(0, timingConfig));
-          }
-          onPressIn?.(event);
-        }}
-        onPressOut={(event) => {
-          pressedRef.current = false;
-          isPressed.set(0);
-          if (usesJsState) setJsPressed(false);
-          scale.set(withSpring(hoveredRef.current ? hoverScale : 1, springConfig));
-          translateY.set(withTiming(hoveredRef.current && liftOnHover ? -1 : 0, timingConfig));
-          onPressOut?.(event);
-        }}
-        style={[pressableStyle, overrideStyle]}>
-        {resolvedChildren}
-      </AnimatedPressable>
+      style={wrapperStyle}>
+      <Animated.View style={animatedStyle}>
+        <AnimatedPressable
+          {...props}
+          disabled={disabled}
+          onHoverIn={(event) => {
+            hoveredRef.current = true;
+            isHovered.set(1);
+            if (usesJsState) setJsHovered(true);
+            if (!pressedRef.current && !disabled) {
+              scale.set(withTiming(hoverScale, timingConfig));
+              translateY.set(withTiming(liftOnHover ? -1 : 0, timingConfig));
+            }
+            onHoverIn?.(event);
+          }}
+          onHoverOut={(event) => {
+            hoveredRef.current = false;
+            isHovered.set(0);
+            if (usesJsState) setJsHovered(false);
+            if (!pressedRef.current) {
+              scale.set(withTiming(1, timingConfig));
+              translateY.set(withTiming(0, timingConfig));
+            }
+            onHoverOut?.(event);
+          }}
+          onPressIn={(event) => {
+            pressedRef.current = true;
+            isPressed.set(1);
+            if (usesJsState) setJsPressed(true);
+            if (!disabled) {
+              scale.set(withSpring(pressedScale, springConfig));
+              translateY.set(withTiming(0, timingConfig));
+            }
+            onPressIn?.(event);
+          }}
+          onPressOut={(event) => {
+            pressedRef.current = false;
+            isPressed.set(0);
+            if (usesJsState) setJsPressed(false);
+            scale.set(withSpring(hoveredRef.current ? hoverScale : 1, springConfig));
+            translateY.set(withTiming(hoveredRef.current && liftOnHover ? -1 : 0, timingConfig));
+            onPressOut?.(event);
+          }}
+          style={[pressableStyle, overrideStyle]}>
+          {resolvedChildren}
+        </AnimatedPressable>
+      </Animated.View>
     </Animated.View>
   );
 }

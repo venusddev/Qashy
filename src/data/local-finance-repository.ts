@@ -1791,10 +1791,16 @@ export class LocalFinanceRepository implements FinanceRepository {
     const existing = this.state.budgetPeriods.find((item) => item.budgetId === budget.id && item.periodStart === bounds.start);
     if (existing) {
       if (!updateCurrent) return [];
+      // A matching start alone is not enough: changing July monthly to a
+      // July–August window finds the same snapshot, but its rollover belongs
+      // to the old definition. Carrying it forward would grant (or charge) a
+      // period that no longer exists, so only preserve it when the complete
+      // resolved window still matches.
+      const preservesDefinition = this.matchesPeriodDefinition(budget, existing);
       return [updateEntity(existing, {
         periodEnd: bounds.end,
         limitMinor: budget.limitMinor,
-        rolloverMinor: budget.rollover ? existing.rolloverMinor : 0,
+        rolloverMinor: budget.rollover && preservesDefinition ? existing.rolloverMinor : 0,
         filters: budget.filters,
         categoryLimits: budget.categoryLimits,
       })];

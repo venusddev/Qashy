@@ -20,6 +20,7 @@ export function PwaUpdatePrompt() {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const theme = useQashyTheme();
+  const compact = width < 768;
   useEffect(() => {
     const canRegister =
       'serviceWorker' in navigator &&
@@ -58,14 +59,26 @@ export function PwaUpdatePrompt() {
       accessibilityLiveRegion="polite"
       exit
       role="status"
-      style={{
-        position: 'absolute',
-        left: width < 440 ? 12 + insets.left : undefined,
-        right: 12 + insets.right,
-        bottom: width < 768 ? 76 + Math.max(6, insets.bottom) : 20 + insets.bottom,
-        maxWidth: 380,
-        zIndex: 1000,
-      }}>
+      style={compact
+        ? {
+          // On a phone this is a normal layout row below the navigator. A floating
+          // snackbar sits directly over form actions and bottom navigation, so a
+          // waiting worker could make the control beneath it impossible to press
+          // until the notice was dismissed.
+          width: '100%',
+          paddingTop: 8,
+          paddingRight: 12 + insets.right,
+          paddingBottom: Math.max(8, insets.bottom),
+          paddingLeft: 12 + insets.left,
+          zIndex: 1000,
+        }
+        : {
+          position: 'absolute',
+          right: 12 + insets.right,
+          bottom: 20 + insets.bottom,
+          maxWidth: 380,
+          zIndex: 1000,
+        }}>
       <GlassSurface style={{ borderRadius: 22, borderCurve: 'continuous', borderWidth: 1, borderColor: theme.border, padding: 16 }}>
         <View style={{ gap: 10 }}>
           <AppText variant="label">A fresh version is ready</AppText>

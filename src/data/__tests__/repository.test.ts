@@ -2104,6 +2104,36 @@ describe('FinanceRepository contract', () => {
     }
   });
 
+  it('resets current rollover when an edited period keeps its start but changes its end', async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-06-15T09:00:00Z'));
+      const storage = new MemoryStorageAdapter();
+      const { repository } = await createRepository(storage);
+      const budget = await repository.saveBudget({
+        name: 'Monthly', icon: 'chart', color: '#5966E9', limitMinor: 1000,
+        period: { unit: 'month', interval: 1, anchorDate: '2026-06-01', endDate: null },
+        rollover: true, filters: { accountIds: [], categoryIds: [], tagIds: [] }, categoryLimits: [], archived: false,
+      });
+
+      // Opening in July creates a July monthly snapshot with June's unused
+      // limit. Switch to a two-month window that starts on the same day; its
+      // rollover must not belong to the now-invalid monthly snapshot.
+      jest.setSystemTime(new Date('2026-07-15T09:00:00Z'));
+      const reloaded = new LocalFinanceRepository(storage);
+      await reloaded.initialize();
+      await reloaded.saveBudget({
+        name: budget.name, icon: budget.icon, color: budget.color, limitMinor: budget.limitMinor,
+        period: { unit: 'month', interval: 2, anchorDate: '2026-07-01', endDate: null },
+        rollover: true, filters: budget.filters, categoryLimits: budget.categoryLimits, archived: false,
+      }, budget.id);
+
+      expect(reloaded.getBudgetStatuses('2026-07-15')[0].effectiveLimitMinor).toBe(1000);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('keeps a rule paused by an archived account when an unrelated category is deleted', async () => {
     const { repository } = await createRepository();
     const spare = await repository.saveAccount({ name: 'Spare', type: 'cash', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#00A58E', archived: false });
