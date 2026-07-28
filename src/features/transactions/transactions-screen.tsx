@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { SectionList, TextInput, View, useWindowDimensions } from 'react-native';
+import { SectionList, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TransactionRow } from '@/components/finance/transaction-row';
@@ -18,6 +18,7 @@ import { TextButton } from '@/components/ui/text-button';
 import { useScrollHide } from '@/components/ui/use-scroll-hide';
 import { useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
+import { useScreenMetrics } from '@/theme/layout';
 import { useQashyTheme } from '@/theme/theme';
 import { radius } from '@/theme/tokens';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
@@ -31,7 +32,7 @@ export function TransactionsScreen() {
   const state = useFinanceState();
   const theme = useQashyTheme();
   const { isRtl, t } = useLocalization();
-  const { width } = useWindowDimensions();
+  const metrics = useScreenMetrics();
   const insets = useSafeAreaInsets();
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
@@ -109,7 +110,7 @@ export function TransactionsScreen() {
       onScroll={onScroll}
       scrollEventThrottle={16}
       style={{ flex: 1, backgroundColor: theme.background }}
-      contentContainerStyle={[screenContentMetrics(width, insets), { gap: 8 }]}
+      contentContainerStyle={[screenContentMetrics(metrics, insets), { gap: 8 }]}
       sections={sections}
       extraData={`${selectedIds.join(',')}|${state.transactions.map((item) => `${item.id}:${item.revision}`).join(',')}`}
       keyExtractor={(item) => `${item.id}:${item.revision}`}
@@ -233,7 +234,7 @@ export function TransactionsScreen() {
         label="Add transaction"
         visibility={fabVisibility}
         onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/transactions' } })}
-        style={{ position: 'absolute', right: 24, bottom: process.env.EXPO_OS === 'web' && width < 768 ? 92 : 24 }}
+        style={{ position: 'absolute', right: 24, bottom: metrics.hasBottomNavigation ? 92 : 24 }}
       />
     </View>
   );

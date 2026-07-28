@@ -10,17 +10,13 @@ import {
 import Animated, {
   Easing,
   FadeIn,
-  FadeInDown,
-  FadeInLeft,
-  FadeInRight,
-  FadeInUp,
   FadeOut,
   LinearTransition,
   ReduceMotion,
-  ZoomIn,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
+  withDelay,
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
@@ -147,29 +143,63 @@ function isWorkletSafe(value: unknown) {
   return typeof value === 'number' || typeof value === 'string';
 }
 
-// The presets ship with a 25px offset and ZoomIn starts from scale 0, which is
-// what made every mount look like it was being performed. `withInitialValues`
-// is honoured on both the worklet path and the CSS path, so overriding the
-// start state keeps one implementation for both platforms.
-function enteringAnimation(variant: MotionVariant, delay: number, duration: number = motionDurations.enter) {
-  // Every branch has to be a builder *instance* rather than the class, or the
-  // union of them loses the chainable config methods below.
-  const animation = variant === 'fade'
-    ? FadeIn.withInitialValues({ opacity: 0 })
-    : variant === 'down'
-      ? FadeInDown.withInitialValues({ transform: [{ translateY: TRAVEL }] })
-      : variant === 'left'
-        ? FadeInLeft.withInitialValues({ transform: [{ translateX: -TRAVEL }] })
-        : variant === 'right'
-          ? FadeInRight.withInitialValues({ transform: [{ translateX: TRAVEL }] })
-          : variant === 'zoom'
-            ? ZoomIn.withInitialValues({ transform: [{ scale: 0.94 }] })
-            : FadeInUp.withInitialValues({ transform: [{ translateY: -TRAVEL }] });
-  return animation
-    .duration(duration)
-    .delay(delay)
-    .easing(EASE_STANDARD)
-    .reduceMotion(ReduceMotion.System);
+// Where each variant starts before it settles into place. The presets ship with
+// a 25px offset and ZoomIn starts from scale 0, which is what made every mount
+// look like it was being performed.
+const ENTRANCE_START: Record<MotionVariant, { translateX: number; translateY: number; scale: number }> = {
+  fade: { translateX: 0, translateY: 0, scale: 1 },
+  up: { translateX: 0, translateY: -TRAVEL, scale: 1 },
+  down: { translateX: 0, translateY: TRAVEL, scale: 1 },
+  left: { translateX: -TRAVEL, translateY: 0, scale: 1 },
+  right: { translateX: TRAVEL, translateY: 0, scale: 1 },
+  zoom: { translateX: 0, translateY: 0, scale: 0.94 },
+};
+
+/**
+ * The entrance, driven by a shared value rather than Reanimated's `entering`.
+ *
+ * Softening the presets used to mean `withInitialValues`, which makes Reanimated
+ * generate a keyframe whose name is not in its built-in `Animations` registry.
+ * On web that is the one branch of `setElementAnimation` that schedules cleanup,
+ * and cleanup for an ENTERING animation calls `setElementPosition` — so roughly
+ * 200ms after mount every softened element was permanently given
+ * `position: absolute` and a snapshot `top/left/width/height`. Content dropped
+ * out of flow across the whole site: button labels landed outside their button,
+ * which then collapsed to its own padding.
+ *
+ * A shared value reaches the same start states without generating a keyframe,
+ * and runs identically on the worklet path and on web. `exiting` and `layout`
+ * stay on Reanimated: they need an element the tree no longer owns, and neither
+ * goes through the branch above.
+ */
+function useEntrance(variant: MotionVariant, delay: number, duration: number, enabled: boolean) {
+  const progress = useSharedValue(enabled ? 0 : 1);
+
+  useEffect(() => {
+    if (!enabled) return;
+    progress.set(withDelay(delay, withTiming(1, {
+      duration,
+      easing: EASE_STANDARD,
+      reduceMotion: ReduceMotion.System,
+    })));
+  }, [delay, duration, enabled, progress]);
+
+  const start = ENTRANCE_START[variant];
+  const style = useAnimatedStyle(() => {
+    const remaining = 1 - progress.value;
+    return {
+      opacity: progress.value,
+      transform: [
+        { translateX: start.translateX * remaining },
+        { translateY: start.translateY * remaining },
+        { scale: 1 - (1 - start.scale) * remaining },
+      ],
+    };
+  });
+
+  // Elements that arrive with their screen never carry an opacity or transform
+  // they did not ask for.
+  return enabled ? style : null;
 }
 
 // Every exit is a plain fade, whatever the entrance was. Direction is
@@ -264,10 +294,7 @@ export function MotionView({
   entrance?: boolean;
 }) {
   const allowEntrance = useEntranceAllowed(entrance);
-  const entering = useMemo(
-    () => allowEntrance ? enteringAnimation(variant, delay, duration) : undefined,
-    [allowEntrance, delay, duration, variant],
-  );
+  const entranceStyle = useEntrance(variant, delay, duration, allowEntrance);
   const exiting = useMemo(() => exit ? exitingAnimation() : undefined, [exit]);
   const layout = useMemo(
     () => animateLayout
@@ -277,22 +304,22 @@ export function MotionView({
   );
 
   if (!animateLayout) {
-    return <Animated.View {...props} entering={entering} exiting={exiting} />;
+    const { style: plainStyle, ...plainProps } = props;
+    return <Animated.View {...plainProps} exiting={exiting} style={[plainStyle, entranceStyle]} />;
   }
 
-  // Reanimated layout transitions and directional entering/exiting presets both
-  // write `transform`. Keeping them on one node makes one overwrite the other.
-  // The outer view owns layout participation; the inner view owns visual motion.
-  // `collapsable={false}` also keeps the wrapper alive for its child's exit.
+  // Reanimated layout transitions and the entrance both write `transform`.
+  // Keeping them on one node makes one overwrite the other. The outer view owns
+  // layout participation; the inner view owns visual motion. `collapsable={false}`
+  // also keeps the wrapper alive for its child's exit.
   const { style, ...viewProps } = props;
   const { wrapperStyle, contentStyle } = splitWrapperStyle(style);
   return (
     <Animated.View collapsable={false} layout={layout} style={wrapperStyle}>
       <Animated.View
         {...viewProps}
-        entering={entering}
         exiting={exiting}
-        style={contentStyle}
+        style={[contentStyle, entranceStyle]}
       />
     </Animated.View>
   );
@@ -399,16 +426,17 @@ export function MotionPressable({
   const { wrapperStyle, contentStyle: pressableStyle } = splitWrapperStyle(flattenedStyle);
   const resolvedChildren = typeof children === 'function' ? children(state) : children;
   const allowEntrance = useEntranceAllowed(Boolean(enteringVariant));
-  const entering = useMemo(
-    () => allowEntrance && enteringVariant ? enteringAnimation(enteringVariant, enteringDelay) : undefined,
-    [allowEntrance, enteringDelay, enteringVariant],
+  const entranceStyle = useEntrance(
+    enteringVariant ?? 'fade',
+    enteringDelay,
+    motionDurations.enter,
+    allowEntrance,
   );
 
   return (
     <Animated.View
       collapsable={false}
-      entering={entering}
-      style={wrapperStyle}>
+      style={[wrapperStyle, entranceStyle]}>
       <Animated.View style={animatedStyle}>
         <AnimatedPressable
           {...props}

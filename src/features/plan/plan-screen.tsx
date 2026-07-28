@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { ScrollView, View, useWindowDimensions } from 'react-native';
+import { ScrollView, View } from 'react-native';
 
 import { AnimatedMoney } from '@/components/finance/animated-money';
 import { ActionButton } from '@/components/ui/action-button';
@@ -13,6 +13,7 @@ import { ScreenContainer } from '@/components/ui/screen-container';
 import { SectionHeader } from '@/components/ui/section-header';
 import { useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
+import { useScreenMetrics } from '@/theme/layout';
 import { useQashyTheme } from '@/theme/theme';
 import { radius, readableTextColor } from '@/theme/tokens';
 import { todayLocal } from '@/utils/date';
@@ -26,8 +27,8 @@ export function PlanScreen() {
   const state = useFinanceState();
   const theme = useQashyTheme();
   const { t } = useLocalization();
-  const { width } = useWindowDimensions();
-  const wide = width >= 860;
+  const { contentWidth } = useScreenMetrics();
+  const wide = contentWidth >= 860;
   const today = todayLocal();
   const budgets = repository.getBudgetStatuses(today, { includeInactiveCustom: true });
   const goals = state.goals.filter((item) => !item.archived && !item.deletedAt);

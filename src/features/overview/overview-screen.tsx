@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { ScrollView, View, useWindowDimensions } from 'react-native';
+import { ScrollView, View } from 'react-native';
 
 import { AnimatedMoney } from '@/components/finance/animated-money';
 import { CategoryDonut, SpendLineChart } from '@/components/finance/charts';
@@ -20,6 +20,7 @@ import { TextButton } from '@/components/ui/text-button';
 import { useScrollHide } from '@/components/ui/use-scroll-hide';
 import { useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
+import { useScreenMetrics } from '@/theme/layout';
 import { useQashyTheme } from '@/theme/theme';
 import { radius, readableTextColor } from '@/theme/tokens';
 import { errorMessage, showError } from '@/utils/confirm';
@@ -38,7 +39,7 @@ export function OverviewScreen() {
   const state = useFinanceState();
   const theme = useQashyTheme();
   const { t } = useLocalization();
-  const { width } = useWindowDimensions();
+  const { contentWidth, hasBottomNavigation } = useScreenMetrics();
   const [month, setMonth] = useState(startOfMonth());
   // Which way the month content slides: forward months push in from the
   // right, previous months from the left.
@@ -76,7 +77,7 @@ export function OverviewScreen() {
     void state.transactions;
     return repository.getDashboard(startOfMonth(month), endOfMonth(month));
   }, [repository, month, state.accounts, state.budgetPeriods, state.budgets, state.categories, state.exchangeRates, state.settings, state.transactions]);
-  const wide = width >= 900;
+  const wide = contentWidth >= 900;
   const currency = state.settings.baseCurrency;
   const locale = state.settings.locale;
   const budgetProgress = summary.budgetLimitMinor > 0 ? summary.budgetSpentMinor / summary.budgetLimitMinor : summary.budgetSpentMinor > 0 ? 1 : 0;
@@ -134,7 +135,7 @@ export function OverviewScreen() {
                     minor={amount as number}
                     currency={currency}
                     locale={locale}
-                    compact={width < 520}
+                    compact={contentWidth < 520}
                     variant="headline"
                     style={{ color: color as never, fontVariant: ['tabular-nums'] }}
                   />
@@ -229,7 +230,7 @@ export function OverviewScreen() {
         label="Add transaction"
         visibility={fabVisibility}
         onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/overview' } })}
-        style={{ position: 'absolute', right: width < 768 ? 20 : 32, bottom: process.env.EXPO_OS === 'web' && width < 768 ? 92 : 26 }}
+        style={{ position: 'absolute', right: contentWidth < 768 ? 20 : 32, bottom: hasBottomNavigation ? 92 : 26 }}
       />
     </View>
   );

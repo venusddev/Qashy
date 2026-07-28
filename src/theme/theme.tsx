@@ -130,6 +130,31 @@ export function QashyThemeProvider({ children }: { children: ReactNode }) {
     }
   }, [settings.themeMode]);
 
+  // Browser chrome the React tree cannot reach: the focus ring and selection
+  // colors declared in `+html.tsx`, the UA color scheme that decides whether
+  // scrollbars and form widgets paint light or dark, and the address-bar tint.
+  //
+  // `color-scheme` is pinned to the resolved mode rather than left at
+  // `light dark`, because a user who forces dark while the system is light
+  // would otherwise get a white scrollbar down the side of a dark page.
+  useEffect(() => {
+    if (process.env.EXPO_OS !== 'web' || typeof document === 'undefined') return;
+    const root = document.documentElement;
+    const cssColor = (value: ColorValue, fallback: string) => (typeof value === 'string' ? value : fallback);
+    root.style.colorScheme = mode;
+    root.style.setProperty('--qashy-focus', cssColor(tokens.accent, tokens.staticAccent));
+    root.style.setProperty('--qashy-selection', cssColor(tokens.accentContainer, `${tokens.staticAccent}33`));
+    root.style.setProperty('--qashy-selection-text', cssColor(tokens.onAccentContainer, 'inherit'));
+
+    // Following the system means each media-scoped meta stays truthful. Forcing
+    // a mode means only one of them can ever match, so both carry that surface.
+    const background = cssColor(tokens.background, mode === 'dark' ? darkTokens.background : lightTokens.background);
+    const light = document.getElementById('qashy-theme-color-light');
+    const dark = document.getElementById('qashy-theme-color-dark');
+    light?.setAttribute('content', settings.themeMode === 'system' ? lightTokens.background : background);
+    dark?.setAttribute('content', settings.themeMode === 'system' ? darkTokens.background : background);
+  }, [mode, settings.themeMode, tokens]);
+
   const baseNavigation = mode === 'dark' ? DarkTheme : DefaultTheme;
   const navigationTheme = {
     ...baseNavigation,

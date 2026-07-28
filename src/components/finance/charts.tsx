@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import { View, type LayoutChangeEvent } from 'react-native';
 import Animated, {
   Easing,
   ReduceMotion,
@@ -15,6 +15,7 @@ import { AppText } from '@/components/ui/app-text';
 import { MotionView } from '@/components/ui/motion';
 import type { DashboardSummary } from '@/domain/models';
 import { useLocalization } from '@/localization/localization';
+import { useScreenMetrics } from '@/theme/layout';
 import { useQashyTheme } from '@/theme/theme';
 import { shortDate } from '@/utils/date';
 import { formatMoney } from '@/utils/money';
@@ -24,13 +25,14 @@ const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 export function SpendLineChart({ points, currency, locale }: { points: DashboardSummary['dailySpend']; currency: string; locale: string }) {
   const theme = useQashyTheme();
-  const { width } = useWindowDimensions();
+  const { contentWidth } = useScreenMetrics();
   const reduceMotion = useReducedMotion();
   // The SVG is laid out at 100% width, so the viewBox has to match the real
   // parent width. Guessing from the window magnified strokes and label text by
-  // up to ~1.6x inside a wider column.
+  // up to ~1.6x inside a wider column, and beside the web rail the guess was a
+  // further rail-width too wide, so the first frame drew oversized then snapped.
   const [measuredWidth, setMeasuredWidth] = useState(0);
-  const estimatedWidth = Math.min(Math.max(width - 72, 260), 520);
+  const estimatedWidth = Math.min(Math.max(contentWidth - 72, 260), 520);
   const chartWidth = Math.max(measuredWidth || estimatedWidth, 1);
   const onLayout = (event: LayoutChangeEvent) => {
     const next = event.nativeEvent.layout.width;

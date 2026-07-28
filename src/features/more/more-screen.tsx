@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { ScrollView, View, useWindowDimensions } from 'react-native';
+import { ScrollView, View } from 'react-native';
 
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
@@ -10,6 +10,7 @@ import { SectionHeader } from '@/components/ui/section-header';
 import { SettingsRow } from '@/components/ui/settings-row';
 import { useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
+import { useScreenMetrics } from '@/theme/layout';
 import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { endOfMonth, startOfMonth } from '@/utils/date';
@@ -20,8 +21,8 @@ export function MoreScreen() {
   const state = useFinanceState();
   const theme = useQashyTheme();
   const { t } = useLocalization();
-  const { width } = useWindowDimensions();
-  const wide = width >= 860;
+  const { contentWidth } = useScreenMetrics();
+  const wide = contentWidth >= 860;
   const summary = useMemo(() => {
     void state.accounts;
     void state.budgetPeriods;

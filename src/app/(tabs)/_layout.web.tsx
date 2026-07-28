@@ -15,8 +15,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
-import { MotionView } from '@/components/ui/motion';
 import { useLocalization } from '@/localization/localization';
+import {
+  ContentWidthContext,
+  NAV_RAIL_BREAKPOINT,
+  NAV_SIDEBAR_BREAKPOINT,
+  navigationRailWidth,
+} from '@/theme/layout';
 import { useQashyTheme } from '@/theme/theme';
 
 // Icon names mirror the SF Symbols used by the native tabs in `_layout.tsx` so
@@ -45,6 +50,26 @@ const indicatorTiming = {
   easing: Easing.bezier(0.2, 0, 0, 1),
   reduceMotion: ReduceMotion.System,
 } as const;
+
+// Hover affordances fade in place rather than mounting and unmounting.
+// Reanimated's web exit moves the leaving element into a clone and appends that
+// clone as the *last* child of the pressable, so the opaque hover background —
+// which paints behind the icon while it is a real child — reappeared on top of
+// the icon for the length of its own fade. The icon blinked every time the
+// pointer left an item, and again when a click made that item active and
+// unmounted the background under it.
+const hoverTiming = {
+  duration: 120,
+  easing: Easing.bezier(0.2, 0, 0, 1),
+  reduceMotion: ReduceMotion.System,
+} as const;
+
+// The tooltip keeps its original asymmetry: it arrives at the standard enter
+// duration and leaves at the faster exit one.
+const tooltipInTiming = { ...hoverTiming, duration: 200 } as const;
+const tooltipOutTiming = hoverTiming;
+/** How far the tooltip slides in from, matching the shared motion system. */
+const TOOLTIP_TRAVEL = 8;
 
 type NavItem = typeof NAV_ITEMS[number];
 type NavMetrics = Pick<LayoutRectangle, 'x' | 'y' | 'width' | 'height'>;
@@ -80,6 +105,27 @@ function NavigationItem({
   const contentStyle = useAnimatedStyle(() => ({
     transform: [{ scale: pressScale.value }],
   }));
+
+  // The selected item already carries the accent indicator, so it never shows
+  // the hover background underneath it.
+  const highlighted = showTooltip && !active;
+  const tooltipShown = compact && !mobile && showTooltip;
+  const highlight = useSharedValue(0);
+  const tooltipProgress = useSharedValue(0);
+
+  useEffect(() => {
+    highlight.set(withTiming(highlighted ? 1 : 0, hoverTiming));
+  }, [highlight, highlighted]);
+
+  useEffect(() => {
+    tooltipProgress.set(withTiming(tooltipShown ? 1 : 0, tooltipShown ? tooltipInTiming : tooltipOutTiming));
+  }, [tooltipProgress, tooltipShown]);
+
+  const highlightStyle = useAnimatedStyle(() => ({ opacity: highlight.value }));
+  const tooltipStyle = useAnimatedStyle(() => ({
+    opacity: tooltipProgress.value,
+    transform: [{ translateX: (1 - tooltipProgress.value) * TOOLTIP_TRAVEL }],
+  }));
   return (
     <Link href={item.href} asChild>
       {/* Link asChild drops function-form styles on web, so this must stay a
@@ -112,13 +158,10 @@ function NavigationItem({
           position: 'relative',
           zIndex: showTooltip ? 20 : undefined,
         }}>
-        {!active && showTooltip ? (
-          <MotionView
-            variant="fade"
-            duration={120}
-            exit
-            pointerEvents="none"
-            style={{
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            {
               position: 'absolute',
               top: 0,
               right: 0,
@@ -127,9 +170,10 @@ function NavigationItem({
               borderRadius: 16,
               borderCurve: 'continuous',
               backgroundColor: theme.surfaceMuted,
-            }}
-          />
-        ) : null}
+            },
+            highlightStyle,
+          ]}
+        />
         <Animated.View
           style={[
             {
@@ -149,27 +193,32 @@ function NavigationItem({
             </AppText>
           ) : null}
         </Animated.View>
-        {compact && !mobile && showTooltip ? (
-          <MotionView
-            variant="right"
-            exit
+        {/* Mounted for the whole time the rail is compact, so only a breakpoint
+            change adds or removes it. `aria-hidden` keeps a faded-out tooltip
+            out of the accessibility tree exactly as unmounting used to. */}
+        {compact && !mobile ? (
+          <Animated.View
+            aria-hidden={!showTooltip}
             pointerEvents="none"
             role="tooltip"
-            style={{
-              position: 'absolute',
-              left: 58,
-              top: 7,
-              minHeight: 36,
-              justifyContent: 'center',
-              paddingHorizontal: 12,
-              borderRadius: 10,
-              backgroundColor: theme.surfaceElevated,
-              borderWidth: 1,
-              borderColor: theme.border,
-              boxShadow: '0 4px 14px rgba(25,27,32,0.16)',
-            }}>
+            style={[
+              {
+                position: 'absolute',
+                left: 58,
+                top: 7,
+                minHeight: 36,
+                justifyContent: 'center',
+                paddingHorizontal: 12,
+                borderRadius: 10,
+                backgroundColor: theme.surfaceElevated,
+                borderWidth: 1,
+                borderColor: theme.border,
+                boxShadow: '0 4px 14px rgba(25,27,32,0.16)',
+              },
+              tooltipStyle,
+            ]}>
             <AppText selectable={false} variant="caption" numberOfLines={1}>{item.label}</AppText>
-          </MotionView>
+          </Animated.View>
         ) : null}
       </Pressable>
     </Link>
@@ -290,9 +339,12 @@ export default function WebTabsLayout() {
   const pathname = usePathname();
   const theme = useQashyTheme();
   const { t } = useLocalization();
-  const compact = width < 1200;
-  const mobile = width < 768;
+  const compact = width < NAV_SIDEBAR_BREAKPOINT;
+  const mobile = width < NAV_RAIL_BREAKPOINT;
   const narrow = width < 360;
+  // Screens size themselves against this rather than the window, so the rail
+  // widening at 1200 no longer pushes their internal breakpoints around.
+  const railWidth = navigationRailWidth(width);
 
   return (
     <View style={{ flex: 1, flexDirection: mobile ? 'column' : 'row', backgroundColor: theme.background }}>
@@ -301,7 +353,7 @@ export default function WebTabsLayout() {
         role="navigation"
         style={{
           display: mobile ? 'none' : 'flex',
-          width: compact ? 84 : 244,
+          width: railWidth,
           // `viewport-fit=cover` means an installed PWA draws under the status
           // bar and the display cutouts, so the rail has to pad by real insets.
           paddingTop: 18 + insets.top,
@@ -326,7 +378,9 @@ export default function WebTabsLayout() {
           </View>
         ) : null}
       </View>
-      <View style={{ flex: 1 }}><Slot /></View>
+      <ContentWidthContext value={Math.max(width - railWidth, 0)}>
+        <View style={{ flex: 1 }}><Slot /></View>
+      </ContentWidthContext>
       <View
         accessibilityLabel={t('Primary')}
         role="navigation"
