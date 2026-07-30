@@ -6,6 +6,21 @@ import {
 import { fetchDouble } from '@/sync/transport/__tests__/http-double';
 
 describe('bounded relay responses', () => {
+  it('calls an injected browser fetch with the global receiver', async () => {
+    const http = fetchDouble({ kind: 'json', body: { ok: true } });
+    const browserFetch = function (this: unknown, url: string, init?: RequestInit) {
+      if (this !== globalThis) return Promise.reject(new TypeError('Illegal invocation'));
+      return http.fetch(url, init);
+    } as unknown as typeof globalThis.fetch;
+
+    await expect(
+      requestJson<{ ok: boolean }>(
+        { fetch: browserFetch },
+        { method: 'GET', url: 'https://relay.example.test' },
+      ),
+    ).resolves.toEqual({ ok: true });
+  });
+
   it('reads a valid JSON response incrementally', async () => {
     const http = fetchDouble({
       kind: 'stream',

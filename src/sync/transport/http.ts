@@ -144,7 +144,11 @@ async function request(deps: HttpDeps, input: RequestInput): Promise<ActiveReque
   };
 
   try {
-    const response = await deps.fetch(input.url, {
+    // A browser's native `window.fetch` is branded: calling it as `deps.fetch(...)` makes
+    // `deps` its receiver and throws "Illegal invocation" before any network request leaves
+    // the device. Bind it explicitly so injected browser fetch, Expo's fetch, and test doubles
+    // all run with the platform global as their receiver.
+    const response = await deps.fetch.call(globalThis, input.url, {
       method: input.method,
       signal: controller.signal,
       credentials: 'omit',
