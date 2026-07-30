@@ -137,23 +137,147 @@ describe('web storage adapter', () => {
     adapter.subscribe((source) => sources.push(source));
     await settle();
 
-    // A second connection to the same database stands in for another tab.
-    const other = new Dexie('qashy');
-    other.version(1).stores({ records: '&key, type, entityId, updatedAt, deletedAt' });
-    await other.open();
-    await other.table('records').put({
-      key: 'accounts:x',
-      type: 'accounts',
-      entityId: 'x',
-      payload: account('x', 'From another tab', '2026-04-01T00:00:00.000Z'),
-      updatedAt: '2026-04-01T00:00:00.000Z',
-      deletedAt: null,
-    });
-    await waitFor(() => sources.includes(undefined));
-    other.close();
+    // A second adapter over the same database stands in for another tab — which is exactly
+    // what one is. Echo suppression keys on the writer's instance id, so the other tab has to
+    // be a real adapter rather than a bare Dexie connection: a foreign write that never
+    // stamps `lastWrite` is, correctly, not something this tab can hear about.
+    const other = newAdapter();
+    await other.initialize();
+    await other.putMany([stored(account('x', 'From another tab', '2026-04-01T00:00:00.000Z'))]);
 
+    await waitFor(() => sources.includes(undefined));
     expect(sources).toContainEqual(undefined);
     expect(await adapter.readAll('accounts')).toHaveLength(1);
+  });
+
+  it('reports a foreign write once, not once per record in it', async () => {
+    // The old mechanism projected every row in `records` on every change and diffed the
+    // result. This one reads a single indexed row, so batch size stops mattering.
+    const adapter = await freshAdapter();
+    const sources: (object | undefined)[] = [];
+    adapter.subscribe((source) => sources.push(source));
+    await settle();
+
+    const other = newAdapter();
+    await other.initialize();
+    await other.putMany(
+      Array.from({ length: 25 }, (_, index) =>
+        stored(account(`b${index}`, `B${index}`, '2026-05-01T00:00:00.000Z')),
+      ),
+    );
+
+    await waitFor(() => sources.includes(undefined));
+    await settle();
+    expect(sources.filter((source) => source === undefined)).toHaveLength(1);
+  });
+
+  it('keeps records written before the sync tables existed', async () => {
+    // The v1 → v2 upgrade adds stores and one compound index; no existing row changes shape,
+    // so there is no `upgrade()` callback to get wrong. This asserts that.
+    await Dexie.delete('qashy');
+    const v1 = new Dexie('qashy');
+    v1.version(1).stores({ records: '&key, type, entityId, updatedAt, deletedAt' });
+    await v1.open();
+    await v1.table('records').put({
+      key: 'accounts:legacy',
+      type: 'accounts',
+      entityId: 'legacy',
+      payload: account('legacy', 'From before sync', '2026-01-01T00:00:00.000Z'),
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      deletedAt: null,
+    });
+    v1.close();
+
+    const adapter = newAdapter();
+    await adapter.initialize();
+
+    const rows = await adapter.readAll('accounts');
+    expect(rows.map((row) => row.id)).toEqual(['legacy']);
+    // And the new tables are usable in the same breath.
+    await adapter.transact(async (tx) => {
+      await tx.table('syncMeta').put([{ key: 'deviceId', value: 'D' }]);
+    });
+    const meta = await adapter.transact((tx) => tx.table('syncMeta').get('deviceId'));
+    expect(meta?.value).toBe('D');
+  });
+
+  it('rolls back records and sync rows together when a transaction throws', async () => {
+    const adapter = await freshAdapter();
+    await adapter.transact(async (tx) => {
+      await tx.table('syncMeta').put([{ key: 'seq', value: '1' }]);
+    });
+
+    await expect(
+      adapter.transact(async (tx) => {
+        await tx.putMany([stored(account('a', 'A', '2026-01-01T00:00:00.000Z'))]);
+        await tx.table('syncMeta').put([{ key: 'seq', value: '2' }]);
+        throw new Error('batch rejected');
+      }),
+    ).rejects.toThrow('batch rejected');
+
+    // An op that commits without its record — or a record without its op — is the state the
+    // whole transaction contract exists to make impossible.
+    expect(await adapter.readAll('accounts')).toEqual([]);
+    const seq = await adapter.transact((tx) => tx.table('syncMeta').get('seq'));
+    expect(seq?.value).toBe('1');
+  });
+
+  it('commits silently without waking subscribers', async () => {
+    const adapter = await freshAdapter();
+    const sources: (object | undefined)[] = [];
+    adapter.subscribe((source) => sources.push(source));
+    await settle();
+
+    await adapter.transact(
+      async (tx) => {
+        await tx.table('syncOps').put([
+          {
+            opId: 'D:1',
+            deviceId: 'D',
+            seq: 1,
+            prevHash: '',
+            opHash: 'h',
+            hlc: '000000000000-0000-D',
+            entityType: 'accounts',
+            entityId: 'a',
+            kind: 'create',
+            payload: '{}',
+            schema: 0,
+            signature: 'sig',
+            sealed: 1,
+            origin: 0,
+          },
+        ]);
+      },
+      { silent: true },
+    );
+    await settle();
+
+    // Sealing an op changes nothing any screen can render; notifying would cost every open
+    // screen a re-render for a change it cannot see.
+    expect(sources).toEqual([]);
+    const ops = await adapter.transact((tx) => tx.table('syncOps').all());
+    expect(ops).toHaveLength(1);
+  });
+
+  it('neither stamps nor notifies for a transaction that only read', async () => {
+    // The `lastWrite` stamp is itself a write, so a read-only transaction that stamped would
+    // wake every *other* tab as well as every screen in this one — for a change that did not
+    // happen. Read-your-own-state is the sync engine's most common transaction shape.
+    const adapter = await freshAdapter();
+    await adapter.putMany([stored(account('a', 'A', '2026-01-01T00:00:00.000Z'))]);
+
+    const before = await adapter.transact((tx) => tx.table('syncMeta').get('lastWrite'));
+    const sources: (object | undefined)[] = [];
+    adapter.subscribe((source) => sources.push(source));
+    await settle();
+
+    await adapter.transact((tx) => tx.readAll('accounts'));
+    await settle();
+
+    expect(sources).toEqual([]);
+    const after = await adapter.transact((tx) => tx.table('syncMeta').get('lastWrite'));
+    expect(after?.value).toBe(before?.value);
   });
 
   it('clears every record', async () => {

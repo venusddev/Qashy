@@ -523,3 +523,52 @@ test('fades the sidebar hover highlight without ever stacking it over the icon',
 
   expect(await page.evaluate(() => (window as unknown as { __churn: number }).__churn)).toBe(0);
 });
+
+// The policy's shape is asserted in `src/utils/__tests__/csp.test.ts`; that it does not break
+// the app can only be asserted here, against the real export in a real browser. Both halves
+// matter and neither substitutes for the other: a policy strict enough to be worth shipping is
+// exactly one strict enough to white-screen the app, and the failure is silent in every check
+// that does not load a page.
+test('runs the exported app under its content security policy without a violation', async ({ page }) => {
+  const violations: string[] = [];
+  await page.addInitScript(() => {
+    (window as unknown as { __csp: string[] }).__csp = [];
+    document.addEventListener('securitypolicyviolation', (event) => {
+      (window as unknown as { __csp: string[] }).__csp.push(
+        `${event.effectiveDirective} blocked ${event.blockedURI} ${event.sample ?? ''}`.trim(),
+      );
+    });
+  });
+
+  const collect = async () => {
+    violations.push(...(await page.evaluate(() => (window as unknown as { __csp: string[] }).__csp)));
+  };
+
+  await completeOnboarding(page);
+  await collect();
+
+  // The pages that carry the crypto. `/sync-pair` in particular pulls in the camera, the QR
+  // renderer, and the wordlist — the three things most likely to want something the policy
+  // does not grant.
+  for (const path of ['/more', '/sync', '/sync-pair', '/sync-recovery', '/sync-merge']) {
+    await page.goto(path);
+    await collect();
+  }
+
+  expect(violations).toEqual([]);
+
+  // A policy that was never applied also produces no violations, so prove it is actually there
+  // and that it is the strict one rather than something a build step relaxed.
+  const policy = await page.getAttribute('meta[http-equiv="Content-Security-Policy"]', 'content');
+  expect(policy).toContain("default-src 'none'");
+  expect(policy).toContain("object-src 'none'");
+  expect(policy).not.toContain("script-src 'self' 'unsafe-inline'");
+  // The hash has to be quoted to be a hash. Unquoted it parses as a host source and is dropped,
+  // which blocks Expo Router's hydration script and shows up only as a violation on this page —
+  // so pin the emitted form here too rather than relying on the count above staying at zero.
+  expect(policy).toMatch(/script-src 'self' 'sha256-[A-Za-z0-9+/]+=*'/);
+
+  // And that the app is genuinely running, not a blank page that violated nothing.
+  await page.goto('/overview');
+  await expect(page.getByText('CURRENT NET WORTH')).toBeVisible();
+});

@@ -19,10 +19,12 @@ import { useLocalization } from '@/localization/localization';
 import {
   ContentWidthContext,
   NAV_RAIL_BREAKPOINT,
+  NAV_RAIL_WIDTH,
   NAV_SIDEBAR_BREAKPOINT,
   navigationRailWidth,
 } from '@/theme/layout';
 import { useQashyTheme } from '@/theme/theme';
+import { radius, space } from '@/theme/tokens';
 
 // Icon names mirror the SF Symbols used by the native tabs in `_layout.tsx` so
 // the same section reads the same on every platform.
@@ -32,6 +34,9 @@ const NAV_ITEMS = [
   { href: '/plan' as const, label: 'Plan', icon: 'chart.pie', match: '/plan' },
   { href: '/more' as const, label: 'More', icon: 'ellipsis.circle', match: '/more' },
 ];
+
+/** The selected section switches to the solid glyph, as the native tabs do. */
+const activeIconName = (icon: string) => `${icon}.fill`;
 
 const pressSpring = {
   damping: 20,
@@ -70,6 +75,19 @@ const tooltipInTiming = { ...hoverTiming, duration: 200 } as const;
 const tooltipOutTiming = hoverTiming;
 /** How far the tooltip slides in from, matching the shared motion system. */
 const TOOLTIP_TRAVEL = 8;
+
+/** Icon target in the compact rail. The rail's padding is derived from it. */
+const RAIL_ITEM_SIZE = 52;
+/** Centres the rail's icon column: 52pt of target inside 84pt of rail. */
+const RAIL_GUTTER = (NAV_RAIL_WIDTH - RAIL_ITEM_SIZE) / 2;
+/**
+ * Measured from the item, so it has to clear the rest of the rail and its border
+ * before the gap starts. A fixed 58 left the tooltip straddling the divider,
+ * where the only part of it not covered by the page was the sliver still inside
+ * the rail — it read as a stray 6pt rectangle rather than a label.
+ */
+const TOOLTIP_OFFSET = NAV_RAIL_WIDTH - RAIL_GUTTER + space.sm;
+const TOOLTIP_HEIGHT = 36;
 
 type NavItem = typeof NAV_ITEMS[number];
 type NavMetrics = Pick<LayoutRectangle, 'x' | 'y' | 'width' | 'height'>;
@@ -149,7 +167,7 @@ function NavigationItem({
         onPressOut={() => pressScale.set(withSpring(1, pressSpring))}
         style={{
           minHeight: 48,
-          minWidth: mobile ? 64 : compact ? 52 : undefined,
+          minWidth: mobile ? 64 : compact ? RAIL_ITEM_SIZE : undefined,
           flex: mobile ? 1 : undefined,
           paddingHorizontal: mobile ? (narrow ? 2 : 4) : compact ? 12 : 16,
           borderRadius: 16,
@@ -181,12 +199,17 @@ function NavigationItem({
               alignSelf: 'stretch',
               flexDirection: mobile ? 'column' : !compact ? 'row' : 'column',
               alignItems: 'center',
-              justifyContent: mobile ? 'center' : 'flex-start',
+              // Only the expanded sidebar starts its content at the leading edge,
+              // because there the icon is followed by a label and the labels have
+              // to line up. Everywhere else the icon is alone in the box, and
+              // `flex-start` was pinning it to the top of a 48pt target — the
+              // rail's selected pill sat visibly low around its own icon.
+              justifyContent: mobile || compact ? 'center' : 'flex-start',
               gap: mobile ? 3 : 10,
             },
             contentStyle,
           ]}>
-          <AppIcon name={item.icon} color={foreground as string} size={mobile ? 22 : 20} />
+          <AppIcon name={active ? activeIconName(item.icon) : item.icon} color={foreground as string} size={mobile ? 22 : 20} />
           {mobile || !compact ? (
             <AppText selectable={false} variant="label" numberOfLines={1} style={{ color: foreground, fontSize: mobile ? (narrow ? 10 : 11) : 15, letterSpacing: mobile && narrow ? -0.2 : undefined }}>
               {item.label}
@@ -204,16 +227,16 @@ function NavigationItem({
             style={[
               {
                 position: 'absolute',
-                left: 58,
-                top: 7,
-                minHeight: 36,
+                left: TOOLTIP_OFFSET,
+                top: (48 - TOOLTIP_HEIGHT) / 2,
+                minHeight: TOOLTIP_HEIGHT,
                 justifyContent: 'center',
                 paddingHorizontal: 12,
-                borderRadius: 10,
+                borderRadius: radius.control,
                 backgroundColor: theme.surfaceElevated,
                 borderWidth: 1,
                 borderColor: theme.border,
-                boxShadow: '0 4px 14px rgba(25,27,32,0.16)',
+                boxShadow: theme.shadowRaised,
               },
               tooltipStyle,
             ]}>
@@ -354,27 +377,38 @@ export default function WebTabsLayout() {
         style={{
           display: mobile ? 'none' : 'flex',
           width: railWidth,
+          // Above the content pane, which is a later sibling and therefore paints
+          // over it by default. Nothing here overlaps the page except the compact
+          // rail's tooltip, and that tooltip was disappearing under it.
+          zIndex: 30,
           // `viewport-fit=cover` means an installed PWA draws under the status
           // bar and the display cutouts, so the rail has to pad by real insets.
-          paddingTop: 18 + insets.top,
-          paddingBottom: 18 + insets.bottom,
-          paddingLeft: 18 + insets.left,
-          paddingRight: 18,
+          paddingTop: space.xl + insets.top,
+          paddingBottom: space.xl + insets.bottom,
+          // The compact rail's gutter is whatever centres a 52pt icon target in
+          // the 84pt the layout reserves. Padding chosen independently of the
+          // target made the items wider than the box that held them, so both the
+          // icons and the selected pill overhung the divider.
+          paddingLeft: (compact ? RAIL_GUTTER : space.xl) + insets.left,
+          paddingRight: compact ? RAIL_GUTTER : space.xl,
           borderRightWidth: 1,
           borderRightColor: theme.border,
-          gap: 28,
+          gap: space.xxl,
         }}>
-        <View style={{ minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: compact ? 'center' : 'flex-start', gap: 12 }}>
-          <View style={{ width: 38, height: 38, borderRadius: 13, backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center' }}>
+        <View style={{ minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: compact ? 'center' : 'flex-start', gap: space.md }}>
+          <View style={{ width: 38, height: 38, borderRadius: radius.tile, borderCurve: 'continuous', backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center' }}>
             <AppText selectable={false} variant="headline" style={{ color: theme.onAccent }}>Q</AppText>
           </View>
           {!compact ? <AppText variant="headline">Qashy</AppText> : null}
         </View>
         <NavigationBar mobile={false} compact={compact} narrow={narrow} pathname={pathname} />
         {!compact ? (
-          <View style={{ marginTop: 'auto', gap: 4 }}>
-            <AppText variant="caption" muted>LOCAL-FIRST FINANCE</AppText>
-            <AppText variant="caption" muted>Your data stays on this device.</AppText>
+          <View style={{ marginTop: 'auto', gap: space.xs }}>
+            <AppText variant="eyebrow" muted>LOCAL-FIRST FINANCE</AppText>
+            {/* Not "stays on this device" any more: with sync on, it also reaches the user's
+                other devices. What survived the change is the claim that actually matters —
+                nobody else, including any relay in the middle, can read it. */}
+            <AppText variant="caption" muted>Only your devices can read your data.</AppText>
           </View>
         ) : null}
       </View>
@@ -394,13 +428,15 @@ export default function WebTabsLayout() {
           backgroundColor: theme.surfaceElevated,
           flexDirection: 'row',
           alignItems: 'center',
-          paddingLeft: 8 + insets.left,
-          paddingRight: 8 + insets.right,
-          paddingTop: 6,
-          paddingBottom: Math.max(6, insets.bottom),
+          paddingLeft: space.sm + insets.left,
+          paddingRight: space.sm + insets.right,
+          paddingTop: space.xs,
+          paddingBottom: Math.max(space.xs, insets.bottom),
           borderTopWidth: 1,
           borderTopColor: theme.border,
-          boxShadow: '0 -2px 12px rgba(25,27,32,0.06)',
+          // Upward, so it cannot come from the (downward) elevation tokens. Only
+          // light mode gets one; on a dark page the top border does the work.
+          boxShadow: theme.mode === 'light' ? '0 -2px 12px rgba(25, 27, 32, 0.06)' : undefined,
         }}>
         <NavigationBar mobile compact={false} narrow={narrow} pathname={pathname} />
       </View>

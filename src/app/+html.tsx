@@ -2,6 +2,7 @@ import { ScrollViewStyleReset } from 'expo-router/html';
 import type { PropsWithChildren } from 'react';
 
 import { QASHY_INDIGO, darkTokens, lightTokens } from '@/theme/tokens';
+import { CONTENT_SECURITY_POLICY } from '@/utils/csp';
 
 // Derived from the same tokens the app renders with, rather than hand-copied. The
 // static shell used to carry its own `#F7F7FB`/`#121217` pair while the app painted
@@ -49,6 +50,13 @@ export default function Root({ children }: PropsWithChildren) {
     <html lang="en-US" dir="ltr">
       <head>
         <meta charSet="utf-8" />
+        {/* Production only. The dev server rewrites the bundle on every save and talks to
+            Metro over its own socket, and a policy fixed at build time cannot describe that
+            without being loosened to the point of proving nothing. The exported `dist/` is
+            what ships and what `e2e/qashy.spec.ts` runs against, so that is where it holds. */}
+        {process.env.NODE_ENV === 'production' ? (
+          <meta httpEquiv="Content-Security-Policy" content={CONTENT_SECURITY_POLICY} />
+        ) : null}
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
         {/* Fallback title. Routes that render `expo-router/head` override it. */}
         <title>Qashy — Calm Budgeting</title>

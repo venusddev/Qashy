@@ -70,8 +70,10 @@ export function AnimatedMoney({
   minor: number;
   currency: CurrencyCode;
   locale: string;
-  variant?: 'title' | 'headline' | 'body' | 'caption' | 'label' | 'money';
+  variant?: 'display' | 'title' | 'headline' | 'body' | 'caption' | 'label' | 'eyebrow' | 'money';
   muted?: boolean;
+  /** Fixed-width digits. Implied by `display` and `money`; set it on the rest. */
+  numeric?: boolean;
   compact?: boolean;
   sign?: boolean;
 }) {

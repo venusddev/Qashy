@@ -42,7 +42,38 @@ export interface ThemeTokens {
   onWarning: ColorValue;
   glassTint: 'light' | 'dark' | 'systemMaterial';
   staticAccent: string;
+  /**
+   * Real hex for the current mode's card surface and primary text.
+   *
+   * `surface` and `text` can be opaque Android platform colors under Material
+   * You, which the hex helpers in `@/theme/tokens` cannot read. Anything doing
+   * color math — `toneColors` for category tints, chart fills — must use these.
+   */
+  staticSurface: string;
+  staticText: string;
+  /**
+   * The elevation ladder. Exactly one mechanism conveys depth per mode: shadow
+   * in light (where the surface ramp tops out at white), lightness in dark
+   * (where shadows are invisible against the page). `shadowCard` is therefore
+   * `undefined` in dark — a resting card there is lifted by `surfaceElevated`,
+   * not by a glow that would never be seen.
+   */
+  shadowCard: string | undefined;
+  shadowRaised: string;
+  shadowOverlay: string;
 }
+
+const lightShadows = {
+  shadowCard: '0 1px 2px rgba(25, 27, 32, 0.05)',
+  shadowRaised: '0 8px 24px rgba(25, 27, 32, 0.08)',
+  shadowOverlay: '0 20px 48px rgba(25, 27, 32, 0.18)',
+} as const;
+
+const darkShadows = {
+  shadowCard: undefined,
+  shadowRaised: '0 8px 24px rgba(0, 0, 0, 0.45)',
+  shadowOverlay: '0 22px 52px rgba(0, 0, 0, 0.6)',
+} as const;
 
 const ThemeContext = createContext<ThemeTokens | null>(null);
 
@@ -74,6 +105,9 @@ function accentTokens(seed: string, dark: boolean): ThemeTokens {
     onWarning: readableTextColor(base.warning),
     glassTint: dark ? 'dark' : 'light',
     staticAccent: accent,
+    staticSurface: base.surface,
+    staticText: base.text,
+    ...(dark ? darkShadows : lightShadows),
   };
 }
 

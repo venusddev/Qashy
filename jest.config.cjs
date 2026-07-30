@@ -1,7 +1,33 @@
+const expoPreset = require('jest-expo/jest-preset.js');
+
+// The `@noble` and `@scure` crypto packages ship ESM only — no `require` condition — so
+// Jest has to transform them or it hits "Cannot use import statement outside a module"
+// the first time any sync code loads. jest-expo's pattern is a negative lookahead listing
+// the scopes it *will* transform, so the fix is to add ours to that list. Derived from the
+// preset rather than pasted, because a hard-coded copy silently stops matching the day
+// jest-expo adds a scope of its own.
+const TRANSFORM_ALSO = '@noble|@scure';
+const transformIgnorePatterns = expoPreset.transformIgnorePatterns.map((pattern) =>
+  pattern.startsWith('/node_modules/(?!(') ? pattern.replace('(?!(', `(?!(${TRANSFORM_ALSO}|`) : pattern,
+);
+
 module.exports = {
   preset: 'jest-expo',
+  transformIgnorePatterns,
   testMatch: ['**/__tests__/**/*.test.ts'],
-  collectCoverageFrom: ['src/utils/**/*.ts', 'src/data/**/*.ts', '!src/data/storage.native.ts', '!src/data/storage.web.ts'],
+  collectCoverageFrom: [
+    'src/utils/**/*.ts',
+    'src/data/**/*.ts',
+    'src/sync/**/*.ts',
+    '!src/data/storage.native.ts',
+    '!src/data/storage.web.ts',
+    // Platform-suffixed sync files need a device or a browser; the shared cores they
+    // delegate to are covered directly.
+    '!src/sync/**/*.native.ts',
+    '!src/sync/**/*.web.ts',
+    // Fixtures and helpers that live beside the suites are not production code.
+    '!src/**/__tests__/**',
+  ],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
     // tsconfig maps `dexie` to its declaration file to work around the package's

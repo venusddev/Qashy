@@ -4,6 +4,7 @@ import { AppText } from '@/components/ui/app-text';
 import { MotionView } from '@/components/ui/motion';
 import { useLocalization } from '@/localization/localization';
 import { useQashyTheme } from '@/theme/theme';
+import { radius, space } from '@/theme/tokens';
 
 export function FormField({
   label,
@@ -51,7 +52,7 @@ export function FormField({
     ...(process.env.EXPO_OS === 'web' ? { 'aria-invalid': isInvalid } : null),
   } as TextInputProps;
   return (
-    <View style={{ gap: 7 }}>
+    <View style={{ gap: space.sm - 1 }}>
       <AppText literal={literalLabel} variant="label">{label}{required ? ' *' : ''}</AppText>
       <TextInput
         {...props}
@@ -64,13 +65,18 @@ export function FormField({
         style={[
           {
             minHeight: 50,
-            paddingHorizontal: 15,
-            paddingVertical: 12,
-            borderRadius: 16,
+            paddingHorizontal: space.lg - 2,
+            paddingVertical: space.md,
+            // Smaller than the card that holds it. Matching the container's own
+            // 16 made the field read as a second card rather than a control.
+            borderRadius: radius.tile,
             borderCurve: 'continuous',
             borderWidth: 1,
             borderColor: error ? theme.negative : theme.border,
-            backgroundColor: theme.surface,
+            // Filled, not outlined. On a surface-colored card the old white fill
+            // left the border doing all the work, so a column of fields looked
+            // like ruled lines instead of things you can type into.
+            backgroundColor: theme.surfaceMuted,
             color: theme.text,
             fontSize: 16,
             writingDirection: isRtl ? 'rtl' : 'ltr',

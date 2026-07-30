@@ -6,6 +6,7 @@ import type {
   Category,
   CsvImportRow,
   DashboardSummary,
+  EntityType,
   ExchangeRate,
   FinanceState,
   Goal,
@@ -16,6 +17,15 @@ import type {
   TransactionQuery,
   TransactionRecord,
 } from '@/domain/models';
+import type { RepairNote, SyncOpBody } from '@/sync/oplog';
+import type { DuplicateGroup } from '@/sync/engine/duplicates';
+
+export interface MergeResult {
+  /** Records tombstoned because they turned out to be a copy of another one. */
+  readonly merged: number;
+  /** Records rewritten to point at the survivor instead — the merge's blast radius. */
+  readonly retargeted: number;
+}
 
 export interface OnboardingInput {
   locale: string;
@@ -57,9 +67,33 @@ export interface TransactionInput {
   occurrenceKey?: string | null;
 }
 
+export interface ApplyResult {
+  /** Ops folded into the causal state. A batch applies whole or not at all. */
+  readonly applied: number;
+  /** So the sync engine can coalesce a burst of batches into one hydrate. */
+  readonly changedTypes: readonly EntityType[];
+  /** What the deterministic repair pass had to fix to make the merged set valid. */
+  readonly repairs: readonly RepairNote[];
+}
+
 export interface FinanceRepository {
   initialize(): Promise<void>;
   refresh(): Promise<void>;
+  applyRemoteOps(ops: readonly SyncOpBody[]): Promise<ApplyResult>;
+  /**
+   * Recomputes the repair pass over the stored op log, writing only what moved.
+   *
+   * Repairs are a pure function of the merged set and are re-derived from scratch every pass,
+   * which is what lets them *un*-apply: an account resurrected because a merged-in transaction
+   * referenced it goes back to tombstoned the moment that transaction does. But a merge only
+   * runs when a peer sends something, and the edit that removes a repair's cause is very often
+   * local — deleting that transaction on this device. Without this, the device that made the
+   * edit keeps the stale repair while every peer that received it drops one, and they disagree
+   * until some unrelated batch happens to arrive.
+   *
+   * Emits no ops and applies none: `applied` is always 0.
+   */
+  repairProjection(): Promise<ApplyResult>;
   getSnapshot(): FinanceState;
   subscribe(listener: () => void): () => void;
   completeOnboarding(input: OnboardingInput): Promise<void>;
@@ -83,6 +117,16 @@ export interface FinanceRepository {
   skipUpcoming(id: string): Promise<void>;
   updateTransactionsCategory(ids: string[], categoryId: string | null): Promise<void>;
   deleteEntities(type: keyof FinanceState, ids: string[]): Promise<void>;
+  /**
+   * Collapses user-confirmed duplicates into one record each, atomically.
+   *
+   * Pair two devices that both already hold data and you get two of everything the user
+   * created on both. Nothing here is automatic: `suggestDuplicates` proposes the groups, the
+   * merge review screen is where they are confirmed, and this applies exactly what was
+   * confirmed. Throws — writing nothing — if a group is one the merged vault cannot express,
+   * such as two same-named accounts held in different currencies.
+   */
+  mergeDuplicates(groups: readonly DuplicateGroup[]): Promise<MergeResult>;
   importCsv(rows: CsvImportRow[], commit?: boolean): Promise<ImportResult>;
   exportCsv(): string;
   resetAllData(): Promise<void>;

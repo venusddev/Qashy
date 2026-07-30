@@ -17,11 +17,24 @@ import type { DashboardSummary } from '@/domain/models';
 import { useLocalization } from '@/localization/localization';
 import { useScreenMetrics } from '@/theme/layout';
 import { useQashyTheme } from '@/theme/theme';
+import { radius as radii, space } from '@/theme/tokens';
 import { shortDate } from '@/utils/date';
 import { formatMoney } from '@/utils/money';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+// One plot rectangle, quoted by the series, the gridlines, and the zero line, so
+// they cannot drift apart. They previously used different formulas: gridlines
+// were placed as a fraction of `height - 24` while the data was scaled into
+// `height - 54` starting 32 from the bottom, which landed the "50%" rule at 44%
+// of the actual plot. Chart furniture that lies about the data is worse than
+// none, so the geometry now has a single source.
+const PLOT_TOP = 20;
+const PLOT_BOTTOM_INSET = 32;
+const GRID_RATIOS = [0.25, 0.5, 0.75];
+/** Past this many days a dot per point reads as noise, so only the peak is marked. */
+const DENSE_SERIES_POINTS = 14;
 
 export function SpendLineChart({ points, currency, locale }: { points: DashboardSummary['dailySpend']; currency: string; locale: string }) {
   const theme = useQashyTheme();
@@ -49,15 +62,26 @@ export function SpendLineChart({ points, currency, locale }: { points: Dashboard
   const domainMin = Math.min(actualMin, 0);
   const domainSpan = Math.max(domainMax - domainMin, 1);
   const hasSpending = amounts.some((amount) => amount !== 0);
+  const plotBottom = height - PLOT_BOTTOM_INSET;
+  const plotHeight = plotBottom - PLOT_TOP;
+  const scaleY = (amountMinor: number) => plotBottom - ((amountMinor - domainMin) / domainSpan) * plotHeight;
   const coordinates = points.map((point, index) => ({
     x: 8 + (index / Math.max(points.length - 1, 1)) * (chartWidth - 16),
-    y: height - 32 - ((point.amountMinor - domainMin) / domainSpan) * (height - 54),
+    y: scaleY(point.amountMinor),
   }));
   const path = coordinates.map(({ x, y }, index) => `${index ? 'L' : 'M'} ${x} ${y}`).join(' ');
+  // Zero is always inside the domain, so the fill closes on the real baseline
+  // rather than the frame; a month with refunds shades above and below it.
+  const baselineY = scaleY(0);
+  const areaPath = coordinates.length
+    ? `${path} L ${coordinates[coordinates.length - 1].x} ${baselineY} L ${coordinates[0].x} ${baselineY} Z`
+    : '';
   const pathLength = Math.max(1, coordinates.slice(1).reduce((length, point, index) => {
     const previous = coordinates[index];
     return length + Math.hypot(point.x - previous.x, point.y - previous.y);
   }, 0));
+  const denseSeries = points.length > DENSE_SERIES_POINTS;
+  const peakIndex = actualMax > 0 ? amounts.indexOf(actualMax) : -1;
   const reveal = useSharedValue(reduceMotion ? 1 : 0);
 
   useEffect(() => {
@@ -92,40 +116,57 @@ export function SpendLineChart({ points, currency, locale }: { points: Dashboard
       style={{ minHeight: height }}>
       {hasSpending ? (
         <Svg width="100%" height={height} viewBox={`0 0 ${chartWidth} ${height}`}>
-          {[0.25, 0.5, 0.75].map((ratio) => (
-            <Line key={ratio} x1="8" x2={chartWidth - 8} y1={(height - 24) * ratio} y2={(height - 24) * ratio} stroke={theme.border as string} strokeWidth="1" />
+          {GRID_RATIOS.map((ratio) => (
+            <Line key={ratio} x1="8" x2={chartWidth - 8} y1={plotBottom - ratio * plotHeight} y2={plotBottom - ratio * plotHeight} stroke={theme.border as string} strokeWidth="1" />
           ))}
           {domainMin < 0 ? (
             <Line
               x1="8"
               x2={chartWidth - 8}
-              y1={height - 32 - (-domainMin / domainSpan) * (height - 54)}
-              y2={height - 32 - (-domainMin / domainSpan) * (height - 54)}
+              y1={baselineY}
+              y2={baselineY}
               stroke={theme.textMuted as string}
               strokeWidth="1"
               strokeDasharray="3 3"
             />
           ) : null}
+          {/* Fades in with the points rather than wiping with the stroke: a
+              partially drawn area closes on a straight edge mid-series and reads
+              as a wrong shape for the fraction of a second it is visible. */}
+          <AnimatedPath animatedProps={pointProps} d={areaPath} fill={theme.accent} fillOpacity={0.12} stroke="none" />
           <AnimatedPath
             animatedProps={pathProps}
             d={path}
             fill="none"
             stroke={theme.accent}
-            strokeWidth="4"
+            strokeWidth="2.5"
             strokeLinecap="round"
             strokeLinejoin="round"
             strokeDasharray={`${pathLength} ${pathLength}`}
           />
           {points.map((point, index) => {
             if (!point.amountMinor) return null;
+            if (denseSeries && index !== peakIndex) return null;
             const { x, y } = coordinates[index];
-            return <AnimatedCircle key={point.date} animatedProps={pointProps} cx={x} cy={y} r="4" fill={theme.accent} />;
+            const marked = denseSeries && index === peakIndex;
+            return (
+              <AnimatedCircle
+                key={point.date}
+                animatedProps={pointProps}
+                cx={x}
+                cy={y}
+                r={marked ? '3.5' : '3'}
+                fill={theme.accent}
+                stroke={marked ? theme.staticSurface : undefined}
+                strokeWidth={marked ? '2' : undefined}
+              />
+            );
           })}
           {firstDate ? <SvgText x="8" y={height - 4} fill={theme.textMuted as string} fontSize="11">{shortDate(firstDate, locale)}</SvgText> : null}
           {lastDate ? <SvgText x={chartWidth - 8} y={height - 4} textAnchor="end" fill={theme.textMuted as string} fontSize="11">{shortDate(lastDate, locale)}</SvgText> : null}
         </Svg>
       ) : (
-        <View style={{ minHeight: height, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+        <View style={{ minHeight: height, alignItems: 'center', justifyContent: 'center', gap: space.xs + 2 }}>
           <AppText variant="label">No spending in this period</AppText>
           {firstDate && lastDate ? (
             <AppText literal variant="caption" muted>{`${shortDate(firstDate, locale)} – ${shortDate(lastDate, locale)}`}</AppText>
@@ -147,12 +188,21 @@ const DONUT_TOP_COUNT = 5;
 // attribute besides. Both platforms parse this string form natively instead.
 const RING_ROTATION = 'rotate(-90 63 63)';
 
+/**
+ * Ring segments are separated by a hairline of track so two categories that
+ * happen to sit near each other on the colour wheel still read as two slices.
+ * Trimmed off the end of each arc, never below a visible minimum, so a 1%
+ * category is still drawn.
+ */
+const SEGMENT_GAP = 2;
+const MIN_SEGMENT_LENGTH = 1.5;
+
 export function CategoryDonut({ items, currency, locale }: { items: DashboardSummary['categorySpend']; currency: string; locale: string }) {
   const theme = useQashyTheme();
   const { t } = useLocalization();
   const total = items.reduce((sum, item) => sum + item.amountMinor, 0);
-  const radius = 46;
-  const circumference = 2 * Math.PI * radius;
+  const ringRadius = 46;
+  const circumference = 2 * Math.PI * ringRadius;
   // The ring and the legend share the same slices, with everything past the
   // top entries aggregated into "Other" so both always account for 100%.
   const top = items.slice(0, DONUT_TOP_COUNT);
@@ -169,13 +219,16 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
     })),
     ...(otherMinor > 0 ? [{ key: 'other', name: t('Other'), color: theme.textMuted as string, amountMinor: otherMinor }] : []),
   ];
-  const segments = slices.map((slice, index, source) => ({
-    slice,
-    length: total ? (slice.amountMinor / total) * circumference : 0,
-    offset: source
-      .slice(0, index)
-      .reduce((sum, previous) => sum + (total ? (previous.amountMinor / total) * circumference : 0), 0),
-  }));
+  const segments = slices.map((slice, index, source) => {
+    const length = total ? (slice.amountMinor / total) * circumference : 0;
+    return {
+      slice,
+      length: source.length > 1 ? Math.max(length - SEGMENT_GAP, MIN_SEGMENT_LENGTH) : length,
+      offset: source
+        .slice(0, index)
+        .reduce((sum, previous) => sum + (total ? (previous.amountMinor / total) * circumference : 0), 0),
+    };
+  });
   const reduceMotion = useReducedMotion();
   // Sweeps a track-colored cover arc away clockwise so the segments appear to
   // draw themselves in sequence, mirroring the line chart's reveal.
@@ -211,16 +264,16 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
       delay={70}
       accessibilityRole="image"
       accessibilityLabel={label}
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+      style={{ flexDirection: 'row', alignItems: 'center', gap: space.xl, flexWrap: 'wrap' }}>
       <View style={{ width: 126, height: 126 }}>
         <Svg width="126" height="126" viewBox="0 0 126 126">
-          <Circle cx="63" cy="63" r={radius} fill="none" stroke={theme.surfaceMuted as string} strokeWidth="16" />
+          <Circle cx="63" cy="63" r={ringRadius} fill="none" stroke={theme.surfaceMuted as string} strokeWidth="16" />
           {segments.map(({ slice, length, offset }) => (
               <Circle
                 key={slice.key}
                 cx="63"
                 cy="63"
-                r={radius}
+                r={ringRadius}
                 fill="none"
                 stroke={slice.color}
                 strokeWidth="16"
@@ -234,7 +287,7 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
             animatedProps={coverProps}
             cx="63"
             cy="63"
-            r={radius}
+            r={ringRadius}
             fill="none"
             stroke={theme.surfaceMuted as string}
             strokeWidth="17"
@@ -248,13 +301,13 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
           </SvgText>
         </Svg>
       </View>
-      <View style={{ flex: 1, minWidth: 160, gap: 9 }}>
+      <View style={{ flex: 1, minWidth: 160, gap: space.sm + 1 }}>
         {slices.map((slice, index) => (
-          <View key={slice.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <AppText variant="caption" muted style={{ minWidth: 14, fontVariant: ['tabular-nums'] }}>{`${index + 1}.`}</AppText>
-            <View style={{ width: 9, height: 9, borderRadius: 99, backgroundColor: slice.color }} />
+          <View key={slice.key} style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+            <AppText literal variant="caption" muted numeric style={{ minWidth: 14 }}>{`${index + 1}.`}</AppText>
+            <View style={{ width: 9, height: 9, borderRadius: radii.pill, backgroundColor: slice.color }} />
             <AppText literal variant="caption" style={{ flex: 1 }} numberOfLines={1}>{slice.name}</AppText>
-            <AppText variant="caption" muted>{`${share(slice.amountMinor)}%`}</AppText>
+            <AppText literal variant="caption" muted numeric>{`${share(slice.amountMinor)}%`}</AppText>
           </View>
         ))}
         {!items.length ? <AppText muted>No spending yet</AppText> : null}

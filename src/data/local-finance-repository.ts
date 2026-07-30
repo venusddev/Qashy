@@ -1,8 +1,8 @@
 import { Decimal } from 'decimal.js';
-import { z } from 'zod';
 
 import { PlatformStorageAdapter } from '@/data/storage';
 import type { StorageAdapter, StoredEntity } from '@/data/storage-adapter';
+import { SyncingStorageAdapter } from '@/data/syncing-storage-adapter';
 import type {
   Account,
   AppSettings,
@@ -40,7 +40,20 @@ import type {
   TagInput,
   TransactionInput,
 } from '@/data/repository';
+import {
+  applyOps,
+  changedTypes,
+  finalize,
+  isEntityType,
+  materialize,
+  metaKey,
+  repairMergedState,
+  type SyncOpBody,
+} from '@/sync/oplog';
+import { readAllStates, writeStates } from '@/data/sync-store';
+import { planMerge, type DuplicateGroup } from '@/sync/engine/duplicates';
 import { createDefaultCategories, createInitialState, defaultAccountName, initialSettings } from '@/domain/defaults';
+import { canActivateRecurringRule } from '@/domain/rules';
 import {
   addRecurrence,
   firstRecurrenceOnOrAfter,
@@ -48,7 +61,9 @@ import {
   parseLocalDate,
   todayLocal,
 } from '@/utils/date';
+import { budgetPeriodId, occurrenceTransactionId } from '@/utils/deterministic-id';
 import { createEntity, makeId, nowIso, updateEntity } from '@/utils/entity';
+import { disambiguateNames, normalizeName } from '@/utils/naming';
 import { escapeCsv } from '@/utils/csv';
 import { validateLocale } from '@/utils/form-validation';
 import {
@@ -62,6 +77,8 @@ import {
   sumMinor,
 } from '@/utils/money';
 import { resolvePeriod } from '@/utils/period';
+// Not `from 'zod'` — see `src/utils/zod.ts`; the CSP leaves no `eval` for zod's JIT probe.
+import { z } from '@/utils/zod';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const ACCOUNT_TYPES = ['cash', 'checking', 'savings', 'credit', 'wallet'] as const;
@@ -115,6 +132,11 @@ const ENTITY_TYPES: EntityType[] = [
   'exchangeRates',
 ];
 
+// `ENTITY_TYPES` is the list `hydrateFromStorage` walks, and it deliberately omits the
+// settings singleton because that one is read and seeded separately. A merge has no such
+// special case — an op can target `settings:settings` like any other row.
+const ALL_ENTITY_TYPES: EntityType[] = ['settings', ...ENTITY_TYPES];
+
 type ListKey = Exclude<EntityType, 'settings'>;
 
 export class LocalFinanceRepository implements FinanceRepository {
@@ -151,9 +173,21 @@ export class LocalFinanceRepository implements FinanceRepository {
 
   private async initializeNow() {
     await this.storage.initialize();
-    const settingsRecords = await this.hydrateFromStorage();
+    await this.hydrateFromStorage();
     await this.migrateLoadedState();
-    if (!settingsRecords.length) await this.persist('settings', [this.state.settings]);
+    // No placeholder settings row is written here, and that is load-bearing for sync.
+    //
+    // `baseCurrency` is `createOnly` in the merge registry — deliberately, because rebasing
+    // every snapshotted `baseAmountMinor` is not something a merge can do. So whatever value
+    // the settings entity's *create* op carries is the value every peer materializes, forever.
+    // Seeding a row before onboarding meant that op carried the app default, onboarding's real
+    // choice arrived as a `set` the diff correctly dropped, and a vault set up in ILS shipped a
+    // log that said USD. `records` and the op log disagreed permanently, and the disagreement
+    // resolved in favour of the log the first time anything re-projected.
+    //
+    // Deferring the first write to `completeOnboarding` makes that write the create, so the op
+    // log states the real base currency from the start. An un-onboarded store rehydrates to
+    // exactly `createInitialState()`, so nothing else depends on the row being there early.
     await this.generateRecurringNow(addRecurrence(todayLocal(), 'month', 1));
     // Only now is the snapshot complete enough for screens to render against.
     this.state = { ...this.state, ready: true };
@@ -173,6 +207,164 @@ export class LocalFinanceRepository implements FinanceRepository {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
+
+  /**
+   * Folds a batch of ops from another device into local state.
+   *
+   * Routed through the mutation queue rather than written straight to storage, and that is
+   * not tidiness — it closes a lost-update window. Every local save hands `putMany` a *whole
+   * entity* built from `this.state`, not a patch. If a merge committed between a save
+   * reading `this.state` and its `await storage.putMany(...)`, the save would write back its
+   * pre-merge view and silently revert the remote change on every field the two disagree
+   * about. Serialising remote applies through the same queue removes the interleaving.
+   *
+   * The batch applies whole or not at all: the merged set is repaired and checked before
+   * anything is written, and a failure leaves both `records` and the causal state untouched.
+   */
+  applyRemoteOps(ops: readonly SyncOpBody[]) {
+    return this.enqueueMutation(async () => {
+      // An op naming an entity type this version does not know comes from a newer app. The
+      // sync engine still stores and forwards it — dropping it would break the hash chain for
+      // every peer downstream — but there is nothing here to project it onto.
+      const known = ops.filter((op) => isEntityType(op.entityType));
+      if (!known.length) return { applied: 0, changedTypes: [], repairs: [] };
+      const { repairs } = await this.projectNow(known);
+      return { applied: known.length, changedTypes: changedTypes(known), repairs };
+    });
+  }
+
+  /**
+   * Re-runs the repair sweep over the stored op log without applying anything new.
+   *
+   * See the contract in `repository.ts` for why this exists at all: a *local* edit can remove
+   * the reason a repair was firing, and nothing else on this device would ever notice.
+   */
+  repairProjection() {
+    return this.enqueueMutation(async () => {
+      const { writtenTypes, repairs } = await this.projectNow([]);
+      return { applied: 0, changedTypes: writtenTypes, repairs };
+    });
+  }
+
+  private async projectNow(known: readonly SyncOpBody[]) {
+    // One transaction, and every read inside it. `transact`, deliberately, not `putMany`:
+    // once `SyncingStorageAdapter` is installed, `putMany` is the change-capturing path and
+    // would diff this merged result against the rows it replaces, emitting *local* ops that
+    // attribute a peer's change to this device — which then replicate back as though this
+    // device had made them. `transact` is the pass-through, and this is one of the callers
+    // it exists for. `this` as the source so the adapter's own notification is filtered out
+    // and the hydrate below is the only one; another tab sees a foreign write and takes the
+    // existing `pendingExternalRefresh` path.
+    const { written, writtenTypes, repairs } = await this.storage.transact(
+      async (tx) => {
+        // `sync_state` is the authority for causal state, re-read per pass rather than cached
+        // in a field. A *local* write advances it through `SyncingStorageAdapter`, which this
+        // object never observes, so a cached copy goes stale for precisely the fields both
+        // devices touched — and a register missing from a stale copy has no HLC to lose to,
+        // silently handing an older remote op the win over a newer local edit.
+        const keys = [...new Set(known.map((op) => metaKey(op.entityType, op.entityId)))];
+        const merged = applyOps(await readAllStates(tx), known);
+
+        // Read through storage rather than `this.state`: the snapshot drops tombstones, and
+        // the repair pass has to see them. Resurrecting an account that a merged-in
+        // transaction references is impossible if the deleted row is invisible.
+        const original = new Map<string, FinanceEntity>();
+        const tables = new Map<EntityType, Map<string, FinanceEntity>>();
+        for (const type of ALL_ENTITY_TYPES) {
+          const table = new Map<string, FinanceEntity>();
+          for (const entity of await tx.readAll(type)) {
+            table.set(entity.id, entity);
+            original.set(metaKey(type, entity.id), entity);
+          }
+          tables.set(type, table);
+        }
+
+        // Every entity, not just the ones this batch names — and that is the whole reason the
+        // full causal state is read above. The repair pass writes its corrections into
+        // `records`, so feeding it `records` back would feed it its own output: an account
+        // resurrected last week reads as live, the pass sees nothing to fix, and it stays live
+        // forever even after the transaction that needed it is gone. Re-projecting from the op
+        // log every pass is what makes a repair a *view* of the merged history rather than an
+        // edit to it — recomputed from scratch, and therefore able to un-apply.
+        for (const meta of merged.values()) {
+          const table = tables.get(meta.entityType);
+          if (!table) continue;
+          // `materialize` returns null until the entity's `create` op has landed. A set that
+          // arrives before its create is held rather than projected into a half-formed row.
+          const next = materialize(meta, table.get(meta.entityId) ?? null);
+          if (next) table.set(meta.entityId, next);
+        }
+
+        const list = <T extends FinanceEntity>(type: EntityType) =>
+          [...tables.get(type)!.values()] as T[];
+        const repaired = repairMergedState({
+          settings: (tables.get('settings')!.get('settings') as AppSettings | undefined) ?? null,
+          accounts: list<Account>('accounts'),
+          categories: list<Category>('categories'),
+          tags: list<Tag>('tags'),
+          transactions: list<TransactionRecord>('transactions'),
+          budgets: list<Budget>('budgets'),
+          budgetPeriods: list<BudgetPeriodSnapshot>('budgetPeriods'),
+          goals: list<Goal>('goals'),
+          contributions: list<GoalContribution>('contributions'),
+          recurringRules: list<RecurringRule>('recurringRules'),
+          exchangeRates: list<ExchangeRate>('exchangeRates'),
+        });
+        this.assertMergedSetSafe(repaired.accounts, repaired.transactions);
+
+        const records: StoredEntity[] = [];
+        const touched = new Set<EntityType>();
+        const push = (type: EntityType, entities: readonly FinanceEntity[]) => {
+          for (const entity of entities) {
+            // `finalize` settles `revision` against what is actually stored, and reports the
+            // record unchanged when only the derived fields moved — so an op that re-states
+            // a value this device already holds writes nothing and bumps nothing.
+            const { entity: settled, changed } = finalize(
+              entity,
+              original.get(metaKey(type, entity.id)) ?? null,
+            );
+            if (!changed) continue;
+            records.push({ type, entity: settled });
+            touched.add(type);
+          }
+        };
+        push('settings', repaired.settings ? [repaired.settings] : []);
+        push('accounts', repaired.accounts);
+        push('categories', repaired.categories);
+        push('tags', repaired.tags);
+        push('transactions', repaired.transactions);
+        push('budgets', repaired.budgets);
+        push('budgetPeriods', repaired.budgetPeriods);
+        push('goals', repaired.goals);
+        push('contributions', repaired.contributions);
+        push('recurringRules', repaired.recurringRules);
+        push('exchangeRates', repaired.exchangeRates);
+
+        if (records.length) await tx.putMany(records);
+        // Unconditional, and in the same transaction as the records. A record written
+        // without its causal state would be re-derived from a merge that has already moved
+        // on; a causal state written without its record would leave the projection behind a
+        // merge this device has already agreed to. And a batch that changes no record still
+        // advances the state — that is what makes redelivery a no-op rather than a re-merge.
+        await writeStates(
+          tx,
+          keys.map((key) => merged.get(key)!),
+        );
+        return {
+          written: records.length,
+          writtenTypes: [...touched],
+          repairs: repaired.notes,
+        };
+      },
+      { source: this },
+    );
+
+    if (written) {
+      await this.hydrateFromStorage();
+      this.emit();
+    }
+    return { written, writtenTypes, repairs };
+  }
 
   completeOnboarding(input: OnboardingInput) {
     return this.enqueueMutation(() => this.completeOnboardingNow(input));
@@ -286,7 +478,7 @@ export class LocalFinanceRepository implements FinanceRepository {
             !rule.active &&
             rule.pausedByDependency &&
             rule.template.accountId === account.id &&
-            this.canActivateRecurringRule(rule, accounts, this.state.categories),
+            canActivateRecurringRule(rule, accounts, this.state.categories),
           )
           .map((rule) => updateEntity(rule, { active: true, pausedByDependency: false }))
         : [];
@@ -349,7 +541,7 @@ export class LocalFinanceRepository implements FinanceRepository {
             !rule.active &&
             rule.pausedByDependency &&
             rule.template.categoryId === category.id &&
-            this.canActivateRecurringRule(rule, this.state.accounts, categories),
+            canActivateRecurringRule(rule, this.state.accounts, categories),
           )
           .map((rule) => updateEntity(rule, { active: true, pausedByDependency: false }))
         : [];
@@ -1089,7 +1281,7 @@ export class LocalFinanceRepository implements FinanceRepository {
         // satisfied may come back; a user-paused rule is left exactly as it is.
         if (!rule.active && rule.pausedByDependency) {
           const candidate = { ...rule, template };
-          const restored = this.canActivateRecurringRule(candidate, this.state.accounts, this.state.categories);
+          const restored = canActivateRecurringRule(candidate, this.state.accounts, this.state.categories);
           return [updateEntity(rule, {
             template,
             active: restored,
@@ -1227,6 +1419,49 @@ export class LocalFinanceRepository implements FinanceRepository {
     if (reactivatedRule) {
       await this.generateRecurringNow(addRecurrence(todayLocal(), 'month', 1));
     }
+  }
+
+  mergeDuplicates(groups: readonly DuplicateGroup[]) {
+    return this.enqueueMutation(() => this.mergeDuplicatesNow(groups));
+  }
+
+  /**
+   * Collapses user-confirmed duplicate records into one, as ordinary entity writes.
+   *
+   * Pairing two vaults that both hold real data leaves two of everything the user created on
+   * both devices. The repair pass renames those rather than merging them, because merging is a
+   * judgement — so this is where the judgement, once made, is carried out.
+   *
+   * The whole operation is validated before a byte is written, and it is a single `putMany`.
+   * That matters more here than almost anywhere else: a merge that half-applied would leave
+   * transactions pointing at an account that was tombstoned in the same breath, and the repair
+   * pass would resurrect it on every device as a live-but-archived ghost of the record the user
+   * just told Qashy to get rid of.
+   */
+  private async mergeDuplicatesNow(groups: readonly DuplicateGroup[]) {
+    const plan = planMerge(this.state, groups);
+    if (!plan.records.length) return { merged: 0, retargeted: 0 };
+
+    // Balances genuinely move when two accounts become one, so the money invariants are re-run
+    // over the *projected* set rather than the current one — this is the check that catches a
+    // merge whose combined opening balance and history overflow a safe integer.
+    const projected = new Map(plan.records.map((record) => [`${record.type}:${record.entity.id}`, record.entity]));
+    const project = <T extends FinanceEntity>(type: EntityType, rows: readonly T[]) =>
+      rows
+        .map((row) => (projected.get(`${type}:${row.id}`) as T | undefined) ?? row)
+        .filter((row) => !row.deletedAt);
+    this.assertTransactionSetSafe(
+      project('transactions', this.state.transactions),
+      project('accounts', this.state.accounts),
+    );
+
+    await this.storage.putMany([...plan.records], this);
+    // Rehydrating rather than splicing the snapshot: a merge touches up to eight entity types
+    // at once, and `deletedOccurrenceKeys` has to be rebuilt from the new tombstones so a rule
+    // does not re-post the occurrence that just became the duplicate.
+    await this.hydrateFromStorage();
+    this.emit();
+    return { merged: plan.removed, retargeted: plan.retargeted };
   }
 
   importCsv(rows: CsvImportRow[], commit = false) {
@@ -1388,11 +1623,11 @@ export class LocalFinanceRepository implements FinanceRepository {
     this.deletedOccurrenceKeys.clear();
     this.state = next;
     this.emit();
-    // The wipe is already the source of truth at this point: an empty store
-    // rehydrates to exactly `createInitialState()` on next launch. Re-seeding the
-    // settings row is an optimisation, so a failure here must not be reported as
-    // a failed reset.
-    await this.persist('settings', [next.settings]).catch(() => undefined);
+    // Nothing is re-seeded. The wipe is already the source of truth: an empty store
+    // rehydrates to exactly `createInitialState()` on next launch, and a reset returns the
+    // app to onboarding, which is what writes the settings row. Seeding a placeholder here
+    // would put the app default base currency into that row's `create` op — see the note in
+    // `initializeNow` for why a `createOnly` field written from a placeholder is a trap.
   }
 
   private enqueueMutation<T>(operation: () => Promise<T>) {
@@ -1447,7 +1682,6 @@ export class LocalFinanceRepository implements FinanceRepository {
       (next[type] as FinanceEntity[]) = loaded[index].filter((entity) => !entity.deletedAt);
     });
     this.state = next;
-    return settingsRecords;
   }
 
   private async saveListEntity<T extends FinanceEntity>(
@@ -1612,7 +1846,14 @@ export class LocalFinanceRepository implements FinanceRepository {
     } satisfies Omit<TransactionRecord, keyof import('@/domain/models').SyncEntity>;
     return existing
       ? updateEntity(existing, value)
-      : createEntity({ id: makeId(), ...value }) as TransactionRecord;
+      // A generated occurrence gets an id derived from its occurrence key, so two devices
+      // that both foreground and run `generateRecurring` produce the *same* transaction
+      // rather than two that a later merge has to notice and deduplicate. Manually entered
+      // transactions have no occurrence key and stay random.
+      : createEntity({
+        id: value.occurrenceKey ? occurrenceTransactionId(value.occurrenceKey) : makeId(),
+        ...value,
+      }) as TransactionRecord;
   }
 
   private replaceInList(type: ListKey, entity: FinanceEntity) {
@@ -1833,15 +2074,22 @@ export class LocalFinanceRepository implements FinanceRepository {
         filters: budget.filters,
         categoryLimits: budget.categoryLimits,
       };
-      if (!transient) return createEntity({ id: makeId(), ...values }) as BudgetPeriodSnapshot;
       // A period that has not rolled over yet is rebuilt on every read. Minting
       // a fresh UUID and timestamps each time made the snapshot identity churn
       // between two identical reads, so any list key or memo derived from it
-      // changed on every render. Derive a stable identity instead; only a
-      // snapshot that gets persisted needs a real UUID.
+      // changed on every render. Derive a stable identity instead.
+      //
+      // The persisted path uses the same derivation, for two reasons. Two devices
+      // foregrounding on the first of a month would otherwise each mint a snapshot for the
+      // same `(budgetId, periodStart)`; the history sort then ties, `.at(-1)` picks
+      // arbitrarily, and rollover diverges between them — a wrong number on screen rather
+      // than a crash. And sharing the derivation means a transient snapshot keeps its
+      // identity when it is later persisted, instead of the list key changing underneath.
+      const id = budgetPeriodId(budget.id, periodStart);
+      if (!transient) return createEntity({ id, ...values }) as BudgetPeriodSnapshot;
       return {
         ...values,
-        id: `${budget.id}:${periodStart}`,
+        id,
         revision: 1,
         createdAt: budget.createdAt,
         updatedAt: budget.updatedAt,
@@ -2063,35 +2311,21 @@ export class LocalFinanceRepository implements FinanceRepository {
     }
   }
 
+  /**
+   * Resolve name collisions on load, using the same pure function the merge's repair pass
+   * calls.
+   *
+   * The naming itself lives in `@/utils/naming` rather than here because the two have to
+   * agree exactly: the repair emits no ops, so convergence depends on every device deriving
+   * the same names from the same merged set — and a second copy of this logic is a copy
+   * that drifts. All that is left here is turning renames into entity updates.
+   */
   private disambiguateNames<T extends Account | Category | Tag>(entities: T[]) {
-    const reserved = new Set(entities.map((entity) => entity.name.trim().toLocaleLowerCase()));
-    const used = new Set<string>();
     const replacements = new Map<string, T>();
-    const ordered = [...entities].sort((first, second) => {
-      const firstArchived = 'archived' in first && first.archived ? 1 : 0;
-      const secondArchived = 'archived' in second && second.archived ? 1 : 0;
-      return firstArchived - secondArchived ||
-        first.createdAt.localeCompare(second.createdAt) ||
-        first.id.localeCompare(second.id);
-    });
-    for (const entity of ordered) {
-      const normalized = entity.name.trim().toLocaleLowerCase();
-      if (!used.has(normalized)) {
-        used.add(normalized);
-        continue;
-      }
-      const suffix = 'archived' in entity && entity.archived ? 'archived' : 'duplicate';
-      let index = 1;
-      let name = '';
-      let candidate = '';
-      do {
-        name = `${entity.name.trim()} (${suffix}${index === 1 ? '' : ` ${index}`})`;
-        candidate = name.toLocaleLowerCase();
-        index += 1;
-      } while (used.has(candidate) || reserved.has(candidate));
-      const updated = updateEntity(entity, { name } as Partial<T>);
-      used.add(candidate);
-      replacements.set(entity.id, updated);
+    const byId = new Map(entities.map((entity) => [entity.id, entity]));
+    for (const rename of disambiguateNames(entities)) {
+      const entity = byId.get(rename.id);
+      if (entity) replacements.set(rename.id, updateEntity(entity, { name: rename.name } as Partial<T>));
     }
     return {
       entities: entities.map((entity) => replacements.get(entity.id) ?? entity),
@@ -2103,24 +2337,6 @@ export class LocalFinanceRepository implements FinanceRepository {
     return entities.some((item) => item.id === entity.id)
       ? entities.map((item) => item.id === entity.id ? entity : item)
       : [...entities, entity];
-  }
-
-  private canActivateRecurringRule(
-    rule: RecurringRule,
-    accounts: Account[],
-    categories: Category[],
-  ) {
-    const account = accounts.find((item) => item.id === rule.template.accountId && !item.archived);
-    const category = rule.template.categoryId
-      ? categories.find((item) =>
-        item.id === rule.template.categoryId &&
-        item.kind === rule.template.kind &&
-        !item.archived,
-      )
-      : null;
-    return Boolean(account) &&
-      (!rule.template.categoryId || Boolean(category)) &&
-      (!rule.endDate || rule.nextDueDate <= rule.endDate);
   }
 
   private assertRecurringRuleGenerationSafe(
@@ -2230,6 +2446,49 @@ export class LocalFinanceRepository implements FinanceRepository {
     transactions = this.state.transactions,
   ) {
     this.calculateGoalProgress(goalId, goals, contributions, transactions);
+  }
+
+  /**
+   * The overflow gate for a merged set.
+   *
+   * Deliberately *not* `assertTransactionSetSafe`. That one reads `this.state.goals` and
+   * `this.state.settings` and calls `todayLocal()` inside its net-worth pass, so it is not a
+   * pure function of its arguments — two devices in different timezones could disagree about
+   * whether the same merge is legal, and the op log would fork. This keeps only the passes
+   * that depend on nothing but the records in front of them, which is also the cheaper half:
+   * no rate resolution, no per-goal walk.
+   *
+   * Anything it rejects is a merged state no local mutation could have produced, so failing
+   * closed here is the whole point — nothing is written and the batch can be retried.
+   */
+  private assertMergedSetSafe(
+    accounts: readonly Account[],
+    transactions: readonly TransactionRecord[],
+  ) {
+    const posted = transactions.filter((item) => !item.deletedAt && item.status === 'posted');
+    for (const account of accounts.filter((item) => !item.deletedAt)) {
+      const label = `${account.name} balance`;
+      let balance = account.openingBalanceMinor;
+      this.assertSafeMinor(balance, label);
+      for (const transaction of posted) {
+        if (transaction.accountId === account.id) {
+          balance = transaction.kind === 'income'
+            ? addMinor(balance, transaction.amountMinor, label)
+            : subtractMinor(balance, transaction.amountMinor, label);
+        }
+        if (transaction.kind === 'transfer' && transaction.destinationAccountId === account.id) {
+          balance = addMinor(balance, transaction.destinationAmountMinor ?? 0, label);
+        }
+      }
+    }
+    sumMinor(
+      posted.filter((item) => item.kind === 'income').map((item) => item.baseAmountMinor),
+      'Income total',
+    );
+    sumMinor(
+      posted.filter((item) => item.kind === 'expense').map((item) => item.baseAmountMinor),
+      'Expense total',
+    );
   }
 
   private assertTransactionSetSafe(
@@ -2394,9 +2653,13 @@ export class LocalFinanceRepository implements FinanceRepository {
   }
 
   private assertUniqueName(type: 'accounts' | 'categories' | 'tags', name: string, id?: string) {
+    // `normalizeName` rather than `toLocaleLowerCase`, and the same one `disambiguateNames`
+    // uses. Case folding is locale-dependent — in a Turkish locale `'I'` folds to `'ı'` —
+    // so the two would otherwise disagree about what counts as a collision, and a set the
+    // load migration had just declared clean could still be rejected by every later save.
     const duplicate = (this.state[type] as (Account | Category | Tag)[]).some((item) =>
       item.id !== id &&
-      item.name.trim().toLocaleLowerCase() === name.trim().toLocaleLowerCase(),
+      normalizeName(item.name) === normalizeName(name),
     );
     if (duplicate) throw new Error(`${name} is already in use.`);
   }
@@ -2455,4 +2718,17 @@ export class LocalFinanceRepository implements FinanceRepository {
   }
 }
 
-export const financeRepository = new LocalFinanceRepository();
+/**
+ * The app's storage, with change capture wrapped around it.
+ *
+ * Installed unconditionally and left **unarmed** — it captures nothing until
+ * `SyncProvider` calls `setDeviceId` with a vault's device id. Wrapping it here rather than
+ * only once sync is switched on is what makes turning sync on a pure configuration change:
+ * the alternative would be swapping the adapter under a repository that is already holding a
+ * snapshot and a subscription, at the exact moment the user is least willing to lose data.
+ *
+ * Exported because the provider needs the handle to arm it. Nothing else should touch it.
+ */
+export const syncingStorage = new SyncingStorageAdapter(new PlatformStorageAdapter(), null);
+
+export const financeRepository = new LocalFinanceRepository(syncingStorage);

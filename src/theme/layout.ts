@@ -40,6 +40,13 @@ export interface ScreenMetrics {
   hasNavigationRail: boolean;
   /** True while the web bottom bar floats over the end of the content. */
   hasBottomNavigation: boolean;
+  /**
+   * True while the expanded sidebar is showing, which is the only place with
+   * room for a permanent primary action. Screens use it to stand their floating
+   * button down: a FAB is a mobile answer to "there is nowhere else to put
+   * this", and on a desktop with a 244px sidebar that is no longer true.
+   */
+  hasSidebar: boolean;
 }
 
 export function useScreenMetrics(): ScreenMetrics {
@@ -51,5 +58,6 @@ export function useScreenMetrics(): ScreenMetrics {
     contentWidth,
     hasNavigationRail: contentWidth < width,
     hasBottomNavigation: IS_WEB && provided !== null && width < NAV_RAIL_BREAKPOINT,
+    hasSidebar: IS_WEB && provided !== null && width >= NAV_SIDEBAR_BREAKPOINT,
   };
 }

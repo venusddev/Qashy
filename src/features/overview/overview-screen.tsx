@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { ScrollView, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AnimatedMoney } from '@/components/finance/animated-money';
 import { CategoryDonut, SpendLineChart } from '@/components/finance/charts';
@@ -9,12 +10,13 @@ import { ActionButton } from '@/components/ui/action-button';
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { Card } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/empty-state';
 import { FloatingActionButton } from '@/components/ui/floating-action-button';
 import { IconButton } from '@/components/ui/icon-button';
 import { MotionView } from '@/components/ui/motion';
 import { PageHeading } from '@/components/ui/page-heading';
 import { ProgressBar } from '@/components/ui/progress-bar';
-import { ScreenContainer } from '@/components/ui/screen-container';
+import { floatingActionMetrics, ScreenContainer } from '@/components/ui/screen-container';
 import { SectionHeader } from '@/components/ui/section-header';
 import { TextButton } from '@/components/ui/text-button';
 import { useScrollHide } from '@/components/ui/use-scroll-hide';
@@ -22,7 +24,7 @@ import { useLocalization } from '@/localization/localization';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useScreenMetrics } from '@/theme/layout';
 import { useQashyTheme } from '@/theme/theme';
-import { radius, readableTextColor } from '@/theme/tokens';
+import { radius, space, toneColors } from '@/theme/tokens';
 import { errorMessage, showError } from '@/utils/confirm';
 import { endOfMonth, monthLabel, parseLocalDate, startOfMonth, toLocalDate } from '@/utils/date';
 import { hapticSelection, hapticSuccess } from '@/utils/haptics';
@@ -39,7 +41,9 @@ export function OverviewScreen() {
   const state = useFinanceState();
   const theme = useQashyTheme();
   const { t } = useLocalization();
-  const { contentWidth, hasBottomNavigation } = useScreenMetrics();
+  const metrics = useScreenMetrics();
+  const insets = useSafeAreaInsets();
+  const { contentWidth } = metrics;
   const [month, setMonth] = useState(startOfMonth());
   // Which way the month content slides: forward months push in from the
   // right, previous months from the left.
@@ -86,18 +90,14 @@ export function OverviewScreen() {
     <View style={{ flex: 1, backgroundColor: theme.background }}>
       <ScrollView contentInsetAdjustmentBehavior="automatic" onScroll={onScroll} scrollEventThrottle={16} style={{ flex: 1, backgroundColor: theme.background }}>
         <ScreenContainer>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-          {process.env.EXPO_OS === 'web' ? (
-            <View style={{ flexShrink: 1, minWidth: 200 }}>
-              <PageHeading title="Overview" subtitle="A quieter view of your finances." eyebrow="YOUR MONEY AT A GLANCE" />
-            </View>
-          ) : (
-            <View style={{ gap: 4, flexShrink: 1, minWidth: 200 }}>
-              <AppText variant="caption" muted>YOUR MONEY AT A GLANCE</AppText>
-              <AppText variant="headline">A quieter view of your finances.</AppText>
-            </View>
-          )}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: theme.surface, borderRadius: 999, padding: 4, borderWidth: 1, borderColor: theme.border }}>
+        {/* Native no longer draws its own copy of this heading: the section
+            stack shows a real navigation header titled "Overview". Web keeps
+            PageHeading, which is where the document's h1 lives. */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.md, flexWrap: 'wrap' }}>
+          <View style={{ flexShrink: 1, minWidth: 200 }}>
+            <PageHeading title="Overview" subtitle="A quieter view of your finances." eyebrow="YOUR MONEY AT A GLANCE" />
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs, backgroundColor: theme.surface, borderRadius: radius.pill, padding: space.xs, borderWidth: 1, borderColor: theme.border }}>
             <IconButton label="Previous month" icon="chevron.left" iconSize={16} onPress={() => changeMonth(-1)} />
             <MotionView key={month} variant={monthDirection} duration={180} style={{ minWidth: 116 }}>
               <AppText literal variant="label" style={{ textAlign: 'center' }}>{monthLabel(month, locale)}</AppText>
@@ -106,38 +106,39 @@ export function OverviewScreen() {
           </View>
         </View>
 
-        <Card style={{ padding: 24, backgroundColor: theme.surfaceElevated }}>
-          <MotionView key={month} variant={monthDirection} exit animateLayout style={{ gap: 22 }}>
-            <View style={{ gap: 6 }}>
-              <AppText variant="caption" style={{ color: theme.accent }}>CURRENT NET WORTH</AppText>
-              <AnimatedMoney
-                minor={summary.netWorthMinor}
-                currency={currency}
-                locale={locale}
-                variant="money"
-                style={{ fontSize: 34, lineHeight: 40 }}
-              />
+        <Card variant="hero">
+          <MotionView key={month} variant={monthDirection} exit animateLayout style={{ gap: space.xxl }}>
+            <View style={{ gap: space.xs }}>
+              <AppText variant="eyebrow" style={{ color: theme.accent }}>CURRENT NET WORTH</AppText>
+              <AnimatedMoney minor={summary.netWorthMinor} currency={currency} locale={locale} variant="display" />
               {summary.missingExchangeRates.length ? (
                 <AppText literal variant="caption" style={{ color: theme.warning }}>
                   {`Excludes ${summary.missingExchangeRates.map((rate) => rate.fromCurrency).join(', ')} until an effective exchange rate is added.`}
                 </AppText>
               ) : null}
             </View>
-            <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
-              {[
+            {/* Spent is deliberately not red. In the ledger an expense amount is
+                neutral text — red is reserved for "something is wrong", like a
+                budget gone over. Tinting every expense red here contradicted
+                that two screens apart and made an ordinary month look alarming.
+                Income keeps its green because money arriving really is the
+                exception worth marking. */}
+            <View style={{ flexDirection: 'row', gap: space.md, flexWrap: 'wrap' }}>
+              {([
                 ['Income', summary.incomeMinor, theme.positive],
-                ['Spent', summary.expenseMinor, theme.negative],
+                ['Spent', summary.expenseMinor, theme.text],
                 ['Net flow', summary.netFlowMinor, summary.netFlowMinor >= 0 ? theme.positive : theme.negative],
-              ].map(([label, amount, color]) => (
-                <View key={label as string} style={{ minWidth: 130, flex: 1, gap: 4 }}>
-                  <AppText variant="caption" muted>{label as string}</AppText>
+              ] as const).map(([label, amount, color]) => (
+                <View key={label} style={{ minWidth: 130, flex: 1, gap: space.xs }}>
+                  <AppText variant="caption" muted>{label}</AppText>
                   <AnimatedMoney
-                    minor={amount as number}
+                    minor={amount}
                     currency={currency}
                     locale={locale}
                     compact={contentWidth < 520}
                     variant="headline"
-                    style={{ color: color as never, fontVariant: ['tabular-nums'] }}
+                    numeric
+                    style={{ color }}
                   />
                 </View>
               ))}
@@ -145,14 +146,14 @@ export function OverviewScreen() {
           </MotionView>
         </Card>
 
-        <View style={{ flexDirection: wide ? 'row' : 'column', gap: 18, alignItems: 'stretch' }}>
-          <Card style={{ flex: 1, gap: 16 }}>
+        <View style={{ flexDirection: wide ? 'row' : 'column', gap: space.xl, alignItems: 'stretch' }}>
+          <Card style={{ flex: 1, gap: space.lg }}>
             <SectionHeader title="Spending rhythm" />
             <MotionView key={`spend-${month}`} variant={monthDirection} exit>
               <SpendLineChart points={summary.dailySpend} currency={currency} locale={locale} />
             </MotionView>
           </Card>
-          <Card style={{ flex: 1, gap: 18 }}>
+          <Card style={{ flex: 1, gap: space.lg }}>
             <SectionHeader title="By category" />
             <MotionView key={`categories-${month}`} variant={monthDirection} exit>
               <CategoryDonut items={summary.categorySpend} currency={currency} locale={locale} />
@@ -160,43 +161,46 @@ export function OverviewScreen() {
           </Card>
         </View>
 
-        <View style={{ flexDirection: wide ? 'row' : 'column', gap: 18, alignItems: 'stretch' }}>
-          <Card style={{ flex: 1, gap: 14 }}>
+        <View style={{ flexDirection: wide ? 'row' : 'column', gap: space.xl, alignItems: 'stretch' }}>
+          <Card style={{ flex: 1, gap: space.md }}>
             <SectionHeader title="Budget pulse" action="Open plan" onAction={() => router.push('/plan')} />
             {summary.budgetLimitMinor > 0 || summary.budgetSpentMinor > 0 ? (
               <>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
-                  <AnimatedMoney minor={summary.budgetSpentMinor} currency={currency} locale={locale} variant="headline" />
-                  <AppText literal muted>{`${t('of')} ${formatMoney(summary.budgetLimitMinor, currency, locale)}`}</AppText>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: space.md, alignItems: 'baseline' }}>
+                  <AnimatedMoney minor={summary.budgetSpentMinor} currency={currency} locale={locale} variant="headline" numeric />
+                  <AppText literal muted variant="caption">{`${t('of')} ${formatMoney(summary.budgetLimitMinor, currency, locale)}`}</AppText>
                 </View>
                 <ProgressBar label={t('Budget progress')} value={budgetProgress} color={budgetProgress > 1 ? theme.negative as string : undefined} />
                 <AppText variant="caption" muted>{budgetProgress > 1 ? 'Over budget — review the categories driving it.' : `${Math.max(0, Math.round((1 - budgetProgress) * 100))}% remains in this period.`}</AppText>
               </>
             ) : (
-              <View style={{ gap: 10 }}><AppText muted>Create a flexible monthly or custom budget to see your pace here.</AppText><ActionButton title="Create budget" variant="secondary" onPress={() => router.push('/budget')} /></View>
+              <View style={{ gap: space.md, alignItems: 'flex-start' }}><AppText muted>Create a flexible monthly or custom budget to see your pace here.</AppText><ActionButton title="Create budget" variant="secondary" onPress={() => router.push('/budget')} /></View>
             )}
           </Card>
-          <Card style={{ flex: 1, gap: 14 }}>
+          <Card style={{ flex: 1, gap: space.md }}>
             <SectionHeader title="Accounts" action="Manage" onAction={() => router.push('/more')} />
-            {summary.accountBalances.map(({ account, balanceMinor }) => (
-              <MotionView key={account.id} variant="fade" animateLayout exit>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                  <View style={{ width: 38, height: 38, borderRadius: radius.control, backgroundColor: account.color, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="wallet" color={readableTextColor(account.color)} size={17} /></View>
-                  <View style={{ flex: 1 }}><AppText literal variant="label">{account.name}</AppText><AppText literal variant="caption" muted>{`${account.currency} · ${t(account.type)}`}</AppText></View>
-                  <AnimatedMoney minor={balanceMinor} currency={account.currency} locale={locale} variant="label" style={{ fontVariant: ['tabular-nums'] }} />
-                </View>
-              </MotionView>
-            ))}
+            {summary.accountBalances.map(({ account, balanceMinor }) => {
+              const tile = toneColors(account.color, theme.staticSurface, theme.staticText, theme.mode === 'dark');
+              return (
+                <MotionView key={account.id} variant="fade" animateLayout exit>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+                    <View style={{ width: 38, height: 38, borderRadius: radius.tile, borderCurve: 'continuous', backgroundColor: tile.container, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="wallet" color={tile.onContainer} size={17} /></View>
+                    <View style={{ flex: 1, gap: space.xxs }}><AppText literal variant="label">{account.name}</AppText><AppText literal variant="caption" muted>{`${account.currency} · ${t(account.type)}`}</AppText></View>
+                    <AnimatedMoney minor={balanceMinor} currency={account.currency} locale={locale} variant="label" numeric />
+                  </View>
+                </MotionView>
+              );
+            })}
           </Card>
         </View>
 
         {summary.upcomingTransactions.length ? (
-          <Card style={{ gap: 6 }}>
+          <Card style={{ gap: space.sm }}>
             <SectionHeader title="Coming up" />
             {summary.upcomingTransactions.map((transaction) => (
-              <MotionView key={transaction.id} variant="fade" animateLayout exit style={{ gap: 2 }}>
+              <MotionView key={transaction.id} variant="fade" animateLayout exit style={{ gap: space.xxs }}>
                 <TransactionRow transaction={transaction} compact returnTo="/overview" />
-                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: space.sm }}>
                   <TextButton title="Skip" tone="muted" disabled={pendingUpcomingId !== null} onPress={() => resolveUpcoming(transaction.id, 'skip')} />
                   <TextButton title="Mark paid" disabled={pendingUpcomingId !== null} onPress={() => resolveUpcoming(transaction.id, 'confirm')} />
                 </View>
@@ -205,23 +209,24 @@ export function OverviewScreen() {
           </Card>
         ) : null}
 
-        <Card style={{ gap: 4 }}>
+        <Card style={{ gap: space.xs }}>
           <SectionHeader title="Recent activity" action="See all" onAction={() => router.push('/transactions')} />
           {summary.recentTransactions.length ? summary.recentTransactions.map((transaction) => (
             <MotionView key={transaction.id} variant="fade" animateLayout exit>
               <TransactionRow transaction={transaction} returnTo="/overview" />
             </MotionView>
           )) : (
-            <MotionView variant="down" style={{ alignItems: 'center', gap: 12, paddingVertical: 28 }}>
-              <View style={{ width: 52, height: 52, borderRadius: radius.card, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="arrow.left.arrow.right" color={theme.onAccentContainer} size={24} /></View>
-              <AppText variant="headline">{state.transactions.length ? `No activity in ${monthLabel(month, locale)}` : 'Your ledger is ready'}</AppText>
-              <AppText muted style={{ textAlign: 'center' }}>{state.transactions.length ? 'Choose another month or open the full transaction list.' : 'Add the first transaction and Qashy will turn it into useful context.'}</AppText>
+            <EmptyState
+              compact
+              icon="arrow.left.arrow.right"
+              title={state.transactions.length ? `No activity in ${monthLabel(month, locale)}` : 'Your ledger is ready'}
+              body={state.transactions.length ? 'Choose another month or open the full transaction list.' : 'Add the first transaction and Qashy will turn it into useful context.'}>
               {state.transactions.length ? (
                 <ActionButton title="See all transactions" variant="secondary" onPress={() => router.push('/transactions')} />
               ) : (
                 <ActionButton title="Add transaction" icon="plus" onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/overview' } })} />
               )}
-            </MotionView>
+            </EmptyState>
           )}
         </Card>
         </ScreenContainer>
@@ -230,7 +235,7 @@ export function OverviewScreen() {
         label="Add transaction"
         visibility={fabVisibility}
         onPress={() => router.push({ pathname: '/transaction', params: { returnTo: '/overview' } })}
-        style={{ position: 'absolute', right: contentWidth < 768 ? 20 : 32, bottom: hasBottomNavigation ? 92 : 26 }}
+        style={floatingActionMetrics(metrics, insets)}
       />
     </View>
   );

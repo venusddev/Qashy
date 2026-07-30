@@ -5,6 +5,7 @@ import { AppText } from '@/components/ui/app-text';
 import { MotionPressable } from '@/components/ui/motion';
 import { useLocalization } from '@/localization/localization';
 import { useQashyTheme } from '@/theme/theme';
+import { radius, space } from '@/theme/tokens';
 
 export function TextButton({
   title,
@@ -36,12 +37,12 @@ export function TextButton({
         {
           minWidth: 44,
           minHeight: 44,
-          paddingHorizontal: 6,
-          borderRadius: 10,
+          paddingHorizontal: space.sm - 2,
+          borderRadius: radius.control,
           alignItems: 'center',
           justifyContent: 'center',
           flexDirection: 'row',
-          gap: 6,
+          gap: space.sm - 2,
           opacity: isDisabled ? 0.4 : state.pressed ? 0.62 : 1,
         },
         typeof style === 'function' ? style(state) : style,

@@ -40,5 +40,16 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
+  ],
+  "exclude": [
+    // Naming `exclude` at all replaces TypeScript's default, so the defaults have to be
+    // restated — otherwise `include: ["**/*.ts"]` would start compiling node_modules.
+    "node_modules",
+    "dist",
+    // The relay worker is a separate deployment target with a different global environment
+    // — Durable Objects, `WebSocketPair`, no React Native — and it carries its own
+    // `server/tsconfig.json` and `npm run typecheck`. Compiling it against the app's config
+    // would fail on globals that genuinely do not exist here.
+    "server"
   ]
 }

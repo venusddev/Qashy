@@ -1,6 +1,14 @@
 import { LocalFinanceRepository } from '@/data/local-finance-repository';
 import { MemoryStorageAdapter } from '@/data/memory-storage';
-import type { CsvImportRow, RecurringRule, TransactionKind, TransactionStatus } from '@/domain/models';
+import type {
+  CsvImportRow,
+  EntityType,
+  FinanceEntity,
+  RecurringRule,
+  TransactionKind,
+  TransactionStatus,
+} from '@/domain/models';
+import { diffEntity, hlcFromTimestamp } from '@/sync/oplog';
 import { parseCsvTable } from '@/utils/csv';
 
 async function createRepository(storage = new MemoryStorageAdapter(), locale = 'en-US') {
@@ -2190,5 +2198,333 @@ describe('FinanceRepository contract', () => {
     }], false);
 
     expect(result.rejectedRows[0].reason).toBe('Account Spare is archived.');
+  });
+});
+
+/**
+ * Two repositories over one adapter are the same shape as two devices holding one vault:
+ * each loaded its snapshot before the other wrote, so neither can see what the other is
+ * about to generate. That is the situation sync creates permanently, and it is also what
+ * happens today whenever two foregrounds overlap on a single device.
+ *
+ * These tests fail without the deterministic ids — not with an exception, but with two rows
+ * where there should be one, which is the shape of bug that only shows up as a wrong number.
+ */
+describe('generation is stable across devices', () => {
+  // Dated far enough out that `saveRecurringRule`'s own generation — which reaches one month
+  // past today — produces nothing. Every occurrence in these tests is then created by an
+  // explicit `generateRecurring`, where the test says it is, whatever day the suite runs on.
+  const FIRST_DUE = '2099-01-31';
+  const HORIZON = '2099-02-28';
+
+  const RULE = (accountId: string) => ({
+    template: {
+      kind: 'expense' as const, title: 'Rent', note: '', accountId,
+      categoryId: null, tagIds: [], amountMinor: 120000, currency: 'USD' as const,
+    },
+    unit: 'month' as const, interval: 1,
+    startDate: FIRST_DUE, endDate: '2099-03-31', nextDueDate: FIRST_DUE,
+    autoPost: false, active: true,
+  });
+
+  // Compile-time exhaustive: a twelfth `EntityType` fails the build here rather than
+  // silently making the clone below skip a table.
+  const ALL_TYPES = Object.keys({
+    settings: 0, accounts: 0, categories: 0, tags: 0, transactions: 0, budgets: 0,
+    budgetPeriods: 0, goals: 0, contributions: 0, recurringRules: 0, exchangeRates: 0,
+  } satisfies Record<EntityType, 0>) as EntityType[];
+
+  const withRule = async () => {
+    const { repository, storage } = await createRepository();
+    const account = repository.getSnapshot().accounts[0];
+    await repository.saveRecurringRule(RULE(account.id));
+    expect(repository.getSnapshot().transactions).toHaveLength(0);
+    return { repository, storage };
+  };
+
+  const reload = async (storage: MemoryStorageAdapter) => {
+    const reloaded = new LocalFinanceRepository(storage);
+    await reloaded.initialize();
+    return reloaded;
+  };
+
+  /**
+   * A genuinely separate device: its own storage, seeded with a copy of the first device's
+   * rows and independent from then on. Two repositories over *one* adapter will not do —
+   * the second subscribes to the first's writes and hydrates, so it sees the work as
+   * already done and generates nothing. That is correct in one process, and it is exactly
+   * what does not happen between two phones.
+   */
+  const secondDevice = async (source: MemoryStorageAdapter) => {
+    const storage = new MemoryStorageAdapter();
+    for (const type of ALL_TYPES) {
+      await storage.putMany((await source.readAll(type)).map((entity) => ({ type, entity })));
+    }
+    return reload(storage);
+  };
+
+  const idsOf = (entities: readonly { id: string }[]) => entities.map((item) => item.id).sort();
+
+  it('gives one recurrence occurrence one id on every device', async () => {
+    const { repository, storage } = await withRule();
+    const other = await secondDevice(storage);
+
+    expect(await repository.generateRecurring(HORIZON)).toBe(2);
+    expect(await other.generateRecurring(HORIZON)).toBe(2);
+
+    // Same rule, same occurrences, two devices that never spoke. The ids agree only
+    // because they are derived from the occurrence key — `makeId()` gives four distinct
+    // rows that a merge then has to notice and deduplicate.
+    const generated = repository.getSnapshot().transactions;
+    expect(generated).toHaveLength(2);
+    expect(generated.map((item) => item.localDate).sort()).toEqual([FIRST_DUE, HORIZON]);
+    expect(idsOf(other.getSnapshot().transactions)).toEqual(idsOf(generated));
+  });
+
+  it('keeps a deleted occurrence deleted when generation runs again', async () => {
+    // Deletion is suppressed by `occurrenceKey`, not by id, so a derived id must not open a
+    // second route back: regenerating writes the same key, and if the tombstone did not
+    // cover it the transaction the user deleted would return on the next foreground.
+    const { repository, storage } = await withRule();
+    await repository.generateRecurring(HORIZON);
+    const [first] = repository.getSnapshot().transactions;
+    await repository.deleteEntities('transactions', [first.id]);
+
+    expect(await repository.generateRecurring(HORIZON)).toBe(0);
+    const reloaded = await reload(storage);
+    expect(reloaded.getSnapshot().transactions.some((item) => item.id === first.id)).toBe(false);
+    expect(await reloaded.generateRecurring(HORIZON)).toBe(0);
+  });
+
+  it('gives one budget period one snapshot id on every device', async () => {
+    const { repository, storage } = await withRule();
+    await repository.saveBudget({
+      name: 'Food', icon: 'chart', color: '#5966E9', limitMinor: 10000,
+      period: { unit: 'month', interval: 1, anchorDate: '2026-01-01', endDate: null }, rollover: true,
+      filters: { accountIds: [], categoryIds: [], tagIds: [] }, categoryLimits: [], archived: false,
+    });
+    const other = await secondDevice(storage);
+
+    // `generateRecurring` is what rolls budget periods forward, so both devices running it
+    // is the first-of-the-month race: two snapshots for one `(budgetId, periodStart)`, the
+    // history sort then ties, `.at(-1)` picks arbitrarily, and rollover diverges.
+    await repository.generateRecurring(HORIZON);
+    await other.generateRecurring(HORIZON);
+
+    const periods = repository.getSnapshot().budgetPeriods;
+    expect(periods.length).toBeGreaterThan(0);
+    const keys = periods.map((item) => `${item.budgetId}:${item.periodStart}`);
+    expect(new Set(keys).size).toBe(keys.length);
+    // Each device rolled its own periods forward, and landed on the same snapshot ids —
+    // so a later merge is one row per period, not two rows whose rollovers disagree.
+    expect(idsOf(other.getSnapshot().budgetPeriods)).toEqual(idsOf(periods));
+  });
+
+  it('leaves rows generated before the derivation shipped exactly where they are', async () => {
+    // Existing vaults hold occurrences and snapshots with random ids. Nothing re-keys them:
+    // regeneration is suppressed by `occurrenceKey`, and a snapshot is matched by
+    // `(budgetId, periodStart)` and updated in place. So there is no migration to run, and
+    // nobody sees their history duplicate on upgrade.
+    const { repository, storage } = await withRule();
+    await repository.generateRecurring(HORIZON);
+    const before = repository.getSnapshot().transactions.map((item) => item.id).sort();
+
+    const reloaded = await reload(storage);
+    expect(await reloaded.generateRecurring(HORIZON)).toBe(0);
+    expect(reloaded.getSnapshot().transactions.map((item) => item.id).sort()).toEqual(before);
+  });
+});
+
+describe('applyRemoteOps', () => {
+  const DEVICE_B = 'B'.repeat(26);
+  let counter = 0;
+  const at = (iso: string) => hlcFromTimestamp(iso, (counter += 1), DEVICE_B);
+
+  /**
+   * The batch another device would send for this entity.
+   *
+   * It carries the `create` as well as the edit, because that is what a peer actually holds:
+   * a merge is a fold over history, not a patch, and a `set` whose `create` has not landed is
+   * deliberately held rather than projected into a half-formed row. On a real vault the
+   * receiver already has a create of its own from the genesis migration; spelling it out here
+   * keeps these tests honest about what this phase does and does not wire up yet.
+   */
+  const remoteOps = (
+    type: EntityType,
+    previous: FinanceEntity | null,
+    next: FinanceEntity,
+    iso: string,
+  ) => [
+    ...(previous ? diffEntity(type, null, previous, at(previous.createdAt)).ops : []),
+    ...diffEntity(type, previous, next, at(iso)).ops,
+  ];
+
+  const findCategory = (repository: LocalFinanceRepository, name: string) =>
+    repository.getSnapshot().categories.find((item) => item.name === name);
+
+  it('brings a remote edit into the snapshot and notifies subscribers', async () => {
+    const { repository } = await createRepository();
+    const category = findCategory(repository, 'Groceries')!;
+    const listener = jest.fn();
+    repository.subscribe(listener);
+
+    const result = await repository.applyRemoteOps(
+      remoteOps('categories', category, { ...category, name: 'Food' }, '2026-08-01T10:00:00.000Z'),
+    );
+
+    expect(result.changedTypes).toEqual(['categories']);
+    expect(findCategory(repository, 'Food')).toBeDefined();
+    expect(findCategory(repository, 'Groceries')).toBeUndefined();
+    expect(listener).toHaveBeenCalled();
+  });
+
+  it('treats a redelivered batch as a no-op rather than a second write', async () => {
+    // The relay retries, and a peer may send the same batch down two transports. Re-applying
+    // must not bump `revision` — every open form captures it and would then be rejected as
+    // stale for an edit that changed nothing.
+    const { repository } = await createRepository();
+    const category = findCategory(repository, 'Groceries')!;
+    const ops = remoteOps('categories', category, { ...category, name: 'Food' }, '2026-08-01T10:00:00.000Z');
+
+    await repository.applyRemoteOps(ops);
+    const afterFirst = findCategory(repository, 'Food')!;
+    await repository.applyRemoteOps(ops);
+    const afterSecond = findCategory(repository, 'Food')!;
+
+    expect(afterSecond.revision).toBe(afterFirst.revision);
+    expect(afterSecond.updatedAt).toBe(afterFirst.updatedAt);
+  });
+
+  it('never interleaves a merge with a local save', async () => {
+    // The lost-update window §2.7 exists to close: a local save hands the adapter a *whole
+    // entity* built from the snapshot it read, so a merge committing between that read and
+    // the write would be silently reverted on every field the two disagree about. Both run
+    // through the same mutation queue, and this asserts the merge does not read storage
+    // until the save has finished writing it.
+    class RecordingStorage extends MemoryStorageAdapter {
+      readonly calls: string[] = [];
+      pauseNext = false;
+      private release: (() => void) | null = null;
+
+      override async readAll(type: Parameters<MemoryStorageAdapter['readAll']>[0]) {
+        this.calls.push('read');
+        return super.readAll(type);
+      }
+
+      override async putMany(
+        records: Parameters<MemoryStorageAdapter['putMany']>[0],
+        source?: object,
+      ) {
+        this.calls.push('write');
+        if (this.pauseNext) {
+          this.pauseNext = false;
+          await new Promise<void>((resolve) => { this.release = resolve; });
+        }
+        await super.putMany(records, source);
+      }
+
+      releasePaused() {
+        this.release?.();
+        this.release = null;
+      }
+    }
+
+    const storage = new RecordingStorage();
+    const { repository } = await createRepository(storage);
+    const account = repository.getSnapshot().accounts[0];
+
+    storage.calls.length = 0;
+    storage.pauseNext = true;
+    const localSave = repository.saveAccount({ ...account, name: 'Everyday' }, account.id, account.revision);
+    await Promise.resolve();
+    await Promise.resolve();
+    const merge = repository.applyRemoteOps(
+      remoteOps('accounts', account, { ...account, color: '#112233' }, '2026-08-01T10:00:00.000Z'),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    // The save is still mid-write. If the merge were not queued behind it, its eleven reads
+    // would already be on this list and it would be diffing against a pre-save snapshot.
+    expect(storage.calls).toEqual(['write']);
+
+    storage.releasePaused();
+    await Promise.all([localSave, merge]);
+    expect(storage.calls.indexOf('read')).toBeGreaterThan(storage.calls.indexOf('write'));
+  });
+
+  it('writes nothing at all when the merged set would overflow', async () => {
+    const { repository, storage } = await createRepository();
+    const account = repository.getSnapshot().accounts[0];
+    const seed = await repository.saveTransaction({
+      kind: 'income', title: 'Salary', localDate: '2026-07-01',
+      accountId: account.id, amountMinor: 1000,
+    });
+    // Two of these sum past `Number.MAX_SAFE_INTEGER`, which is a balance no local mutation
+    // could ever have produced — only a merge of two independently-legal histories.
+    const huge = 5_000_000_000_000_000;
+    const inflated = (id: string) => ({
+      ...seed, id, amountMinor: huge, baseAmountMinor: huge, occurrenceKey: null,
+    });
+
+    const ops = [
+      ...remoteOps('accounts', account, { ...account, name: 'Renamed' }, '2026-08-01T10:00:00.000Z'),
+      ...remoteOps('transactions', null, inflated('11111111-1111-4111-8111-111111111111'), '2026-08-01T10:00:01.000Z'),
+      ...remoteOps('transactions', null, inflated('22222222-2222-4222-8222-222222222222'), '2026-08-01T10:00:02.000Z'),
+    ];
+    await expect(repository.applyRemoteOps(ops)).rejects.toThrow();
+
+    // Fail closed: the account rename shared the batch and must not have survived it either.
+    const reloaded = new LocalFinanceRepository(storage);
+    await reloaded.initialize();
+    expect(reloaded.getSnapshot().accounts.find((item) => item.id === account.id)!.name).toBe(account.name);
+    expect(reloaded.getSnapshot().transactions).toHaveLength(1);
+  });
+
+  it('ignores an op for an entity type this version does not know', async () => {
+    // It came from a newer app. The engine still stores and forwards it — dropping it would
+    // break the hash chain for every peer downstream — but there is nothing to project.
+    const { repository } = await createRepository();
+    const before = repository.getSnapshot();
+
+    const result = await repository.applyRemoteOps([{
+      hlc: at('2026-08-01T10:00:00.000Z'),
+      entityType: 'receipts' as EntityType,
+      entityId: 'receipt-1',
+      kind: 'create',
+      payload: { entity: { id: 'receipt-1' } },
+      schema: 99,
+    }]);
+
+    expect(result).toEqual({ applied: 0, changedTypes: [], repairs: [] });
+    expect(repository.getSnapshot()).toBe(before);
+  });
+
+  it('repairs the merged set instead of writing a state the finance core rejects', async () => {
+    // Two devices both created "Savings" offline. The merged set violates `assertUniqueName`,
+    // so every later `saveAccount` on either device would throw. The repair renames one,
+    // deterministically, so both devices land on the same name without emitting an op.
+    const { repository } = await createRepository();
+    const savings = await repository.saveAccount({
+      name: 'Savings', type: 'savings', currency: 'USD',
+      openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false,
+    });
+    const twin = {
+      ...savings,
+      id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      createdAt: '2027-01-01T00:00:00.000Z',
+    };
+
+    const result = await repository.applyRemoteOps(
+      remoteOps('accounts', null, twin, '2026-08-01T10:00:00.000Z'),
+    );
+
+    expect(result.repairs.map((note) => note.code)).toContain('nameDisambiguated');
+    const names = repository.getSnapshot().accounts.map((item) => item.name);
+    expect(names).toContain('Savings');
+    expect(names).toContain('Savings (duplicate)');
+    // The assertion that matters: the merged set is still one the app can write to.
+    await expect(
+      repository.saveAccount({ ...savings, name: 'Savings' }, savings.id, savings.revision),
+    ).resolves.toBeDefined();
   });
 });

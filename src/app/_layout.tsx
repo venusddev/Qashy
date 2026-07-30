@@ -8,6 +8,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
 
 import { FinanceProvider, useFinanceState } from '@/providers/finance-provider';
+import { SyncProvider } from '@/providers/sync-provider';
 import { PwaUpdatePrompt } from '@/components/pwa-update-prompt';
 import { ReloadErrorBanner } from '@/components/reload-error-banner';
 import { LocalizationProvider, useLocalization } from '@/localization/localization';
@@ -140,6 +141,14 @@ function RootNavigator() {
           <Stack.Screen name="exchange-rate" options={formSheetOptions(t('Exchange rate'), backTitle)} />
           <Stack.Screen name="appearance" options={{ headerShown: true, title: t('Appearance'), headerBackTitle: backTitle }} />
           <Stack.Screen name="csv" options={{ headerShown: true, title: t('Import & export'), headerBackTitle: backTitle }} />
+          <Stack.Screen name="sync" options={{ headerShown: true, title: t('Sync'), headerBackTitle: backTitle }} />
+          {/* Full-screen pushes, not form sheets. Pairing puts a camera viewfinder and a
+              six-word code the user must read off two screens at once; a 0.72 detent that can
+              be swiped away mid-handshake is the wrong container for either. */}
+          <Stack.Screen name="sync-pair" options={{ headerShown: true, title: t('Add a device'), headerBackTitle: backTitle }} />
+          <Stack.Screen name="sync-merge" options={{ headerShown: true, title: t('Review duplicates'), headerBackTitle: backTitle }} />
+          <Stack.Screen name="sync-recovery" options={{ headerShown: true, title: t('Recovery phrase'), headerBackTitle: backTitle }} />
+          <Stack.Screen name="sync-transfer" options={{ headerShown: true, title: t('Backup & transfer'), headerBackTitle: backTitle }} />
         </Stack.Protected>
       </Stack>
       <PwaUpdatePrompt />
@@ -155,12 +164,18 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      {/* SyncProvider sits *inside* FinanceProvider deliberately. It reads the storage
+          singleton directly rather than through context, but its first status read runs a
+          transaction, and FinanceProvider is what awaits `storage.initialize()` before
+          rendering children. Mounting it outside would race the database open. */}
       <FinanceProvider>
-        <LocalizationProvider>
-          <QashyThemeProvider>
-            <RootNavigator />
-          </QashyThemeProvider>
-        </LocalizationProvider>
+        <SyncProvider>
+          <LocalizationProvider>
+            <QashyThemeProvider>
+              <RootNavigator />
+            </QashyThemeProvider>
+          </LocalizationProvider>
+        </SyncProvider>
       </FinanceProvider>
     </GestureHandlerRootView>
   );

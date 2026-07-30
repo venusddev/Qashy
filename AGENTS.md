@@ -19,8 +19,11 @@ Qashy supports:
 - Validated CSV mapping, preview, atomic import, and UTF-8 export.
 - System/light/dark appearance, Material You colors, curated accents, and custom hex colors.
 - Offline PWA startup and install/update behavior.
+- End-to-end encrypted, peer-to-peer sync between the user's own devices.
 
-Do not add authentication, cloud sync, bank connections, analytics, advertising, or a remote finance API unless the task explicitly expands the product scope.
+Do not add authentication, bank connections, analytics, advertising, or a remote finance API unless the task explicitly expands the product scope.
+
+Sync is the one deliberate exception to "no network". It is peer-to-peer and zero-access: any server involved is a blind relay that only ever holds padded ciphertext addressed to a rotating opaque identifier. It is not a cloud account, it has no server-side identity, and it must never become one. See `docs/sync-threat-model.md`.
 
 ## Architecture
 
@@ -53,6 +56,20 @@ Keep domain logic out of screen components when it belongs in the repository or 
 - Do not put finance records in service-worker caches, AsyncStorage, URL parameters, or logs.
 
 When adding or changing an entity, update the model, repository contract, both storage paths if necessary, migrations, and contract tests together.
+
+## Sync and cryptography
+
+- All cryptography lives in `src/sync/crypto/`. Nothing outside that directory may import `@noble/*` or `@scure/*`; ESLint enforces this.
+- Never hand-roll a primitive. Compose the audited ones, and give every hand-written construction known-answer tests and golden wire vectors.
+- Every HKDF label comes from the table in `src/sync/crypto/labels.ts`. Never inline a label string.
+- Key material lives only in the platform keystore (`src/sync/keystore.*`). It must never reach `sync_meta`, `AppSettings`, logs, URLs, the clipboard, or the service-worker cache. `AppSettings` replicates to peers, so it can never hold sync configuration.
+- Fail closed. A signature failure, roster miss, chain break, or epoch mismatch rejects the entire batch — never a partial apply. Do not swallow crypto errors in a generic `catch`.
+- Adding an entity or field means updating the merge registry in `src/sync/oplog/registry.ts` in the same change. An unregistered field is silently never synced.
+- Co-dependent fields must share a field group. Splitting `amountMinor` from `currency`, or `accountId` from the currency derived from it, produces states no local mutation could create and corrupts money silently.
+- The repair pass in `src/sync/oplog/repair.ts` must stay pure and emit no ops: no `Date.now()`, no `todayLocal()`, no `makeId()`, no `Math.random()`, and no locale-sensitive collation.
+- `work` passed to `StorageAdapter.transact` must not await anything but the transaction it is handed. Dexie tracks membership through its own promise zone, and a foreign await commits or aborts the transaction underneath you.
+- Never hard-delete a `records` row. Tombstones carry recurrence suppression, so deleting one resurrects a transaction the user deleted.
+- Prefer deterministic entity ids over post-hoc duplicate repair whenever a value uniquely identifies the record.
 
 ## Navigation and responsive layout
 

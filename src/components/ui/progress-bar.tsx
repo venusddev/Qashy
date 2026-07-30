@@ -13,7 +13,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { useQashyTheme } from '@/theme/theme';
-import { QASHY_INDIGO } from '@/theme/tokens';
+import { QASHY_INDIGO, radius } from '@/theme/tokens';
 
 const fillSpring = {
   damping: 16,
@@ -126,7 +126,7 @@ export function ProgressBar({
       accessibilityLabel={label}
       accessibilityValue={{ min: 0, max: 100, now: Math.round(clamped * 100) }}
       style={[
-        { height: 9, borderRadius: 99, overflow: 'hidden', backgroundColor: theme.surfaceMuted },
+        { height: 9, borderRadius: radius.pill, overflow: 'hidden', backgroundColor: theme.surfaceMuted },
         trackStyle,
       ]}>
       <Animated.View
@@ -138,7 +138,7 @@ export function ProgressBar({
           },
           fillStyle,
         ]}>
-        <Animated.View style={[{ flex: 1, borderRadius: 99 }, fillColorStyle]} />
+        <Animated.View style={[{ flex: 1, borderRadius: radius.pill }, fillColorStyle]} />
       </Animated.View>
     </Animated.View>
   );

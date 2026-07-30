@@ -1,5 +1,4 @@
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useLocalization } from '@/localization/localization';
 import { useQashyTheme } from '@/theme/theme';
@@ -7,7 +6,10 @@ import { useQashyTheme } from '@/theme/theme';
 export default function TabsLayout() {
   const theme = useQashyTheme();
   const { t } = useLocalization();
-  const tabs = (
+  // No SafeAreaView here. Each section stack now shows a native header, and the
+  // platform header applies the top inset itself; padding the tab host as well
+  // would push every screen down by a second status bar's worth.
+  return (
     <NativeTabs
       tintColor={theme.accent}
       backgroundColor={theme.surfaceElevated}
@@ -36,13 +38,5 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Icon sf="ellipsis.circle" md="more_horiz" />
       </NativeTabs.Trigger>
     </NativeTabs>
-  );
-  // The section stacks run with `headerShown: false`, so nothing else supplies
-  // the top inset. Both native platforms need it or tab content renders under
-  // the status bar / Dynamic Island.
-  return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: theme.background }}>
-      {tabs}
-    </SafeAreaView>
   );
 }

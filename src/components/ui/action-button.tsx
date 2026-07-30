@@ -4,6 +4,7 @@ import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { MotionPressable, MotionView } from '@/components/ui/motion';
 import { useQashyTheme } from '@/theme/theme';
+import { radius, space } from '@/theme/tokens';
 import { hapticSelection } from '@/utils/haptics';
 
 export function ActionButton({
@@ -40,13 +41,13 @@ export function ActionButton({
       style={(pressableState) => [
         {
           minHeight: 48,
-          paddingHorizontal: 18,
-          borderRadius: 999,
+          paddingHorizontal: space.lg + 2,
+          borderRadius: radius.pill,
           backgroundColor,
           alignItems: 'center',
           justifyContent: 'center',
           flexDirection: 'row',
-          gap: 8,
+          gap: space.sm,
           opacity: isDisabled ? 0.45 : pressableState.pressed ? 0.76 : 1,
         },
         typeof style === 'function' ? style(pressableState) : style,
@@ -55,7 +56,7 @@ export function ActionButton({
         key={`${title}-${icon ?? ''}`}
         variant="fade"
         animateLayout
-        style={{ alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 }}>
+        style={{ alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: space.sm }}>
         {icon ? <AppIcon name={icon} color={foreground} size={18} /> : null}
         <AppText selectable={false} variant="label" style={{ color: foreground }}>{title}</AppText>
       </MotionView>

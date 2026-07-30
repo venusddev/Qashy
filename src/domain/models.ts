@@ -250,18 +250,29 @@ export interface ImportResult {
   committedIds: string[];
 }
 
-export type EntityType =
-  | 'settings'
-  | 'accounts'
-  | 'categories'
-  | 'tags'
-  | 'transactions'
-  | 'budgets'
-  | 'budgetPeriods'
-  | 'goals'
-  | 'contributions'
-  | 'recurringRules'
-  | 'exchangeRates';
+/**
+ * Every type a `records` row can hold, in a fixed order.
+ *
+ * The union is derived from this array rather than declared beside it, because the two
+ * cannot then disagree. Anything that walks the whole vault — genesis, backup, restore —
+ * has to enumerate the types at runtime, and a hand-maintained second copy that silently
+ * omitted one would not fail to compile: it would export a backup missing a table.
+ */
+export const ENTITY_TYPES = [
+  'settings',
+  'accounts',
+  'categories',
+  'tags',
+  'transactions',
+  'budgets',
+  'budgetPeriods',
+  'goals',
+  'contributions',
+  'recurringRules',
+  'exchangeRates',
+] as const;
+
+export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export type FinanceEntity =
   | AppSettings

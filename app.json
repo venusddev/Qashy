@@ -48,7 +48,16 @@
       ],
       "expo-sqlite",
       "expo-sharing",
-      "expo-localization"
+      "expo-localization",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Qashy uses the camera only to scan the pairing code shown on another of your own devices. Nothing is recorded, stored, or sent anywhere.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

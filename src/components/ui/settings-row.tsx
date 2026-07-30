@@ -1,11 +1,11 @@
-import { View } from 'react-native';
+import { View, type ColorValue } from 'react-native';
 
 import { AppIcon } from '@/components/ui/app-icon';
 import { AppText } from '@/components/ui/app-text';
 import { MotionPressable } from '@/components/ui/motion';
 import { useLocalization } from '@/localization/localization';
 import { useQashyTheme } from '@/theme/theme';
-import { radius, readableTextColor } from '@/theme/tokens';
+import { radius, space, toneColors } from '@/theme/tokens';
 
 export function SettingsRow({
   title,
@@ -43,6 +43,15 @@ export function SettingsRow({
     .filter((part): part is string => Boolean(part))
     .map((part) => (literal ? part : t(part)))
     .join(', ');
+  // Same reasoning as the transaction row: an entity's color identifies it, it
+  // does not rank it. A full-saturation tile in a list of thirty settings rows
+  // reads as thirty alerts, so the seed is tinted toward the surface and the
+  // glyph carries the contrast.
+  const tile: { container: ColorValue; onContainer: ColorValue } = color
+    ? toneColors(color, theme.staticSurface, theme.staticText, theme.mode === 'dark')
+    : destructive
+      ? { container: theme.surfaceMuted, onContainer: theme.negative }
+      : { container: theme.accentContainer, onContainer: theme.accent };
   return (
     <MotionPressable
       accessibilityLabel={accessibilityLabel}
@@ -51,14 +60,14 @@ export function SettingsRow({
       onPress={onPress}
       disabled={!onPress || disabled}
       pressedScale={0.985}
-      style={({ pressed }) => ({ minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 12, opacity: disabled ? 0.5 : pressed ? 0.62 : 1 })}>
-      <View style={{ width: 38, height: 38, borderRadius: radius.control, backgroundColor: color ?? (destructive ? theme.surfaceMuted : theme.accentContainer), alignItems: 'center', justifyContent: 'center' }}>
-        <AppIcon name={icon} color={color ? readableTextColor(color) : destructive ? theme.negative : theme.accent} size={18} />
+      style={({ pressed }) => ({ minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: space.md, opacity: disabled ? 0.5 : pressed ? 0.62 : 1 })}>
+      <View style={{ width: 38, height: 38, borderRadius: radius.control, borderCurve: 'continuous', backgroundColor: tile.container, alignItems: 'center', justifyContent: 'center' }}>
+        <AppIcon name={icon} color={tile.onContainer} size={18} />
       </View>
       <View
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants"
-        style={{ flex: 1, gap: 1 }}><AppText literal={literal} variant="label" style={destructive ? { color: theme.negative } : undefined}>{title}</AppText>{subtitle ? <AppText literal={literal} variant="caption" muted numberOfLines={2}>{subtitle}</AppText> : null}</View>
+        style={{ flex: 1, gap: space.xxs }}><AppText literal={literal} variant="label" style={destructive ? { color: theme.negative } : undefined}>{title}</AppText>{subtitle ? <AppText literal={literal} variant="caption" muted numberOfLines={2}>{subtitle}</AppText> : null}</View>
       {value ? (
         <AppText
           accessibilityElementsHidden
