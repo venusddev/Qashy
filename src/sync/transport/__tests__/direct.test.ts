@@ -97,6 +97,22 @@ describe('DirectTransport', () => {
     await Promise.all([target.a.close(), target.b.close()]);
   });
 
+  it('gives the relay a turn promptly when no peer enters the rendezvous', async () => {
+    jest.useFakeTimers();
+    try {
+      const target = rig({ peerWaitTimeoutMs: 1 });
+      const attempt = target.a.connect({ deviceId: target.bId, name: 'B' }, new AbortController().signal);
+
+      await flush();
+      jest.advanceTimersByTime(1);
+
+      await expect(attempt).rejects.toThrow(/did not respond/i);
+      expect(target.hub.sockets).toHaveLength(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('reports the SAS so the pairing screen can show it', async () => {
     const target = rig();
     await meet(target);

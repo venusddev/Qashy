@@ -25,6 +25,15 @@ import { SignalingClient, platformSocket, type RawSocket } from '@/sync/transpor
 import { rtcFactory } from '@/sync/transport/webrtc';
 import { connectWebRtc, type RtcFactory, type WebRtcConnection } from '@/sync/transport/webrtc-core';
 
+/**
+ * A manual sync must fall through to the drop-box promptly when the peer is not also syncing.
+ *
+ * The relay is the normal path for a phone in a pocket. Waiting the signaling idle timeout
+ * (45 seconds) for a direct peer before trying it made a perfectly healthy manual sync look
+ * inert, even though an upload or download was ready to happen through the relay.
+ */
+export const DIRECT_PEER_TIMEOUT_MS = 3_000;
+
 export interface DirectTransportDeps {
   readonly identity: DeviceIdentity;
   readonly psk: VaultRootKey | PairingSecret;
@@ -51,6 +60,8 @@ export interface DirectTransportDeps {
   readonly factory?: RtcFactory;
   readonly openSocket?: (url: string) => RawSocket;
   readonly connectTimeoutMs?: number;
+  /** How long to wait for the peer to enter the rendezvous before the relay gets a turn. */
+  readonly peerWaitTimeoutMs?: number;
   /** Called with the SAS once a session is established, so the pairing screen can show it. */
   readonly onSession?: (peerId: string, session: HandshakeSession) => void;
 }
@@ -84,6 +95,7 @@ export class DirectTransport implements SyncTransport {
       baseUrl: this.deps.baseUrl,
       rendezvousId: typeof rendezvousId === 'function' ? rendezvousId() : rendezvousId,
       open: this.deps.openSocket ?? platformSocket,
+      idleTimeoutMs: this.deps.peerWaitTimeoutMs ?? DIRECT_PEER_TIMEOUT_MS,
     });
 
     try {
