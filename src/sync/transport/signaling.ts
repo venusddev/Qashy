@@ -42,6 +42,16 @@ export const SIGNAL_OPEN_TIMEOUT_MS = 10_000;
 export const SIGNAL_IDLE_TIMEOUT_MS = 45_000;
 
 /**
+ * A fixed, non-secret control frame emitted by the relay when a rendezvous has both parties.
+ *
+ * Sending a handshake hello before the second socket joined used to drop that hello at the
+ * relay. The second side then received an authentication proof when it was expecting a hello,
+ * which it quite correctly rejected as malformed. This marker is a liveness hint only: a
+ * hostile relay can forge or omit it, but can never authenticate a handshake frame.
+ */
+export const PEER_READY_MESSAGE = 'qashy-rendezvous-ready:1';
+
+/**
  * The part of `WebSocket` this module uses.
  *
  * Declared structurally rather than imported, because the browser's `WebSocket` and React
@@ -87,6 +97,12 @@ type Waiter = {
   timer?: ReturnType<typeof setTimeout>;
 };
 
+type PeerWaiter = {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timer?: ReturnType<typeof setTimeout>;
+};
+
 /**
  * One rendezvous, as a message queue rather than an event emitter.
  *
@@ -99,7 +115,9 @@ export class SignalingClient {
   private socket: RawSocket | null = null;
   private readonly inbox: Uint8Array[] = [];
   private readonly waiters: Waiter[] = [];
+  private readonly peerWaiters: PeerWaiter[] = [];
   private failure: Error | null = null;
+  private peerReady = false;
   private closed = false;
 
   constructor(private readonly deps: SignalingDeps) {}
@@ -174,6 +192,51 @@ export class SignalingClient {
   }
 
   /**
+   * Waits until the relay has confirmed that the second party is connected.
+   *
+   * This is deliberately not an authentication signal. It only prevents a live, two-party
+   * relay from discarding the first hello before there is anyone to receive it; the signed,
+   * PSK-authenticated handshake remains the authority on who answered.
+   */
+  waitForPeer(signal?: AbortSignal): Promise<void> {
+    if (this.failure) return Promise.reject(this.failure);
+    if (this.peerReady) return Promise.resolve();
+    if (signal?.aborted) return Promise.reject(new RelayError('Sync was cancelled.', 'unreachable'));
+
+    return new Promise<void>((resolve, reject) => {
+      const waiter: PeerWaiter = {
+        resolve: () => undefined,
+        reject: () => undefined,
+      };
+      const finish = () => {
+        this.dropPeerWaiter(waiter);
+        clearTimeout(waiter.timer);
+        signal?.removeEventListener('abort', onAbort);
+      };
+      const onAbort = () => {
+        finish();
+        reject(new RelayError('Sync was cancelled.', 'unreachable'));
+      };
+
+      waiter.timer = setTimeout(() => {
+        finish();
+        reject(new RelayError('The other device did not respond.', 'unreachable'));
+      }, this.deps.idleTimeoutMs ?? SIGNAL_IDLE_TIMEOUT_MS);
+      waiter.resolve = () => {
+        finish();
+        resolve();
+      };
+      waiter.reject = (error) => {
+        finish();
+        reject(error);
+      };
+
+      signal?.addEventListener('abort', onAbort);
+      this.peerWaiters.push(waiter);
+    });
+  }
+
+  /**
    * Waits for the next message from the peer.
    *
    * Times out rather than waiting forever, because the common case for "nothing arrived" is
@@ -242,6 +305,10 @@ export class SignalingClient {
    */
   private absorb(data: unknown): void {
     if (typeof data !== 'string') return;
+    if (data === PEER_READY_MESSAGE) {
+      this.markPeerReady();
+      return;
+    }
     if (data.length > Math.ceil((MAX_SIGNAL_BYTES * 4) / 3) + 4) return;
 
     let payload: Uint8Array;
@@ -269,11 +336,25 @@ export class SignalingClient {
       clearTimeout(waiter.timer);
       waiter.reject(error);
     }
+    const peerWaiting = this.peerWaiters.splice(0, this.peerWaiters.length);
+    for (const waiter of peerWaiting) waiter.reject(error);
   }
 
   private drop(waiter: Waiter): void {
     const index = this.waiters.indexOf(waiter);
     if (index >= 0) this.waiters.splice(index, 1);
+  }
+
+  private markPeerReady(): void {
+    if (this.peerReady) return;
+    this.peerReady = true;
+    const waiting = this.peerWaiters.splice(0, this.peerWaiters.length);
+    for (const waiter of waiting) waiter.resolve();
+  }
+
+  private dropPeerWaiter(waiter: PeerWaiter): void {
+    const index = this.peerWaiters.indexOf(waiter);
+    if (index >= 0) this.peerWaiters.splice(index, 1);
   }
 }
 

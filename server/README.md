@@ -8,7 +8,7 @@ It does three things:
 | Route | What it does |
 | --- | --- |
 | `GET /health` | Returns `{ "ok": true, "version": 1 }`. No id, no auth, nothing correlatable. This is what the app's **More → Sync** relay-status row asks. |
-| `GET /rendezvous/:id` (WebSocket) | Relays opaque text between exactly two parties that arrived at the same rotating id. Stores nothing. |
+| `GET /rendezvous/:id` (WebSocket) | Relays opaque text between exactly two parties at the same rotating id. Once both are connected it sends the fixed `qashy-rendezvous-ready:1` marker, then relays opaque text. Stores nothing. |
 | `PUT`/`GET`/`DELETE` `/bucket/:id` | A drop-box of sealed, padded frames addressed to a blinded route tag. |
 
 ## What this server can see
@@ -141,7 +141,7 @@ satisfy is:
 
 ```
 GET    /health                              → 200 {"ok":true,"version":1}
-GET    /rendezvous/{id}   (Upgrade)         → 101, relays text between two parties
+GET    /rendezvous/{id}   (Upgrade)         → 101, sends `qashy-rendezvous-ready:1` to both once paired, then relays text
 PUT    /bucket/{id}       Bearer {token}    ← {"to":"…","seq":0,"frame":"base64url"}
 GET    /bucket/{id}?after={slot}&limit={n}  → 200 {"blobs":[{"slot","to","seq","frame"}],"more":bool}
 DELETE /bucket/{id}       Bearer {token}    → 200 {"ok":true}

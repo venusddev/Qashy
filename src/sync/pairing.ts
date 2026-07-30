@@ -397,6 +397,7 @@ async function negotiate(
   signal?: AbortSignal,
 ): Promise<HandshakeSession> {
   await signaling.open(signal);
+  await signaling.waitForPeer(signal);
   signaling.send(encodeHello(pending.hello));
 
   const frame = await signaling.receive(signal);

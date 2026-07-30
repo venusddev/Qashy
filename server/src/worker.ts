@@ -58,6 +58,9 @@ export interface Env {
  */
 const RELAY_API_VERSION = 1;
 
+/** Non-secret liveness marker that tells both sockets their peer has arrived. */
+const PEER_READY_MESSAGE = 'qashy-rendezvous-ready:1';
+
 /**
  * Ids are 52 base32 characters today. The bounds are wider than that on purpose — this file
  * must not need a redeploy because the client changed a `slice()` — and narrow enough that a
@@ -451,6 +454,14 @@ export class RendezvousRoom {
 
     this.state.acceptWebSocket(server);
     await this.state.storage.setAlarm(Date.now() + RENDEZVOUS_TTL_MS);
+
+    // Do not let the first device send its handshake hello into an empty room. The marker has
+    // no authority — clients still authenticate every protocol frame — but it gives both sides
+    // a reliable point at which a peer exists to receive their first message.
+    const peers = this.state.getWebSockets();
+    if (peers.length === 2) {
+      for (const peer of peers) peer.send(PEER_READY_MESSAGE);
+    }
 
     return new Response(null, { status: 101, webSocket: client });
   }

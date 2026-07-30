@@ -79,6 +79,17 @@ import { nowIso } from '@/utils/entity';
 type Role = 'host' | 'join';
 type Stage = 'role' | 'code' | 'confirm' | 'done';
 
+/**
+ * A code is no longer safe to offer once its handshake has failed, even if its wall-clock
+ * deadline has not arrived yet. Keep that fact in the screen state so a failed attempt cannot
+ * look like a retryable QR for the rest of its 90-second countdown.
+ */
+interface DisplayedPairingCode {
+  readonly value: string;
+  readonly expiresAt: number;
+  readonly unusable?: boolean;
+}
+
 const STAGES: readonly Stage[] = ['role', 'code', 'confirm', 'done'];
 
 /** `HostPairingDeps.now` is unix **seconds**, unlike everything else in the app. */
@@ -113,7 +124,7 @@ export function PairScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [code, setCode] = useState<{ value: string; expiresAt: number } | null>(null);
+  const [code, setCode] = useState<DisplayedPairingCode | null>(null);
   const [remaining, setRemaining] = useState(0);
   const [sas, setSas] = useState<readonly string[] | null>(null);
   const [outcome, setOutcome] = useState<{ headline: string; body: string } | null>(null);
@@ -226,6 +237,13 @@ export function PairScreen() {
         })
         .catch((reason: unknown) => {
           if (abort.signal.aborted) return;
+          // PairingHost has closed and zeroized this attempt at this point. Leaving its QR on
+          // screen until the timer reaches zero invited the other device to scan a secret that
+          // can no longer answer, which looked exactly like an expired-code retry bug.
+          session.current = null;
+          accept.current = null;
+          setSas(null);
+          setCode((current) => (current ? { ...current, unusable: true } : null));
           setError(errorMessage(reason, 'The other device did not complete pairing.'));
         });
     } catch (reason) {
@@ -625,7 +643,7 @@ function HostCodeStep({
   remaining,
   onRestart,
 }: {
-  readonly code: { value: string; expiresAt: number } | null;
+  readonly code: DisplayedPairingCode | null;
   readonly remaining: number;
   readonly onRestart: () => void;
 }) {
@@ -644,11 +662,13 @@ function HostCodeStep({
       </AppText>
 
       <Card style={{ alignItems: 'center', gap: space.md }}>
-        {expired ? (
+        {code.unusable || expired ? (
           <View style={{ alignItems: 'center', gap: space.md, paddingVertical: space.xl }}>
             <AppIcon name="clock" color={theme.textMuted} size={28} />
             <AppText muted style={{ textAlign: 'center' }}>
-              This code has expired. Codes are single use and short-lived on purpose.
+              {code.unusable
+                ? 'This pairing attempt has ended. Its code cannot be used again, even before the countdown ends.'
+                : 'This code has expired. Codes are single use and short-lived on purpose.'}
             </AppText>
             <ActionButton title="Show a new code" icon="arrow.triangle.2.circlepath" onPress={onRestart} />
           </View>
@@ -667,7 +687,7 @@ function HostCodeStep({
         )}
       </Card>
 
-      {!expired ? (
+      {!code.unusable && !expired ? (
         <>
           <TextButton
             title={showTyped ? 'Hide the typed code' : 'Can’t scan?'}

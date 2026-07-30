@@ -14,7 +14,7 @@
  * arrives when a timer runs. Promise continuations are never faked.
  */
 
-import type { RawSocket } from '@/sync/transport/signaling';
+import { PEER_READY_MESSAGE, type RawSocket } from '@/sync/transport/signaling';
 
 const soon = (work: () => void) => {
   void Promise.resolve().then(work);
@@ -101,6 +101,10 @@ export class SocketHub {
     this.opened.push(socket);
     // Deferred, because `SignalingClient.open` attaches its handlers *after* calling this.
     if (this.autoAccept) soon(() => socket.accept());
+    const peers = this.sockets.filter((candidate) => candidate.url === url && !candidate.closed);
+    if (peers.length === 2) {
+      for (const peer of peers) soon(() => peer.emit(PEER_READY_MESSAGE));
+    }
     return socket;
   };
 

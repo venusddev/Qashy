@@ -187,6 +187,7 @@ async function negotiateSession(
   deps: WebRtcDeps,
   signal: AbortSignal,
 ): Promise<HandshakeSession> {
+  await deps.signaling.waitForPeer(signal);
   const pending = startHandshake(deps.identity);
   deps.signaling.send(encodeHello(pending.hello));
 

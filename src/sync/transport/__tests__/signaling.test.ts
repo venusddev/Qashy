@@ -242,6 +242,33 @@ describe('SignalingClient.receive', () => {
   });
 });
 
+describe('SignalingClient.waitForPeer', () => {
+  it('waits for the relay to confirm both parties are connected', async () => {
+    const hub = new SocketHub();
+    const alice = client(hub);
+    const bob = client(hub);
+
+    await alice.open();
+    const waiting = alice.waitForPeer();
+    await bob.open();
+
+    await expect(waiting).resolves.toBeUndefined();
+    await expect(bob.waitForPeer()).resolves.toBeUndefined();
+  });
+
+  it('does not put the relay control frame in the application inbox', async () => {
+    const hub = new SocketHub();
+    const alice = client(hub);
+    const bob = client(hub);
+
+    await Promise.all([alice.open(), bob.open()]);
+    await Promise.all([alice.waitForPeer(), bob.waitForPeer()]);
+
+    expect((alice as unknown as { inbox: Uint8Array[] }).inbox).toHaveLength(0);
+    expect((bob as unknown as { inbox: Uint8Array[] }).inbox).toHaveLength(0);
+  });
+});
+
 describe('a hostile or broken server', () => {
   /**
    * Every one of these is silently discarded rather than thrown. Whoever else found this

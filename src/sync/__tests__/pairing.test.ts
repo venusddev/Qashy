@@ -207,6 +207,24 @@ describe('pairing', () => {
     joinerSide.cancel();
   });
 
+  it('waits for the joining device before the host sends its first hello', async () => {
+    const target = rig();
+    const hostAttempt = target.host.handshake();
+
+    // This is the normal UI order: the device with the vault shows its QR before the other
+    // device scans it. A relay that only forwards live messages used to drop this hello.
+    await flush();
+    expect(target.hub.opened).toHaveLength(1);
+    expect(target.hub.opened[0].sent).toHaveLength(0);
+
+    const joinerAttempt = target.joiner.handshake();
+    const [hostSide, joinerSide] = await Promise.all([hostAttempt, joinerAttempt]);
+    expect(hostSide.sas).toEqual(joinerSide.sas);
+
+    hostSide.cancel();
+    joinerSide.cancel();
+  });
+
   it('moves nothing of value before both people have confirmed', async () => {
     const target = rig();
     const [hostSide, joinerSide] = await meet(target);
