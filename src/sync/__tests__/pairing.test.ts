@@ -360,6 +360,27 @@ describe('pairing', () => {
     expect(target.hub.sockets).toHaveLength(0);
   });
 
+  it('turns a malformed hello into a restartable pairing error', async () => {
+    const target = rig();
+    const hostAttempt = target.host.handshake();
+    const code = decodePairingCode(target.host.code, NOW_SECONDS);
+    const socket = target.hub.open(`wss://relay.example.com/rendezvous/${target.rendezvousId}`);
+
+    // The transport must fail closed, but the parser's binary detail is not useful on the
+    // pairing screen. This is the kind of stale or damaged frame that the user can only fix by
+    // starting a fresh single-use attempt.
+    await flush();
+    socket.send(toBase64Url(new Uint8Array([1])));
+
+    await expect(hostAttempt).rejects.toThrow(
+      'The other device sent an invalid pairing message. Start pairing again on both devices.',
+    );
+    expect(code.deviceId).toBe(target.ids.host.deviceId);
+    socket.close();
+    await flush();
+    expect(target.hub.sockets).toHaveLength(0);
+  });
+
   it('closes the rendezvous and sends nothing more when someone says the words differ', async () => {
     const target = rig();
     const [hostSide, joinerSide] = await meet(target);

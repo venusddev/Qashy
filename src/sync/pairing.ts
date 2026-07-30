@@ -55,6 +55,7 @@ import {
   zeroize,
   type DeviceIdentity,
   type EnvelopeContext,
+  type HandshakeHello,
   type HandshakeSession,
   type PairingCode,
   type PairingSecret,
@@ -398,7 +399,19 @@ async function negotiate(
   await signaling.open(signal);
   signaling.send(encodeHello(pending.hello));
 
-  const peerHello = decodeHello(await signaling.receive(signal));
+  const frame = await signaling.receive(signal);
+  let peerHello: HandshakeHello;
+  try {
+    peerHello = decodeHello(frame);
+  } catch {
+    // A broken or stale relay frame must not leak a binary-parser diagnostic into the pairing
+    // screen. It is not actionable there, and the only safe recovery is to abandon this
+    // single-use attempt and mint a new code on both devices.
+    throw new SyncEngineError(
+      'The other device sent an invalid pairing message. Start pairing again on both devices.',
+      'badPairing',
+    );
+  }
   if (expected && !constantTimeEqual(peerHello.ephemeralPublicKey, expected.ephemeralPublicKey)) {
     // Free, and strictly narrowing: the QR named one ephemeral key, so anything else answering
     // is caught here rather than surviving to the SAS. It does not help against someone who

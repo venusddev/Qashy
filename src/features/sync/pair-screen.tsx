@@ -152,13 +152,6 @@ export function PairScreen() {
     setError(null);
   };
 
-  const restart = () => {
-    closeSession();
-    setCode(null);
-    setSas(null);
-    move('role');
-  };
-
   const profile = (): DeviceProfile => ({
     name: deviceName.trim() || defaultDeviceName(),
     platform: Platform.OS,
@@ -239,6 +232,23 @@ export function PairScreen() {
       setError(errorMessage(reason, 'Sync could not be set up on this device.'));
     } finally {
       setBusy(false);
+    }
+  };
+
+  /**
+   * A host restart is a new pairing attempt, not a trip through the role picker. Keeping it
+   * here also means the old code is cleared before the replacement is minted, so there is no
+   * frame where the host appears to be offering the previous one again.
+   */
+  const restart = () => {
+    closeSession();
+    setCode(null);
+    setSas(null);
+    setOutcome(null);
+    if (role === 'host') {
+      void startHosting();
+    } else {
+      move('role');
     }
   };
 
