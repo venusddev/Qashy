@@ -12,6 +12,7 @@
  */
 
 import {
+  SCRYPT_DEFAULTS,
   aeadOpen,
   aeadSeal,
   agreementPublicKeyFrom,
@@ -176,6 +177,19 @@ describe('scrypt — RFC 7914 §11 vector 3', () => {
   it('refuses parameters weak enough to be brute-forced', () => {
     expect(() => scryptKey('password', utf8Bytes('NaCl'), { N: 1024, r: 8, p: 1 })).toThrow(/4096/);
     expect(() => scryptKey('password', utf8Bytes('NaCl'), { N: 5000, r: 8, p: 1 })).toThrow(/power of two/);
+  });
+
+  it('ships the mobile-safe OWASP-equivalent work factor', () => {
+    expect(SCRYPT_DEFAULTS).toEqual({ N: 2 ** 16, r: 8, p: 2 });
+  });
+
+  it('rejects aggregate memory and CPU cost before invoking the KDF', () => {
+    expect(() =>
+      scryptKey('password', utf8Bytes('NaCl'), { N: 2 ** 17, r: 8, p: 1 }),
+    ).toThrow(/unreasonable amount of work/);
+    expect(() =>
+      scryptKey('password', utf8Bytes('NaCl'), { N: 2 ** 16, r: 1, p: 5 }),
+    ).toThrow(/unreasonable amount of work/);
   });
 
   it('normalizes the passphrase so a composed and decomposed é agree', () => {

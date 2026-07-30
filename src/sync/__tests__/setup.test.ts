@@ -93,6 +93,7 @@ const peerNamed = (name: string, over: Partial<Peer> = {}): Peer => {
     epoch: INITIAL_EPOCH,
     addedAt: NOW_ISO,
     revokedAt: null,
+    revokedSeq: null,
     acked: {},
     known: {},
     lastSeenAt: null,
@@ -382,8 +383,45 @@ describe('changing the arrangement', () => {
     // Still two rows. Deleting one would turn every op it ever sent into a batch from an
     // unknown author, which every peer must then reject.
     expect(roster).toHaveLength(2);
-    expect(roster.find((peer) => peer.deviceId === lost.deviceId)?.revokedAt).toBe(LATER_ISO);
+    expect(roster.find((peer) => peer.deviceId === lost.deviceId)).toMatchObject({
+      revokedAt: LATER_ISO,
+      revokedSeq: 0,
+    });
     expect(await target.activity()).toContainEqual({ kind: 'revoked', peerId: lost.deviceId });
+  });
+
+  it('records the highest operation already accepted from the device as its cutoff', async () => {
+    const target = await rig({ nowIso: () => LATER_ISO });
+    await enableSync(target.deps, PROFILE);
+    const lost = peerNamed('Old phone');
+    await target.addPeers(lost);
+    await target.storage.transact((tx) =>
+      tx.table('syncOps').put([
+        {
+          opId: `${lost.deviceId}:7`,
+          deviceId: lost.deviceId,
+          seq: 7,
+          prevHash: 'previous',
+          opHash: 'head',
+          hlc: `000000000007-0000-${lost.deviceId}`,
+          entityType: 'accounts',
+          entityId: 'account-1',
+          kind: 'create',
+          payload: '{}',
+          schema: 1,
+          signature: 'signature',
+          sealed: 1,
+          origin: 1,
+        },
+      ]),
+    );
+
+    await revokePeer(target.deps, lost.deviceId);
+
+    expect((await target.roster())[0]).toMatchObject({
+      revokedAt: LATER_ISO,
+      revokedSeq: 7,
+    });
   });
 
   it('ignores a second revocation and an unknown device', async () => {
@@ -434,6 +472,7 @@ describe('rotating the vault key', () => {
     // Every peer, not just the lost one. Handing the new key to the survivors over the old
     // one would let the lost device read the handover — precisely the thing being prevented.
     expect(status.peers.every((peer) => peer.revokedAt === LATER_ISO)).toBe(true);
+    expect(status.peers.every((peer) => peer.revokedSeq === 0)).toBe(true);
   });
 
   it('resets the relay cursor, which counted slots in a bucket that no longer exists', async () => {
@@ -449,7 +488,7 @@ describe('rotating the vault key', () => {
   it('leaves an already-revoked peer’s revocation time alone', async () => {
     const target = await rig({ nowIso: () => LATER_ISO });
     await enableSync(target.deps, PROFILE);
-    await target.addPeers(peerNamed('Old phone', { revokedAt: NOW_ISO }));
+    await target.addPeers(peerNamed('Old phone', { revokedAt: NOW_ISO, revokedSeq: 0 }));
 
     await rotateVaultKey(target.deps);
 
@@ -499,6 +538,7 @@ describe('turning it off', () => {
     expect(status.keystore).toBe('empty');
     expect(status.epoch).toBe(0);
     expect(status.peers.map((peer) => peer.revokedAt)).toEqual([LATER_ISO]);
+    expect(status.peers.map((peer) => peer.revokedSeq)).toEqual([0]);
     // The key is the only thing that was ever a secret, and the only thing whose absence
     // actually prevents anything.
     expect(target.cell.bytes).toBeNull();

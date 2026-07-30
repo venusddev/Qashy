@@ -29,14 +29,14 @@ import { SYNC_META, readMeta, writeMeta } from '@/data/sync-store';
 export const DEFAULT_RELAY_URL = '';
 
 /**
- * The STUN server used when a direct connection cannot be made on the local network.
+ * Optional STUN servers for direct connections.
  *
- * STUN learns one thing: that some IP address asked what its own public address is. It never
- * sees a byte of vault data, and it is contacted only after host candidates have failed, so
- * two devices on the same Wi-Fi never reach it at all. Blank it in settings and LAN sync is
- * unaffected; only sync across two different networks stops working.
+ * Empty on purpose. ICE agents may contact configured STUN servers while gathering candidates,
+ * before a local path is known to work. Shipping a third-party default would therefore disclose
+ * app use and the device's public address without an explicit choice. LAN sync remains available;
+ * cross-network direct sync requires the user to configure STUN or TURN.
  */
-export const DEFAULT_STUN_URLS = 'stun:stun.l.google.com:19302';
+export const DEFAULT_STUN_URLS = '';
 
 export interface IceServer {
   readonly urls: string;

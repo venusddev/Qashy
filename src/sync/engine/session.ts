@@ -186,7 +186,7 @@ export class SyncSession {
    * first sync take as many app launches as it takes batches.
    */
   async push(peer: Peer, channel: SyncChannel, limit = SEND_BATCH_OPS): Promise<PushOutcome> {
-    const { storage, deviceId, frame } = this.deps;
+    const { storage, deviceId, signingKey, frame } = this.deps;
     const counters = this.countersFor(channel);
     let batches = 0;
     let ops = 0;
@@ -198,7 +198,10 @@ export class SyncSession {
     const acked: Record<string, number> = { ...peer.acked };
 
     while (more && batches < MAX_BATCHES_PER_PASS) {
-      const outgoing = await buildBatch({ storage, deviceId, limit }, { ...peer, acked });
+      const outgoing = await buildBatch(
+        { storage, deviceId, signingKey, limit },
+        { ...peer, acked },
+      );
       needsFullState = outgoing.needsFullState;
       if (!outgoing.batch.ops.length) {
         // Still worth one frame: the header is this device's acknowledgement, and a peer that

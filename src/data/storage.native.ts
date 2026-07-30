@@ -123,6 +123,13 @@ const MIGRATIONS: readonly { readonly version: number; readonly sql: string }[] 
       );
     `,
   },
+  {
+    version: 4,
+    sql: `
+      ALTER TABLE sync_peers ADD COLUMN revoked_seq INTEGER;
+      UPDATE sync_peers SET revoked_seq = 0 WHERE revoked_at IS NOT NULL;
+    `,
+  },
 ];
 
 /** Derived from the ladder rather than declared beside it, so the two cannot drift apart. */
@@ -189,6 +196,7 @@ const SQL_TABLES = {
       ['epoch', 'epoch'],
       ['added_at', 'addedAt'],
       ['revoked_at', 'revokedAt'],
+      ['revoked_seq', 'revokedSeq'],
       ['acked', 'acked'],
       ['known', 'known'],
       ['last_seen_at', 'lastSeenAt'],

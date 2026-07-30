@@ -47,6 +47,7 @@ import {
 import { SyncCryptoError, brand, type BackupKey, type VaultRootKey } from '@/sync/crypto/types';
 
 export const RECOVERY_WORD_COUNT = 24;
+export const MIN_PASSPHRASE_LENGTH = 12;
 
 // ---------------------------------------------------------------------------
 // Recovery phrase
@@ -137,8 +138,11 @@ export const createPassphraseBackup = (
   payload: Uint8Array,
   params: ScryptParams = SCRYPT_DEFAULTS,
 ) => {
-  if (passphrase.length < 8) {
-    throw new SyncCryptoError('Use a passphrase of at least 8 characters.', 'badPassphrase');
+  if (passphrase.length < MIN_PASSPHRASE_LENGTH) {
+    throw new SyncCryptoError(
+      `Use a passphrase of at least ${MIN_PASSPHRASE_LENGTH} characters.`,
+      'badPassphrase',
+    );
   }
   const salt = randomBytes(SALT_LENGTH);
   const key = brand<BackupKey>(scryptKey(passphrase, salt, params));
@@ -170,11 +174,9 @@ export const openPassphraseBackup = (passphrase: string, file: Uint8Array) => {
   if (saltLength !== SALT_LENGTH || file.length < header + saltLength) {
     throw new SyncCryptoError('That backup file is damaged.', 'badFormat');
   }
-  // Bound the work an attacker-supplied header can demand. 2^22 with r=8 is 4 GiB; a file
-  // asking for that is either corrupt or hostile, and either way should not be attempted.
-  if (params.N > 2 ** 22 || params.r > 32 || params.p > 16) {
-    throw new SyncCryptoError('That backup asks for an unreasonable amount of work to open.', 'badFormat');
-  }
+  // `scryptKey` validates aggregate memory and CPU cost before the KDF allocates anything.
+  // Checking individual fields is insufficient: a modest N multiplied by hostile r or p is
+  // still an attacker-chosen denial of service.
   const salt = file.slice(header, header + saltLength);
   const key = brand<BackupKey>(scryptKey(passphrase, salt, params));
   try {

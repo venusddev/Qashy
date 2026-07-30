@@ -47,6 +47,7 @@ const peer = (over: Partial<Peer> = {}): Peer => ({
   epoch: 1,
   addedAt: '2026-07-01T00:00:00.000Z',
   revokedAt: null,
+  revokedSeq: null,
   acked: {},
   known: {},
   lastSeenAt: ago(2 * MINUTE),

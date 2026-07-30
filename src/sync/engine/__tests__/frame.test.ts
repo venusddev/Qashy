@@ -177,11 +177,14 @@ describe('frames — size caps', () => {
     // The ops are empty objects. That is the point — a valid `ops.length` check must run
     // before `decodeOp`, or a zip bomb costs one validation per entry to reject.
     const bytes = encodeBatch({
+      version: 2,
       epoch: 1,
       baseCurrency: 'USD',
       sender: 'device',
       heads: {},
       ops: Array.from({ length: MAX_BATCH_OPS + 1 }, () => ({})),
+      roster: [],
+      signature: 'signed',
     } as never);
 
     expect(() => decodeBatch(bytes)).toThrow(SyncEngineError);
@@ -202,6 +205,20 @@ describe('batch codec — structural gate', () => {
   it('rejects anything that is not an object', () => {
     expect(() => decodeBatch(utf8Bytes('[]'))).toThrow(SyncEngineError);
     expect(() => decodeBatch(utf8Bytes('"batch"'))).toThrow(SyncEngineError);
+  });
+
+  it('rejects legacy unsigned batches explicitly', () => {
+    expect(() =>
+      decodeBatch(
+        bytesOf({
+          epoch: 1,
+          baseCurrency: 'USD',
+          sender: 'device',
+          heads: {},
+          ops: [],
+        }),
+      ),
+    ).toThrow(/signed device roster/i);
   });
 
   it('rejects unparseable bytes without repeating the parser error back', () => {

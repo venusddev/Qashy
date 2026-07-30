@@ -63,6 +63,21 @@ export const WIRE_VECTORS = {
       'c7b2592d0067c376b2c8980382c11270dc05d9258201b0c769f6888b41671f02',
   },
 
+  batchAuth: {
+    payload: {
+      version: 2,
+      epoch: 1,
+      baseCurrency: 'USD',
+      sender: 'B55VRAHZV5OLSRTLCPXMVJOV5E',
+      ops: [],
+      heads: {},
+      roster: [],
+    },
+    signature:
+      '32537c30382abfea164042d8d6f3165a21cec7d8b8206475e1db6027bbec5824' +
+      '729fe9b13388ddfd49911719a35dfe5031470a8b0a0c4b07185b2079debe0307',
+  },
+
   /**
    * Frames sealed by an earlier build, committed verbatim.
    *

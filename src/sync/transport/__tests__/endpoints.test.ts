@@ -81,7 +81,8 @@ describe('readEndpoints', () => {
     expect(endpoints.relayUrl).toBe('');
     expect(endpoints.relayEnabled).toBe(true);
     expect(endpoints.directEnabled).toBe(true);
-    expect(endpoints.iceServers).toEqual([{ urls: DEFAULT_STUN_URLS }]);
+    expect(DEFAULT_STUN_URLS).toBe('');
+    expect(endpoints.iceServers).toEqual([]);
   });
 
   it('degrades a stored value that no longer parses instead of throwing on every launch', async () => {
@@ -110,7 +111,6 @@ describe('readEndpoints', () => {
 
     const endpoints = await adapter.transact((tx) => readEndpoints(tx));
     expect(endpoints.iceServers).toEqual([
-      { urls: DEFAULT_STUN_URLS },
       { urls: 'turn:t.example:3478', username: 'me', credential: 'secret' },
     ]);
   });

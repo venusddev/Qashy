@@ -119,6 +119,7 @@ const peerNamed = (name: string): Peer => {
     epoch: INITIAL_EPOCH,
     addedAt: NOW_ISO,
     revokedAt: null,
+    revokedSeq: null,
     acked: {},
     known: {},
     lastSeenAt: null,
@@ -322,6 +323,28 @@ describe('a damaged or foreign archive', () => {
     );
 
     await expect(opened(from, forged)).rejects.toThrow(/usable vault key/);
+  });
+
+  it('opens an older archive without revocation cutoffs and fails closed for revoked peers', async () => {
+    const from = await source();
+    const vault = await from.keystore.read();
+    const archive = await opened(from, await sealed(from));
+    const legacy = {
+      ...archive,
+      peers: archive.peers.map((row) => {
+        const { revokedSeq, ...legacyRow } = row;
+        expect(revokedSeq).toBeNull();
+        return { ...legacyRow, revokedAt: NOW_ISO };
+      }),
+    };
+    const file = createVaultKeyBackup(
+      vault!.vaultKey,
+      utf8Bytes(JSON.stringify(legacy)),
+    );
+
+    await expect(opened(from, file)).resolves.toMatchObject({
+      peers: [{ revokedAt: NOW_ISO, revokedSeq: 0 }],
+    });
   });
 });
 

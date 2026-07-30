@@ -26,6 +26,7 @@ import {
   type ContentKey,
   type DeviceIdentity,
 } from '@/sync/crypto';
+import { authenticateBatch } from '@/sync/engine/batch';
 import {
   GENESIS_HASH,
   buildOp,
@@ -42,7 +43,11 @@ import type { FrameContext } from '@/sync/engine/frame';
 import { toPeerRow, type Peer } from '@/sync/engine/roster';
 import { SyncSession } from '@/sync/engine/session';
 import { LoopbackChannel, LoopbackTransport } from '@/sync/engine/transport';
-import type { SyncBatch } from '@/sync/engine/types';
+import {
+  BATCH_FORMAT_VERSION,
+  type SyncBatch,
+  type UnsignedSyncBatch,
+} from '@/sync/engine/types';
 
 export const BASE_CURRENCY = 'USD';
 export const EPOCH = 1;
@@ -270,17 +275,22 @@ export class TestDevice {
     };
   }
 
-  batch(ops: readonly SyncOp[], over: Partial<SyncBatch> = {}): SyncBatch {
+  batch(ops: readonly SyncOp[], over: Partial<UnsignedSyncBatch> = {}): SyncBatch {
     const heads: Record<string, number> = {};
     for (const op of ops) heads[op.deviceId] = Math.max(heads[op.deviceId] ?? 0, op.seq);
-    return {
-      epoch: EPOCH,
-      baseCurrency: BASE_CURRENCY,
-      sender: this.deviceId,
-      ops,
-      heads,
-      ...over,
-    };
+    return authenticateBatch(
+      {
+        version: BATCH_FORMAT_VERSION,
+        epoch: EPOCH,
+        baseCurrency: BASE_CURRENCY,
+        sender: this.deviceId,
+        ops,
+        heads,
+        roster: [],
+        ...over,
+      },
+      this.identity.signing.secretKey,
+    );
   }
 
   /** This device as it appears in another device's roster. */
@@ -294,6 +304,7 @@ export class TestDevice {
       epoch: EPOCH,
       addedAt: NOW_ISO,
       revokedAt: null,
+      revokedSeq: null,
       acked: {},
       known: {},
       lastSeenAt: null,

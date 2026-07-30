@@ -210,12 +210,13 @@ export const hkdf = (
  * The parameters are carried in the file header rather than hard-coded at the call site,
  * so they can be raised later without making existing backups unreadable.
  *
- * The default `N` is 2^16 (64 MiB), not the 2^20 (1 GiB) a desktop threat model would
- * suggest. This runs in pure JavaScript on phones, and 1 GiB would fail outright on most
- * of them — an unusable parameter provides no security at all. 64 MiB is a real cost to
- * an attacker and completes in seconds on the devices this app actually targets.
+ * The default is the mobile-safe OWASP-equivalent setting N=2^16, r=8, p=2: roughly 64 MiB
+ * and twice the CPU work of p=1. A 1 GiB desktop setting would fail outright on many phones;
+ * an unusable parameter provides no security at all.
  */
-export const SCRYPT_DEFAULTS = { N: 65536, r: 8, p: 1 } as const;
+export const SCRYPT_DEFAULTS = { N: 65536, r: 8, p: 2 } as const;
+export const SCRYPT_MAX_MEMORY_BYTES = 128 * 1024 * 1024;
+export const SCRYPT_MAX_WORK = 2 ** 18;
 
 export interface ScryptParams {
   readonly N: number;
@@ -223,15 +224,41 @@ export interface ScryptParams {
   readonly p: number;
 }
 
+export const assertScryptCost = (params: ScryptParams): void => {
+  if (
+    !Number.isSafeInteger(params.r) ||
+    params.r < 1 ||
+    !Number.isSafeInteger(params.p) ||
+    params.p < 1
+  ) {
+    throw new SyncCryptoError('scrypt r and p must be positive integers.', 'badFormat');
+  }
+  const memory = 128 * params.r * (params.N + params.p + 1);
+  const work = params.N * params.p;
+  if (
+    !Number.isSafeInteger(memory) ||
+    !Number.isSafeInteger(work) ||
+    memory > SCRYPT_MAX_MEMORY_BYTES ||
+    work > SCRYPT_MAX_WORK
+  ) {
+    throw new SyncCryptoError(
+      'That backup asks for an unreasonable amount of work to open.',
+      'badFormat',
+    );
+  }
+};
+
 export const scryptKey = (passphrase: string, salt: Uint8Array, params: ScryptParams) => {
   if (!Number.isInteger(Math.log2(params.N)) || params.N < 2 ** 12) {
     throw new SyncCryptoError('scrypt N must be a power of two of at least 4096.', 'badFormat');
   }
+  assertScryptCost(params);
   return nobleScrypt(utf8Bytes(passphrase.normalize('NFKC')), salt, {
     N: params.N,
     r: params.r,
     p: params.p,
     dkLen: KEY_LENGTH,
+    maxmem: SCRYPT_MAX_MEMORY_BYTES,
   });
 };
 

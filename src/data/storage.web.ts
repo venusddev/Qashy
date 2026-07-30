@@ -70,6 +70,19 @@ class QashyDatabase extends Dexie {
     this.version(3).stores({
       syncActivity: '&key',
     });
+    // Structured-clone rows do not need a schema change for a non-indexed field, but existing
+    // revoked rows need a fail-closed cutoff. Active rows keep null until revocation records
+    // the chain head this device had accepted.
+    this.version(4)
+      .stores({ syncPeers: '&peerId' })
+      .upgrade((transaction) =>
+        transaction
+          .table('syncPeers')
+          .toCollection()
+          .modify((row: { revokedAt?: unknown; revokedSeq?: number | null }) => {
+            if (row.revokedSeq === undefined) row.revokedSeq = row.revokedAt ? 0 : null;
+          }),
+      );
     // Without this, shipping a new `version()` while a second tab holds the old one blocks
     // the upgrade *indefinitely* — and two open tabs is a routine PWA state, not an edge
     // case. Closing here lets the upgrading tab through; this tab's next query reopens at

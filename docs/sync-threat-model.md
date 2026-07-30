@@ -35,15 +35,15 @@ a blind pipe.
 
 | Threat | Defence | Where it lives |
 |---|---|---|
-| Malicious or compromised relay | The relay only ever holds AEAD ciphertext under a key it has never seen. Every op batch is Ed25519-signed by its author and hash-chained, so the relay cannot forge, reorder, or silently drop history without detection. | `src/sync/crypto/envelope.ts`, `src/sync/engine/apply.ts` |
+| Malicious or compromised relay | The relay only ever holds AEAD ciphertext under a key it has never seen. Every batch is signed by its claimed sender, and every op is separately signed and hash-chained by its author, so the relay cannot forge, reorder, or silently drop history without detection. | `src/sync/crypto/envelope.ts`, `src/sync/engine/receive.ts` |
 | Passive observer | TLS on the outside, an independent end-to-end envelope on the inside. WebRTC's DTLS is **not** trusted alone — its fingerprints pass through signaling, so a hostile signaling server could substitute them. | `src/sync/transport/` |
 | Active attacker during pairing | The pairing secret travels optically (QR), not over the network. The handshake is PSK-authenticated with that secret. | `src/sync/crypto/handshake.ts` |
 | Photographed or relayed QR code | A 6-word Short Authentication String derived from the handshake transcript is shown on **both** screens and must be compared by a human. An attacker who raced the handshake produces a different SAS. The QR is single-use with a 90-second TTL. | `src/sync/crypto/sas.ts` |
-| Lost or stolen device | Revoke it from the device roster; every peer then rejects its future ops. Rotating the vault key additionally removes its relay access. It keeps the plaintext it already had — see §4. | `sync_peers`, `/sync` |
-| Replay or truncation of history | Per-device monotonic `seq` plus a `prevHash` chain. A gap, a rewind, or a fork is rejected loudly and surfaced, never silently merged. | `src/sync/engine/apply.ts` |
+| Lost or stolen device | Revoke it from the device roster; the revocation records the highest accepted sequence for that author, and signed roster snapshots propagate both values. Peers reject direct batches from it and forwarded ops above the fixed cutoff, while still accepting attributable pre-revocation history. Rotating the vault key additionally removes its relay access and ability to decrypt new frames. It keeps the plaintext it already had — see §4. | `sync_peers`, `src/sync/engine/roster.ts` |
+| Replay or truncation of history | Per-device monotonic `seq` plus a `prevHash` chain. A gap, a rewind, or a fork is rejected loudly and surfaced, never silently merged. | `src/sync/engine/receive.ts` |
 | Protocol downgrade | The protocol version is bound into the handshake transcript that both sides sign. An unknown major version refuses to connect. | `src/sync/crypto/handshake.ts` |
 | Metadata leakage | Bucket and rendezvous ids are HKDF outputs; the rendezvous id rotates every 5 minutes, so an observer cannot link one vault across time. Blobs are padded to power-of-two size buckets so byte counts do not reveal "three transactions were added". Uploads are jittered. | `src/sync/transport/relay.ts` |
-| IP exposure | Host ICE candidates are tried first, so LAN sync contacts no server at all. STUN is only reached for on failure. **No default TURN server is ever shipped** — TURN sees both endpoints and all traffic volume; it is user-supplied only, behind an explicit warning. | `src/sync/transport/webrtc-core.ts` |
+| IP exposure | No STUN or TURN server is configured by default, so LAN ICE gathering contacts no candidate service. A user may explicitly configure STUN/TURN for cross-network direct sync; ICE may contact configured servers while gathering, before a local route is known to work. | `src/sync/transport/endpoints.ts` |
 
 ## 4. What this does **not** defend against
 
@@ -69,7 +69,7 @@ State these in the UI and the README. Pretending otherwise would be worse than t
 | Key agreement | X25519 (`@noble/curves`) | Standard, constant-time, audited. |
 | Signatures | Ed25519 (`@noble/curves`) | Gives authenticity, attribution, and revocation that actually revokes. A shared symmetric key alone would let any holder forge history indistinguishably. |
 | Hashing / KDF | SHA-256, HKDF (`@noble/hashes`) | Synchronous, so the op-chain hash can run inside a database transaction. `crypto.subtle.digest` is async and cannot. |
-| Passphrase stretching | scrypt, N=2²⁰ (`@noble/hashes`) | Memory-hard; used for the encrypted backup file and the optional web keystore gate. |
+| Passphrase stretching | scrypt, N=2¹⁶, r=8, p=2 (`@noble/hashes`) | ~64 MiB with doubled CPU work; used for encrypted backups and the optional web keystore gate. Imported parameters are capped before allocation. |
 | Recovery phrase | BIP39 24 words (`@scure/bip39`) | Well-understood, widely transcribable, with a checksum that catches transcription errors. |
 
 All five packages are pure JS with no transitive dependencies, work identically on Hermes and in browsers,
@@ -122,8 +122,9 @@ Device **A** holds the vault. Device **B** is joining.
    prominent "They don't match" aborts and blacklists the attempt. *This is what makes a leaked QR
    survivable:* an attacker who photographed the QR and raced the handshake produces a different SAS, and the
    human sees two different values.
-5. Only after both confirmations does A seal and send the VRK plus the signed device roster.
-6. B returns its signed public keys. A adds B to the roster and broadcasts the updated, signed roster.
+5. Only after both confirmations does B send its profile and agreement key inside the authenticated session.
+6. A then seals and sends the VRK plus its authenticated roster snapshot. A records B locally; subsequent
+   sender-signed sync batches propagate the updated roster to the other devices.
 7. Both wipe `PS` and the ephemeral keys.
 
 **Camera-less devices** reverse the direction: the new device displays the QR and the phone scans it. A
@@ -163,7 +164,8 @@ One tiny stateless service. Three endpoints:
 - `GET/WS /rendezvous/:rotatingId` — relays opaque handshake blobs between two parties presenting the same
   rotating id. Keeps nothing.
 - `PUT/GET/DELETE /bucket/:bucketId` — an encrypted drop-box. Padded ciphertext, size- and rate-capped,
-  auto-expiring.
+  auto-expiring. Request bodies are counted while streaming before a Durable Object is named, and one
+  aggregate edge quota prevents fresh bucket ids from creating fresh quotas.
 
 The server sees an opaque 32-byte id, padded ciphertext, and an IP address. It cannot see who you are, what
 changed, how many records you have, or link one day's rendezvous to another's. It is replaceable or blankable

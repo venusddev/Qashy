@@ -212,6 +212,7 @@ interface WirePeer {
   readonly epoch: number;
   readonly addedAt: string;
   readonly revokedAt: string | null;
+  readonly revokedSeq: number | null;
 }
 
 const fail = (message: string): never => {
@@ -262,6 +263,7 @@ const toWirePeer = (peer: Peer): WirePeer => ({
   epoch: peer.epoch,
   addedAt: peer.addedAt,
   revokedAt: peer.revokedAt,
+  revokedSeq: peer.revokedSeq,
 });
 
 /**
@@ -286,6 +288,20 @@ const fromWirePeer = (value: unknown, index: number, nowIso: string): Peer => {
   if (revokedAt !== null && typeof revokedAt !== 'string') {
     fail(`Device ${index} in that roster has a malformed revocation.`);
   }
+  const rawRevokedSeq = value.revokedSeq;
+  const revokedSeq =
+    rawRevokedSeq === undefined
+      ? revokedAt
+        ? 0
+        : null
+      : rawRevokedSeq;
+  if (
+    (revokedAt === null && revokedSeq !== null) ||
+    (revokedAt !== null &&
+      (typeof revokedSeq !== 'number' || !Number.isSafeInteger(revokedSeq) || revokedSeq < 0))
+  ) {
+    fail(`Device ${index} in that roster has a malformed revocation cutoff.`);
+  }
   return {
     deviceId: text(value.deviceId, `Device ${index}'s id`),
     name: optionalText(value.name, `Device ${index}'s name`),
@@ -295,6 +311,7 @@ const fromWirePeer = (value: unknown, index: number, nowIso: string): Peer => {
     epoch: epoch as number,
     addedAt: text(value.addedAt, `Device ${index}'s join date`),
     revokedAt: revokedAt as string | null,
+    revokedSeq: revokedSeq as number | null,
     acked: {},
     known: {},
     lastSeenAt: nowIso,
@@ -425,6 +442,9 @@ export class PairingHost {
   private readonly secret: PairingSecret;
   private readonly pending: PendingHandshake;
   private readonly signaling: SignalingClient;
+  private readonly expiryTimer: ReturnType<typeof setTimeout>;
+  private expired = false;
+  private closed = false;
 
   /** The QR payload, and what the manual-paste fallback accepts. */
   readonly code: string;
@@ -450,13 +470,22 @@ export class PairingHost {
       open: deps.openSocket ?? platformSocket,
       idleTimeoutMs: deps.idleTimeoutMs ?? PAIRING_IDLE_TIMEOUT_MS,
     });
+    this.expiryTimer = setTimeout(
+      () => {
+        this.expired = true;
+        this.close();
+      },
+      Math.max(0, (this.expiresAt - deps.now()) * 1000),
+    );
   }
 
   /** Waits for the other device and runs the handshake. Resolves when there are words to show. */
   async handshake(signal?: AbortSignal): Promise<PairingConfirmation<HostPairingResult>> {
     let session: HandshakeSession;
     try {
+      this.assertFresh();
       session = await negotiate(this.signaling, this.pending, this.secret, null, signal);
+      this.assertFresh();
     } catch (error) {
       // A handshake that failed cannot be retried with this code — the secret is single use,
       // and an attempt that got far enough to fail is exactly the one worth not resuming.
@@ -472,8 +501,21 @@ export class PairingHost {
   }
 
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    clearTimeout(this.expiryTimer);
     this.signaling.close();
     wipe(this.pending, this.secret);
+  }
+
+  private assertFresh(): void {
+    if (!this.expired && !this.closed && this.deps.now() < this.expiresAt) return;
+    this.expired = true;
+    this.close();
+    throw new SyncEngineError(
+      'That pairing code has expired. Generate a new one and start again.',
+      'badPairing',
+    );
   }
 
   /**
@@ -488,8 +530,12 @@ export class PairingHost {
     signal?: AbortSignal,
   ): Promise<HostPairingResult> {
     try {
+      this.assertFresh();
       const toJoiner = context('vault', this.deps.identity.deviceId, session.peerDeviceId);
       const hello = await this.readJoinerHello(session, signal);
+      // The key must not leave after the advertised deadline, even if the handshake and human
+      // confirmation began while the code was still fresh.
+      this.assertFresh();
 
       if (!currenciesAgree(this.deps.baseCurrency, hello.baseCurrency)) {
         // Told, not merely refused. The joiner is sitting on a screen that will otherwise say
@@ -529,6 +575,7 @@ export class PairingHost {
           epoch: this.deps.epoch,
           addedAt: this.deps.nowIso(),
           revokedAt: null,
+          revokedSeq: null,
           acked: {},
           known: {},
           lastSeenAt: this.deps.nowIso(),
@@ -679,6 +726,7 @@ export class PairingJoiner {
         epoch: epoch as number,
         addedAt: nowIso,
         revokedAt: null,
+        revokedSeq: null,
         acked: {},
         known: {},
         lastSeenAt: nowIso,

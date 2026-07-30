@@ -80,6 +80,8 @@ export interface SyncPeerRow {
   readonly addedAt: string;
   /** Set once revoked. The row is never deleted, so its past ops stay attributable. */
   readonly revokedAt: string | null;
+  /** Highest op sequence accepted from this device when it was revoked; null while active. */
+  readonly revokedSeq: number | null;
   /** JSON `{ [deviceId]: seq }` this peer confirmed receiving — the compaction watermark. */
   readonly acked: string;
   /** JSON `{ [deviceId]: seq }` we hold from that chain. */

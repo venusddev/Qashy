@@ -169,7 +169,7 @@ describe('the passphrase gate', () => {
     const backing = cell();
     const keystore = new MemoryKeystore(backing);
     await keystore.write(vault());
-    await expect(keystore.setPassphrase('short')).rejects.toThrow(/at least 8 characters/);
+    await expect(keystore.setPassphrase('too-short')).rejects.toThrow(/at least 12 characters/);
 
     await keystore.write(vault(2));
     expect(await new MemoryKeystore(backing).status()).toBe('unlocked');

@@ -27,7 +27,12 @@
 
 export { MAX_DETAIL_LENGTH, activityCode, activityEntry, rejectionEntry, transportDetail, type ActivityInput } from '@/sync/engine/activity';
 
-export { MAX_BATCH_OPS, decodeBatch, encodeBatch } from '@/sync/engine/batch';
+export {
+  MAX_BATCH_OPS,
+  MAX_ROSTER_MEMBERS,
+  decodeBatch,
+  encodeBatch,
+} from '@/sync/engine/batch';
 
 export { BATCH_PURPOSE, openBatch, sealBatch, type FrameContext } from '@/sync/engine/frame';
 
@@ -57,6 +62,7 @@ export {
   peerAcks,
   readRoster,
   requireAuthor,
+  requireAuthorSequence,
   requireSender,
   toPeerRow,
   writePeers,
@@ -87,8 +93,10 @@ export {
 
 export {
   ACTIVITY_KINDS,
+  BATCH_FORMAT_VERSION,
   SyncEngineError,
   type ActivityKind,
   type RejectionCode,
+  type RosterMember,
   type SyncBatch,
 } from '@/sync/engine/types';

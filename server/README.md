@@ -23,9 +23,9 @@ held and cannot derive.
 ## What it can still do, and why that is survivable
 
 It can drop a blob, reorder a page, replay one, or refuse service. None of those corrupt a
-vault: every frame is AEAD-sealed under a key the server has never seen, every op batch is
-Ed25519-signed by the device that wrote it and hash-chained to that device's previous batch,
-and a gap, a rewind, or a fork is rejected by the receiving device rather than merged.
+vault: every frame is AEAD-sealed under a key the server has never seen, every batch is
+Ed25519-signed by its sender, and every op is separately signed and hash-chained to its author's
+previous op. A gap, a rewind, or a fork is rejected by the receiving device rather than merged.
 
 **A hostile relay is a denial of service. It is not a disclosure and it is not a corruption.**
 That is the property the app's threat model claims, and it is the reason this server is allowed
@@ -85,6 +85,7 @@ Cloudflare docs.
 | --- | --- | --- |
 | Retention window for undelivered blobs | `RETENTION_DAYS` in `wrangler.toml` | 14 days |
 | Request logging | `[observability]` in `wrangler.toml` | **off** |
+| Aggregate bucket requests | `REQUEST_RATE_LIMITER` in `wrangler.toml` | 120/minute per Cloudflare location |
 
 Shortening retention is safe. A device that was away longer simply receives the ops again from
 the sender's outbox, which never got an acknowledgement for them — nothing is lost by expiring
@@ -99,9 +100,11 @@ to prevent. If you turn it on to debug a deploy, turn it back off.
 | Limit | Value | Response |
 | --- | --- | --- |
 | Frame size | 1 400 000 base64url characters | `413` → the app shows "too large"; direct sync unaffected |
+| Request body | 2 MiB, counted while streaming | `413` before a Durable Object is created |
 | Blobs per bucket | 5 000 | `429` → the app shows a relay error and names the device that has been away |
 | Page size | 500 (default 100) | silently clamped |
-| Requests per bucket | ~600/minute | `429` |
+| Requests across bucket ids | 120/minute per Cloudflare location | `429` |
+| Requests per bucket | ~600/minute additional coarse brake | `429` |
 | Signaling message | 64 KiB | socket closed with `1009` |
 | Parties per rendezvous | 2 | `409` |
 
@@ -109,12 +112,14 @@ A full bucket is refused rather than trimmed. Silently dropping the oldest blob 
 the waiting device's side, exactly like a sync that worked — and nothing in this design lets a
 relay cause a silent divergence.
 
-### Rate limiting properly
+### Rate limiting
 
-The per-bucket counter above is a coarse brake, held in memory, and it resets when the object is
-evicted. It exists to stop a loop, not a determined attacker. If you expose this relay publicly,
-put a Cloudflare **WAF rate-limiting rule** in front of it — that is the layer that can see an
-IP address without this code having to store one.
+The Worker rate-limit binding is checked before a Durable Object is named or created. It uses
+one constant key, so an attacker cannot obtain a new quota by changing bucket ids or tokens,
+and the application stores no IP address. Cloudflare applies this limit per location and
+documents the result as eventually consistent, so the per-bucket in-memory counter remains as
+an additional coarse brake. A public, high-traffic deployment can also add a Cloudflare WAF
+rule, but that is optional hardening rather than the only protection.
 
 ## Authorization
 

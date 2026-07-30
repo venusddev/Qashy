@@ -38,6 +38,7 @@ import {
   type SigningSecretKey,
   type VaultRootKey,
 } from '@/sync/crypto/types';
+import { signBatchPayload, verifyBatchPayload } from '@/sync/crypto/batch-auth';
 import { WIRE_VECTORS } from '@/sync/crypto/__tests__/wire-vectors';
 
 const vault = brand<VaultRootKey>(fromHex(WIRE_VECTORS.vaultRootKey));
@@ -137,6 +138,19 @@ describe('the handshake', () => {
   it('accepts the committed proofs', () => {
     expect(() => acceptPeerAuth(a, fromHex(WIRE_VECTORS.handshake.bobAuth))).not.toThrow();
     expect(() => acceptPeerAuth(b, fromHex(WIRE_VECTORS.handshake.aliceAuth))).not.toThrow();
+  });
+});
+
+describe('authenticated batches', () => {
+  it('still signs the canonical v2 payload to the committed value', () => {
+    const alice = identityOf(WIRE_VECTORS.alice);
+    const { payload, signature } = WIRE_VECTORS.batchAuth;
+
+    expect(signBatchPayload(payload, alice.signing.secretKey)).toBe(signature);
+    expect(verifyBatchPayload(payload, signature, alice.signing.publicKey)).toBe(true);
+    expect(
+      verifyBatchPayload({ ...payload, epoch: payload.epoch + 1 }, signature, alice.signing.publicKey),
+    ).toBe(false);
   });
 });
 

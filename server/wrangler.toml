@@ -30,6 +30,14 @@ RETENTION_DAYS = "14"
 [observability]
 enabled = false
 
+# One shared edge limit for bucket traffic. The constant key is deliberate: choosing fresh
+# opaque ids or bearer tokens must not create a fresh quota. This binding does not record IP
+# addresses or bucket ids in application storage.
+[[ratelimits]]
+name = "REQUEST_RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 120, period = 60 }
+
 [[durable_objects.bindings]]
 name = "BUCKET"
 class_name = "BucketRoom"

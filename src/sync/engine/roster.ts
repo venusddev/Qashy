@@ -23,6 +23,7 @@
 import type { StorageTx } from '@/data/storage-adapter';
 import type { SyncPeerRow } from '@/data/sync-tables';
 import {
+  deriveDeviceId,
   fromBase64Url,
   restorePeerKeys,
   toBase64Url,
@@ -30,7 +31,7 @@ import {
   type SigningPublicKey,
 } from '@/sync/crypto';
 import type { PeerAcks } from '@/sync/oplog';
-import { SyncEngineError } from '@/sync/engine/types';
+import { SyncEngineError, type RosterMember } from '@/sync/engine/types';
 
 /** A roster entry, with its keys usable rather than encoded. */
 export interface Peer {
@@ -44,6 +45,8 @@ export interface Peer {
   readonly epoch: number;
   readonly addedAt: string;
   readonly revokedAt: string | null;
+  /** Highest authored sequence this vault accepts after revocation; null while active. */
+  readonly revokedSeq: number | null;
   /** `{ [deviceId]: seq }` this peer has confirmed receiving — the compaction watermark. */
   readonly acked: Readonly<Record<string, number>>;
   /** `{ [deviceId]: seq }` we hold of each chain, as of the last exchange with this peer. */
@@ -86,6 +89,8 @@ export const fromPeerRow = (row: SyncPeerRow): Peer => {
     epoch: row.epoch,
     addedAt: row.addedAt,
     revokedAt: row.revokedAt,
+    // Rows written before the cutoff migration fail closed if they were already revoked.
+    revokedSeq: row.revokedSeq ?? (row.revokedAt ? 0 : null),
     acked: parseSeqMap(row.acked),
     known: parseSeqMap(row.known),
     lastSeenAt: row.lastSeenAt,
@@ -101,6 +106,7 @@ export const toPeerRow = (peer: Peer): SyncPeerRow => ({
   epoch: peer.epoch,
   addedAt: peer.addedAt,
   revokedAt: peer.revokedAt,
+  revokedSeq: peer.revokedSeq,
   acked: JSON.stringify(peer.acked),
   known: JSON.stringify(peer.known),
   lastSeenAt: peer.lastSeenAt,
@@ -123,6 +129,174 @@ export const writePeers = (tx: StorageTx, peers: readonly Peer[]) =>
 export const isRevoked = (peer: Peer) => peer.revokedAt !== null;
 
 export const activePeers = (roster: Roster) => [...roster.values()].filter((peer) => !isRevoked(peer));
+
+export const toRosterMember = (peer: Peer): RosterMember => ({
+  deviceId: peer.deviceId,
+  name: peer.name,
+  platform: peer.platform,
+  signingKey: toBase64Url(peer.signingKey),
+  agreementKey: toBase64Url(peer.agreementKey),
+  epoch: peer.epoch,
+  addedAt: peer.addedAt,
+  revokedAt: peer.revokedAt,
+  revokedSeq: peer.revokedSeq,
+});
+
+const validIso = (value: string): boolean => {
+  try {
+    return new Date(value).toISOString() === value;
+  } catch {
+    return false;
+  }
+};
+
+const badRoster = (message: string, sender: string): never => {
+  throw new SyncEngineError(message, 'badBatch', sender);
+};
+
+const fromRosterMember = (member: RosterMember, batchEpoch: number, sender: string): Peer => {
+  if (
+    member.deviceId.length > 128 ||
+    member.name.length > 128 ||
+    member.platform.length > 64 ||
+    member.signingKey.length > 64 ||
+    member.agreementKey.length > 64
+  ) {
+    return badRoster('That batch contains an oversized device roster entry.', sender);
+  }
+  if (member.epoch > batchEpoch) {
+    return badRoster('That batch contains a device from a future vault epoch.', sender);
+  }
+  if (!validIso(member.addedAt) || (member.revokedAt !== null && !validIso(member.revokedAt))) {
+    return badRoster('That batch contains a malformed device membership time.', sender);
+  }
+  if (
+    (member.revokedAt === null && member.revokedSeq !== null) ||
+    (member.revokedAt !== null && member.revokedSeq === null)
+  ) {
+    return badRoster('That batch contains an inconsistent revocation cutoff.', sender);
+  }
+
+  try {
+    const keys = restorePeerKeys(
+      fromBase64Url(member.signingKey),
+      fromBase64Url(member.agreementKey),
+    );
+    if (deriveDeviceId(keys.signingKey) !== member.deviceId) {
+      return badRoster('A roster device id does not match its signing key.', sender);
+    }
+    return {
+      deviceId: member.deviceId,
+      name: member.name,
+      platform: member.platform,
+      signingKey: keys.signingKey,
+      agreementKey: keys.agreementKey,
+      epoch: member.epoch,
+      addedAt: member.addedAt,
+      revokedAt: member.revokedAt,
+      revokedSeq: member.revokedSeq,
+      acked: {},
+      known: {},
+      lastSeenAt: null,
+    };
+  } catch (error) {
+    if (error instanceof SyncEngineError) throw error;
+    return badRoster('That batch contains malformed device keys.', sender);
+  }
+};
+
+const sameBytes = (first: Uint8Array, second: Uint8Array): boolean =>
+  first.length === second.length && first.every((value, index) => value === second[index]);
+
+/**
+ * Merges a sender-authenticated roster snapshot without allowing stale snapshots to un-revoke
+ * a device. Concurrent cutoffs converge upward: anything a live peer had already accepted
+ * before learning the revocation stays valid everywhere, while that peer rejects later
+ * sequence numbers as soon as the revocation lands. A higher epoch may intentionally re-pair
+ * the same identity after a key rotation.
+ */
+export function mergeAuthenticatedRoster(
+  roster: Roster,
+  members: readonly RosterMember[],
+  batchEpoch: number,
+  sender: string,
+  heldHeads: ReadonlyMap<string, { readonly seq: number }>,
+): { readonly roster: Roster; readonly changed: readonly Peer[] } {
+  const merged = new Map(roster);
+  const changed: Peer[] = [];
+  const seen = new Set<string>();
+
+  for (const member of members) {
+    if (seen.has(member.deviceId)) {
+      badRoster('That batch names the same roster device more than once.', sender);
+    }
+    seen.add(member.deviceId);
+    const incoming = fromRosterMember(member, batchEpoch, sender);
+    const current = merged.get(incoming.deviceId);
+    if (!current) {
+      if (incoming.epoch < batchEpoch && !incoming.revokedAt) {
+        badRoster('That batch introduces an active device from an old vault epoch.', sender);
+      }
+      merged.set(incoming.deviceId, incoming);
+      changed.push(incoming);
+      continue;
+    }
+
+    if (
+      !sameBytes(current.signingKey, incoming.signingKey) ||
+      !sameBytes(current.agreementKey, incoming.agreementKey)
+    ) {
+      badRoster('A known device arrived with different identity keys.', sender);
+    }
+
+    if (incoming.epoch < current.epoch) continue;
+    const newerEpoch = incoming.epoch > current.epoch;
+    if (newerEpoch && incoming.epoch !== batchEpoch) {
+      badRoster('A re-paired device does not match the current vault epoch.', sender);
+    }
+
+    const revokedAt = newerEpoch
+      ? incoming.revokedAt
+      : current.revokedAt && incoming.revokedAt
+        ? current.revokedAt < incoming.revokedAt
+          ? current.revokedAt
+          : incoming.revokedAt
+        : current.revokedAt ?? incoming.revokedAt;
+    const heldSeq = heldHeads.get(incoming.deviceId)?.seq ?? 0;
+    const revokedSeq = newerEpoch
+      ? incoming.revokedAt
+        ? Math.max(incoming.revokedSeq ?? 0, heldSeq)
+        : null
+      : current.revokedAt
+        ? incoming.revokedAt
+          ? Math.max(current.revokedSeq ?? 0, incoming.revokedSeq ?? 0, heldSeq)
+          : Math.max(current.revokedSeq ?? 0, heldSeq)
+        : incoming.revokedAt
+          ? Math.max(incoming.revokedSeq ?? 0, heldSeq)
+          : null;
+    const next: Peer = {
+      ...current,
+      epoch: incoming.epoch,
+      addedAt: current.addedAt < incoming.addedAt ? current.addedAt : incoming.addedAt,
+      revokedAt,
+      revokedSeq,
+      acked: newerEpoch ? {} : current.acked,
+      known: newerEpoch ? {} : current.known,
+      lastSeenAt: newerEpoch ? null : current.lastSeenAt,
+    };
+    if (
+      next.epoch !== current.epoch ||
+      next.addedAt !== current.addedAt ||
+      next.revokedAt !== current.revokedAt ||
+      next.revokedSeq !== current.revokedSeq
+    ) {
+      merged.set(next.deviceId, next);
+      changed.push(next);
+    }
+  }
+
+  return { roster: merged, changed };
+}
 
 // ---------------------------------------------------------------------------
 // Trust decisions
@@ -164,9 +338,9 @@ export function requireSender(roster: Roster, deviceId: string): Peer {
  * revoked, because ops it authored while it was still a member remain valid history.
  *
  * `revokedAt` is a wall-clock string and is deliberately *not* compared against the op's
- * clock reading. Two devices in different timezones with drifting clocks would disagree
- * about which side of that boundary an op fell on, and disagreeing about which ops are valid
- * is a permanent fork. Membership is the check; timing is not.
+ * clock reading. Two devices with drifting clocks would disagree about which side of that
+ * boundary an op fell on, and disagreeing about valid ops is a permanent fork. The
+ * deterministic boundary is `revokedSeq`, captured from the accepted author chain.
  */
 export function requireAuthor(roster: Roster, deviceId: string, sender: string): Peer {
   const peer = roster.get(deviceId);
@@ -178,6 +352,16 @@ export function requireAuthor(roster: Roster, deviceId: string, sender: string):
     );
   }
   return peer;
+}
+
+/** Refuses a newly received op beyond the sequence fixed at the author's revocation. */
+export function requireAuthorSequence(author: Peer, seq: number): void {
+  if (!author.revokedAt || seq <= (author.revokedSeq ?? 0)) return;
+  throw new SyncEngineError(
+    `${author.name} was removed at change ${author.revokedSeq ?? 0}; change ${seq} is not accepted.`,
+    'revokedPeer',
+    author.deviceId,
+  );
 }
 
 /**

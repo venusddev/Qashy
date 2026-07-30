@@ -197,6 +197,18 @@ describe('native storage migrations', () => {
     expect(mockOpened[0].statements.some((sql) => sql.includes('sync_ops'))).toBe(true);
   });
 
+  it('adds the revocation cutoff column and fails closed for existing revoked peers', async () => {
+    mockStartVersion = 3;
+    await new PlatformStorageAdapter().initialize();
+
+    const migration = mockOpened[0].statements.find((sql) => sql.includes('revoked_seq'));
+    expect(migration).toContain('ALTER TABLE sync_peers ADD COLUMN revoked_seq INTEGER');
+    expect(migration).toContain(
+      'UPDATE sync_peers SET revoked_seq = 0 WHERE revoked_at IS NOT NULL',
+    );
+    expect(mockOpened[0].userVersion).toBe(DATABASE_VERSION);
+  });
+
   it('does nothing at all once the database is current', async () => {
     mockStartVersion = DATABASE_VERSION;
     await new PlatformStorageAdapter().initialize();

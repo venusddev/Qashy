@@ -56,7 +56,11 @@ import {
   type BackupKeySource,
   type VaultArchive,
 } from '@/sync/backup';
-import { RECOVERY_WORD_COUNT, isValidRecoveryPhrase } from '@/sync/crypto';
+import {
+  MIN_PASSPHRASE_LENGTH,
+  RECOVERY_WORD_COUNT,
+  isValidRecoveryPhrase,
+} from '@/sync/crypto';
 import type { BundleExport, BundleImport, SyncPassReason } from '@/sync/runtime';
 import { BUNDLE_MIME, bundleFileName } from '@/sync/transport/file';
 import { useQashyTheme } from '@/theme/theme';
@@ -64,9 +68,11 @@ import { radius, space } from '@/theme/tokens';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
 import { hapticSuccess } from '@/utils/haptics';
-
-/** The shortest passphrase `createPassphraseBackup` will accept. Checked here so the button says why. */
-const MIN_PASSPHRASE = 8;
+import {
+  MAX_SYNC_IMPORT_BYTES,
+  MAX_VAULT_IMPORT_BYTES,
+  assertFileSize,
+} from '@/utils/file-size';
 
 /**
  * Why a `.qashysync` pass did nothing, in the user's terms.
@@ -134,7 +140,8 @@ export function TransferScreen() {
 
   const paired = Boolean(status.deviceId);
   const readable = status.keystore === 'unlocked';
-  const passphraseReady = passphrase.length >= MIN_PASSPHRASE && passphrase === repeated;
+  const passphraseReady =
+    passphrase.length >= MIN_PASSPHRASE_LENGTH && passphrase === repeated;
   const secretReady =
     picked?.wants === 'recoveryPhrase' ? isValidRecoveryPhrase(secret) : secret.length > 0;
 
@@ -364,7 +371,7 @@ export function TransferScreen() {
                   autoCorrect={false}
                   autoComplete="new-password"
                   textContentType="newPassword"
-                  hint="At least 8 characters. Qashy cannot reset this — the file is unreadable without it."
+                  hint="At least 12 characters. Qashy cannot reset this — the file is unreadable without it."
                 />
                 <FormField
                   label="Passphrase again"
@@ -719,9 +726,15 @@ async function pickBytes(): Promise<{ name: string; bytes: Uint8Array } | null> 
   const result = await DocumentPicker.getDocumentAsync(PICKER);
   if (result.canceled) return null;
   const asset = result.assets[0];
+  const nativeFile = asset.file ? null : new ExpoFile(asset.uri);
+  assertFileSize(
+    asset.size ?? asset.file?.size ?? nativeFile?.size,
+    MAX_VAULT_IMPORT_BYTES,
+    'Vault backup',
+  );
   const bytes = asset.file
     ? new Uint8Array(await asset.file.arrayBuffer())
-    : await new ExpoFile(asset.uri).bytes();
+    : await nativeFile!.bytes();
   return { name: asset.name, bytes };
 }
 
@@ -729,5 +742,11 @@ async function pickText(): Promise<string | null> {
   const result = await DocumentPicker.getDocumentAsync(PICKER);
   if (result.canceled) return null;
   const asset = result.assets[0];
-  return asset.file ? await asset.file.text() : await new ExpoFile(asset.uri).text();
+  const nativeFile = asset.file ? null : new ExpoFile(asset.uri);
+  assertFileSize(
+    asset.size ?? asset.file?.size ?? nativeFile?.size,
+    MAX_SYNC_IMPORT_BYTES,
+    'Sync file',
+  );
+  return asset.file ? await asset.file.text() : await nativeFile!.text();
 }

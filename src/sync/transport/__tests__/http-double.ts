@@ -19,6 +19,14 @@ export interface Call {
 export type Reply =
   | { readonly kind: 'json'; readonly status?: number; readonly body: unknown }
   | { readonly kind: 'text'; readonly status?: number; readonly body: string }
+  | {
+      readonly kind: 'stream';
+      readonly status?: number;
+      readonly chunks: readonly (string | Uint8Array)[];
+      readonly declaredLength?: number;
+      /** Leaves the body open after the final chunk, until the request signal aborts. */
+      readonly hangAfter?: boolean;
+    }
   | { readonly kind: 'status'; readonly status: number }
   /** A network-layer failure: DNS, TLS, a refused connection. `fetch` rejects. */
   | { readonly kind: 'throw'; readonly message?: string }
@@ -39,15 +47,52 @@ const headersOf = (init: RequestInit | undefined): Record<string, string> => {
   return headers;
 };
 
-const respond = (reply: Reply): Response => {
+const respond = (reply: Reply, signal?: AbortSignal | null): Response => {
   const status = 'status' in reply && reply.status !== undefined ? reply.status : 200;
   const text =
     reply.kind === 'json' ? JSON.stringify(reply.body) : reply.kind === 'text' ? reply.body : '';
+  const encoder = new TextEncoder();
+  const chunks =
+    reply.kind === 'stream'
+      ? reply.chunks.map((chunk) => (typeof chunk === 'string' ? encoder.encode(chunk) : chunk))
+      : [encoder.encode(text)];
+  let index = 0;
+  let cancelled = false;
+  const body = {
+    getReader: () => ({
+      read: () => {
+        if (cancelled) return Promise.resolve({ done: true, value: undefined });
+        if (index < chunks.length) {
+          const value = chunks[index];
+          index += 1;
+          return Promise.resolve({ done: false, value });
+        }
+        if (reply.kind === 'stream' && reply.hangAfter) {
+          return new Promise<{ done: boolean; value?: Uint8Array }>((_resolve, reject) => {
+            signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          });
+        }
+        return Promise.resolve({ done: true, value: undefined });
+      },
+      cancel: () => {
+        cancelled = true;
+        return Promise.resolve();
+      },
+    }),
+  };
+  const byteLength = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
   return {
     ok: status >= 200 && status < 300,
     status,
-    headers: { get: (name: string) => (name === 'content-length' ? String(text.length) : null) },
-    text: () => Promise.resolve(text),
+    headers: {
+      get: (name: string) =>
+        name.toLowerCase() === 'content-length'
+          ? String(reply.kind === 'stream' && reply.declaredLength !== undefined
+              ? reply.declaredLength
+              : byteLength)
+          : null,
+    },
+    body,
   } as unknown as Response;
 };
 
@@ -75,7 +120,7 @@ export function fetchDouble(...initial: Reply[]): FetchDouble {
         init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
       });
     }
-    return Promise.resolve(respond(reply));
+    return Promise.resolve(respond(reply, init?.signal));
   }) as unknown as typeof globalThis.fetch;
 
   return { fetch: impl, calls, reply: (reply) => queue.push(reply) };

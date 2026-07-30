@@ -70,7 +70,10 @@ export {
 
 export { SAS_WORD_COUNT, deriveSas, sasMatches } from '@/sync/crypto/sas';
 
+export { signBatchPayload, verifyBatchPayload } from '@/sync/crypto/batch-auth';
+
 export {
+  MIN_PASSPHRASE_LENGTH,
   RECOVERY_WORD_COUNT,
   createPassphraseBackup,
   createVaultBundle,

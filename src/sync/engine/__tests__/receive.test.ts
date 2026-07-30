@@ -26,7 +26,7 @@ import {
   type TestDevice,
 } from '@/sync/engine/__tests__/helpers';
 import { SYNC_META, readMeta } from '@/data/sync-store';
-import { toPeerRow } from '@/sync/engine/roster';
+import { toPeerRow, toRosterMember } from '@/sync/engine/roster';
 import { MAX_CLOCK_SKEW_MS, hashOp, sealOp } from '@/sync/oplog';
 import { receiveBatch } from '@/sync/engine/receive';
 import { SyncEngineError } from '@/sync/engine/types';
@@ -71,7 +71,9 @@ describe('receiveBatch — trust', () => {
   it('refuses a batch from a revoked device', async () => {
     const [alice, bob] = await makeVault();
     await bob.storage.transact((tx) =>
-      tx.table('syncPeers').put([toPeerRow(alice.asPeer({ revokedAt: NOW_ISO }))]),
+      tx.table('syncPeers').put([
+        toPeerRow(alice.asPeer({ revokedAt: NOW_ISO, revokedSeq: 0 })),
+      ]),
     );
 
     const ops = alice.author([alice.body('accounts', 'account-1')]);
@@ -83,16 +85,121 @@ describe('receiveBatch — trust', () => {
 
   it('keeps accepting a revoked device’s earlier ops when another peer forwards them', async () => {
     const [alice, bob, carol] = await makeVault(3);
+    const carolOps = carol.author([carol.body('accounts', 'account-1')]);
     // Carol is thrown away, but what she wrote while she was a member is still history.
     await bob.storage.transact((tx) =>
-      tx.table('syncPeers').put([toPeerRow(carol.asPeer({ revokedAt: NOW_ISO }))]),
+      tx.table('syncPeers').put([
+        toPeerRow(carol.asPeer({ revokedAt: NOW_ISO, revokedSeq: 1 })),
+      ]),
     );
 
-    const carolOps = carol.author([carol.body('accounts', 'account-1')]);
     const outcome = await receiveBatch(bob.deps, alice.batch(carolOps));
 
     expect(outcome.stored).toBe(1);
     expect(await rejections(bob)).toHaveLength(0);
+  });
+
+  it('refuses an op authored after the device’s revocation cutoff, even when a live peer forwards it', async () => {
+    const [alice, bob, carol] = await makeVault(3);
+    await bob.storage.transact((tx) =>
+      tx.table('syncPeers').put([
+        toPeerRow(carol.asPeer({ revokedAt: NOW_ISO, revokedSeq: 0 })),
+      ]),
+    );
+
+    const postRevocation = carol.author([carol.body('accounts', 'account-1')]);
+    await expectRejected(bob, alice.batch(postRevocation));
+
+    expect(await opRows(bob)).toHaveLength(0);
+    expect(await rejections(bob)).toMatchObject([
+      { code: 'revokedPeer', peerId: carol.deviceId },
+    ]);
+  });
+
+  it('refuses a revoked device that forges an active peer as the batch sender', async () => {
+    const [alice, bob, carol] = await makeVault(3);
+    await bob.storage.transact((tx) =>
+      tx.table('syncPeers').put([
+        toPeerRow(carol.asPeer({ revokedAt: NOW_ISO, revokedSeq: 0 })),
+      ]),
+    );
+
+    const carolOps = carol.author([carol.body('accounts', 'account-1')]);
+    // Carol knows the shared content key and can create an envelope whose AAD says "Alice".
+    // The batch signature still identifies Carol, so Bob must reject the impersonation.
+    const forgedSender = carol.batch(carolOps, { sender: alice.deviceId });
+    await expectRejected(bob, forgedSender);
+
+    expect(await opRows(bob)).toHaveLength(0);
+    expect(await rejections(bob)).toMatchObject([
+      { code: 'badSignature', peerId: alice.deviceId },
+    ]);
+  });
+
+  it('learns a third device from an authenticated roster before verifying its forwarded op', async () => {
+    const [alice, bob, carol] = await makeVault(3);
+    await bob.storage.transact((tx) => tx.table('syncPeers').delete([carol.deviceId]));
+
+    const carolOps = carol.author([carol.body('accounts', 'account-1')]);
+    const batch = alice.batch(carolOps, { roster: [toRosterMember(carol.asPeer())] });
+    const outcome = await receiveBatch(bob.deps, batch);
+
+    expect(outcome.stored).toBe(1);
+    expect(await peerRow(bob, carol.deviceId)).toMatchObject({
+      peerId: carol.deviceId,
+      revokedAt: null,
+    });
+    expect(await rejections(bob)).toHaveLength(0);
+  });
+
+  it('propagates revocation monotonically and will not accept a stale un-revocation', async () => {
+    const [alice, bob, carol] = await makeVault(3);
+
+    await receiveBatch(
+      bob.deps,
+      alice.batch([], {
+        roster: [toRosterMember(carol.asPeer({ revokedAt: NOW_ISO, revokedSeq: 0 }))],
+      }),
+    );
+    expect(await peerRow(bob, carol.deviceId)).toMatchObject({
+      revokedAt: NOW_ISO,
+      revokedSeq: 0,
+    });
+
+    await receiveBatch(
+      bob.deps,
+      alice.batch([], {
+        roster: [toRosterMember(carol.asPeer({ revokedAt: null }))],
+      }),
+    );
+    expect(await peerRow(bob, carol.deviceId)).toMatchObject({
+      revokedAt: NOW_ISO,
+      revokedSeq: 0,
+    });
+  });
+
+  it('converges a revocation cutoff above history accepted before this peer learned of it', async () => {
+    const [alice, bob, carol] = await makeVault(3);
+    const acceptedBeforeNotice = carol.author([carol.body('accounts', 'account-1')]);
+    await receiveBatch(bob.deps, alice.batch(acceptedBeforeNotice));
+
+    await receiveBatch(
+      bob.deps,
+      alice.batch([], {
+        roster: [toRosterMember(carol.asPeer({ revokedAt: NOW_ISO, revokedSeq: 0 }))],
+      }),
+    );
+    expect(await peerRow(bob, carol.deviceId)).toMatchObject({
+      revokedAt: NOW_ISO,
+      revokedSeq: 1,
+    });
+
+    const authoredAfterNotice = carol.author([carol.body('accounts', 'account-2')]);
+    await expectRejected(bob, alice.batch(authoredAfterNotice));
+    expect(await opRows(bob)).toHaveLength(1);
+    expect(await rejections(bob)).toMatchObject([
+      { code: 'revokedPeer', peerId: carol.deviceId },
+    ]);
   });
 
   it('refuses a forwarded op attributed to a device the vault has never heard of', async () => {
@@ -108,6 +215,16 @@ describe('receiveBatch — trust', () => {
 });
 
 describe('receiveBatch — signatures', () => {
+  it('refuses any mutation made after the sender signed the batch', async () => {
+    const [alice, bob] = await makeVault();
+    const signed = alice.batch(alice.author([alice.body('accounts', 'account-1')]));
+
+    await expectRejected(bob, { ...signed, heads: { [alice.deviceId]: 99 } });
+
+    expect(await opRows(bob)).toHaveLength(0);
+    expect(await rejections(bob)).toMatchObject([{ code: 'badSignature' }]);
+  });
+
   it('refuses an op signed by a key the roster does not list for that device', async () => {
     const [alice, bob] = await makeVault();
     // The impostor keeps Alice's device id — a mismatched id would be caught by the roster

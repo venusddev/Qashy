@@ -490,7 +490,7 @@ const HEBREW: Record<string, string> = {
   'How the backup is protected': 'כיצד הגיבוי מוגן',
   'A passphrase': 'משפט סיסמה', 'My recovery phrase': 'משפט השחזור שלי',
   Passphrase: 'משפט סיסמה', 'Passphrase again': 'משפט הסיסמה שוב',
-  'At least 8 characters. Qashy cannot reset this — the file is unreadable without it.': 'לפחות 8 תווים. Qashy אינו יכול לאפס אותו — הקובץ אינו קריא בלעדיו.',
+  'At least 12 characters. Qashy cannot reset this — the file is unreadable without it.': 'לפחות 12 תווים. Qashy אינו יכול לאפס אותו — הקובץ אינו קריא בלעדיו.',
   'These two do not match.': 'השניים אינם תואמים.',
   'Nothing to type. The file is sealed with the key this device already holds, so the phrase that opens it is this vault’s own — which also means a file written this way cannot be opened by a phrase you mistyped into a box.': 'אין מה להקליד. הקובץ נחתם עם המפתח שכבר נמצא במכשיר הזה, ולכן המשפט שפותח אותו הוא זה של הכספת עצמה — מה שגם אומר שקובץ שנכתב כך לא ייפתח עם משפט שהוקלד בשגיאה.',
   'Create backup': 'יצירת גיבוי', 'Working…': 'עובד…', 'Backup saved': 'הגיבוי נשמר',

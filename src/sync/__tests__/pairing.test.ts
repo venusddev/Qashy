@@ -53,6 +53,7 @@ const asPeer = (identity: DeviceIdentity, over: Partial<Peer> = {}): Peer => ({
   epoch: EPOCH,
   addedAt: '2026-01-01T00:00:00.000Z',
   revokedAt: null,
+  revokedSeq: null,
   acked: { [identity.deviceId]: 4 },
   known: { [identity.deviceId]: 7 },
   lastSeenAt: '2026-05-01T00:00:00.000Z',
@@ -64,6 +65,7 @@ interface Options {
   readonly joinerCurrency?: string;
   readonly roster?: (ids: Identities) => readonly Peer[];
   readonly tamper?: (code: PairingCode) => PairingCode;
+  readonly now?: () => number;
 }
 
 interface Rig {
@@ -91,7 +93,7 @@ const rig = (over: Options = {}): Rig => {
     self: { name: 'Kitchen iPad', platform: 'ios' },
     roster: over.roster?.(ids) ?? [],
     relayUrl: RELAY,
-    now: () => NOW_SECONDS,
+    now: over.now ?? (() => NOW_SECONDS),
     nowIso: () => NOW_ISO,
     openSocket: hub.open,
     idleTimeoutMs: IDLE_MS,
@@ -135,7 +137,36 @@ describe('pairing', () => {
   });
 
   it('expires the code ninety seconds after it is rendered', () => {
-    expect(rig().host.expiresAt).toBe(NOW_SECONDS + PAIRING_TTL_SECONDS);
+    const target = rig();
+    expect(target.host.expiresAt).toBe(NOW_SECONDS + PAIRING_TTL_SECONDS);
+    target.host.close();
+    target.joiner.close();
+  });
+
+  it('closes the host session when the advertised code deadline passes', async () => {
+    jest.useFakeTimers();
+    try {
+      const target = rig();
+      jest.advanceTimersByTime(PAIRING_TTL_SECONDS * 1000);
+
+      await expect(target.host.handshake()).rejects.toThrow(/expired/i);
+      expect(target.hub.opened).toHaveLength(0);
+      target.joiner.close();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('will not release the vault after expiry, even when the SAS already matched', async () => {
+    let now = NOW_SECONDS;
+    const target = rig({ now: () => now });
+    const [hostSide, joinerSide] = await meet(target);
+    now += PAIRING_TTL_SECONDS;
+
+    await expect(hostSide.confirm()).rejects.toThrow(/expired/i);
+    // Only the hello and identity proof crossed the host socket; no vault frame followed.
+    expect(target.hub.opened[0].sent).toHaveLength(2);
+    joinerSide.cancel();
   });
 
   it('meets at a rendezvous derived from the pairing secret, over TLS', async () => {
@@ -191,6 +222,7 @@ describe('pairing', () => {
     expect(hostResult.peer.agreementKey).toEqual(target.ids.joiner.agreement.publicKey);
     expect(hostResult.peer.epoch).toBe(EPOCH);
     expect(hostResult.peer.revokedAt).toBeNull();
+    expect(hostResult.peer.revokedSeq).toBeNull();
     // Neither side has any of the other's history yet, and a row claiming otherwise would
     // stop it from ever asking for it.
     expect(hostResult.peer.acked).toEqual({});
@@ -201,7 +233,15 @@ describe('pairing', () => {
   });
 
   it('forwards the rest of the vault so the joiner can reach every device', async () => {
-    const target = rig({ roster: (ids) => [asPeer(ids.third, { name: 'Old phone' })] });
+    const target = rig({
+      roster: (ids) => [
+        asPeer(ids.third, {
+          name: 'Old phone',
+          revokedAt: '2026-04-01T00:00:00.000Z',
+          revokedSeq: 7,
+        }),
+      ],
+    });
     const [hostSide, joinerSide] = await meet(target);
     const [, joinerResult] = await Promise.all([hostSide.confirm(), joinerSide.confirm()]);
 
@@ -214,6 +254,8 @@ describe('pairing', () => {
     expect(third.name).toBe('Old phone');
     expect(third.signingKey).toEqual(target.ids.third.signing.publicKey);
     expect(third.addedAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(third.revokedAt).toBe('2026-04-01T00:00:00.000Z');
+    expect(third.revokedSeq).toBe(7);
     // The host's bookkeeping is about what *the host* holds. Copying it would tell the joiner
     // it had already received history it has never seen.
     expect(third.acked).toEqual({});

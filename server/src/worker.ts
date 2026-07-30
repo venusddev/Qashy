@@ -23,10 +23,10 @@
  *
  * **What it can still do, and what stops it mattering:** it can drop a blob, reorder a page,
  * replay one, or refuse service. None of those corrupt a vault — every frame is AEAD-sealed
- * under a key the server has never seen, every op batch is Ed25519-signed by the device that
- * wrote it and hash-chained to that device's previous batch, and a gap, a rewind, or a fork is
- * rejected by the client rather than merged. A hostile relay is a denial of service. It is not
- * a disclosure and it is not a corruption.
+ * under a key the server has never seen, every batch is Ed25519-signed by its sender, and every
+ * op is separately signed and hash-chained to its author's previous op. A gap, a rewind, or a
+ * fork is rejected by the client rather than merged. A hostile relay is a denial of service.
+ * It is not a disclosure and it is not a corruption.
  *
  * There is no account, no session, no cookie, and no log of who asked for what. Adding any of
  * those would break the claim the app makes on its own settings screen, so don't.
@@ -34,9 +34,17 @@
 
 /// <reference types="@cloudflare/workers-types" />
 
+import { readBoundedRequestBody } from './body';
+
+interface RateLimitBinding {
+  limit(input: { readonly key: string }): Promise<{ readonly success: boolean }>;
+}
+
 export interface Env {
   readonly BUCKET: DurableObjectNamespace;
   readonly RENDEZVOUS: DurableObjectNamespace;
+  /** Edge-wide brake that cannot be bypassed by choosing fresh bucket ids. */
+  readonly REQUEST_RATE_LIMITER: RateLimitBinding;
   /** Days an undelivered blob is kept. Defaults to 14; see `wrangler.toml`. */
   readonly RETENTION_DAYS?: string;
 }
@@ -72,7 +80,7 @@ const TAG_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 const MAX_FRAME_CHARS = 1_400_000;
 
 /** The largest request body read at all, before parsing. */
-const MAX_BODY_BYTES = 2 * 1024 * 1024;
+export const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
 /** Blobs held per bucket. Reached only when a peer has been away long enough to matter. */
 const MAX_BLOBS_PER_BUCKET = 5_000;
@@ -167,8 +175,29 @@ export default {
     if (bucket) {
       const id = decodeURIComponent(bucket[1]);
       if (!ID_PATTERN.test(id)) return fail(400, 'id');
+      // Reject malformed capabilities and abusive traffic before naming or creating a Durable
+      // Object. Otherwise arbitrary bucket ids turn object creation itself into the attack.
+      if (!bearer(request)) return fail(401, 'token');
+      const allowed = await env.REQUEST_RATE_LIMITER.limit({ key: 'all-bucket-requests' });
+      if (!allowed.success) return fail(429, 'rate', { 'retry-after': '60' });
+
+      let forwarded = request;
+      if (request.method === 'PUT') {
+        let bounded;
+        try {
+          bounded = await readBoundedRequestBody(request, MAX_BODY_BYTES);
+        } catch {
+          return fail(400, 'body');
+        }
+        if (!bounded.ok) return fail(413, 'size');
+        const headers = new Headers(request.headers);
+        // Never carry an attacker-supplied length into the trusted inner request.
+        headers.delete('content-length');
+        forwarded = new Request(request, { body: bounded.bytes, headers });
+      }
+
       const stub = env.BUCKET.get(env.BUCKET.idFromName(id));
-      return stub.fetch(request);
+      return stub.fetch(forwarded);
     }
 
     return fail(404, 'route');
@@ -179,7 +208,7 @@ export default {
 // Bucket — the drop-box
 // ---------------------------------------------------------------------------
 
-interface BlobRow {
+interface BlobRow extends Record<string, SqlStorageValue> {
   readonly slot: number;
   readonly recipient: string;
   readonly seq: number;
@@ -277,9 +306,6 @@ export class BucketRoom {
   }
 
   private async put(request: Request): Promise<Response> {
-    const declared = Number(request.headers.get('content-length'));
-    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return fail(413, 'size');
-
     let body: unknown;
     try {
       body = await request.json();

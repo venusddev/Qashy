@@ -315,6 +315,34 @@ function table<Row>(value: unknown, valid: (row: Record<string, unknown>) => boo
   return value as Row[];
 }
 
+/**
+ * Format-v1 archives predate per-author revocation cutoffs. Preserve compatibility while
+ * treating an old revoked row conservatively: it may authenticate historical sequence zero
+ * only, and can never become active again merely because the field was absent.
+ */
+function peerTable(value: unknown): SyncPeerRow[] {
+  return table<SyncPeerRow & { readonly revokedSeq?: unknown }>(
+    value,
+    (row) =>
+      typeof row.peerId === 'string' &&
+      typeof row.signingKey === 'string' &&
+      typeof row.agreementKey === 'string' &&
+      typeof row.acked === 'string' &&
+      typeof row.known === 'string' &&
+      (row.revokedAt === null || typeof row.revokedAt === 'string') &&
+      (row.revokedSeq === undefined ||
+        (row.revokedAt === null
+          ? row.revokedSeq === null
+          : typeof row.revokedSeq === 'number' &&
+            Number.isSafeInteger(row.revokedSeq) &&
+            row.revokedSeq >= 0)),
+  ).map((row) => ({
+    ...row,
+    revokedSeq:
+      row.revokedSeq === undefined ? (row.revokedAt ? 0 : null) : (row.revokedSeq as number | null),
+  }));
+}
+
 function parseArchive(text: string): VaultArchive {
   let parsed: unknown;
   try {
@@ -347,15 +375,7 @@ function parseArchive(text: string): VaultArchive {
       parsed.meta,
       (row) => typeof row.key === 'string' && typeof row.value === 'string',
     ),
-    peers: table<SyncPeerRow>(
-      parsed.peers,
-      (row) =>
-        typeof row.peerId === 'string' &&
-        typeof row.signingKey === 'string' &&
-        typeof row.agreementKey === 'string' &&
-        typeof row.acked === 'string' &&
-        typeof row.known === 'string',
-    ),
+    peers: peerTable(parsed.peers),
     ops: table<SyncOpRow>(
       parsed.ops,
       (row) =>

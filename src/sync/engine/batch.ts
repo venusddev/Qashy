@@ -20,9 +20,22 @@
  * it can interpret; this decides only what is structurally a batch.
  */
 
-import { bytesToUtf8, utf8Bytes } from '@/sync/crypto';
+import {
+  bytesToUtf8,
+  signBatchPayload,
+  utf8Bytes,
+  verifyBatchPayload,
+  type SigningPublicKey,
+  type SigningSecretKey,
+} from '@/sync/crypto';
 import { isHlc, opIdFor, parseHlc, type SyncOp } from '@/sync/oplog';
-import { SyncEngineError, type SyncBatch } from '@/sync/engine/types';
+import {
+  BATCH_FORMAT_VERSION,
+  SyncEngineError,
+  type RosterMember,
+  type SyncBatch,
+  type UnsignedSyncBatch,
+} from '@/sync/engine/types';
 import { canonicalJson } from '@/utils/canonical-json';
 
 /**
@@ -37,6 +50,7 @@ import { canonicalJson } from '@/utils/canonical-json';
  * chains resume exactly where they left off.
  */
 export const MAX_BATCH_OPS = 10_000;
+export const MAX_ROSTER_MEMBERS = 64;
 
 const fail = (message: string): never => {
   throw new SyncEngineError(message, 'badBatch');
@@ -62,6 +76,64 @@ const count = (value: unknown, what: string, minimum: number): number => {
   }
   return value as number;
 };
+
+const nullableCount = (value: unknown, what: string, minimum: number): number | null => {
+  if (value === null) return null;
+  return count(value, what, minimum);
+};
+
+const nullableText = (value: unknown, what: string): string | null => {
+  if (value === null) return null;
+  return text(value, what);
+};
+
+const signature = (value: unknown, what: string): string => {
+  const encoded = text(value, what);
+  if (!/^[0-9a-f]{128}$/i.test(encoded)) fail(`${what} is not an Ed25519 signature.`);
+  return encoded;
+};
+
+const decodeRosterMember = (value: unknown, index: number): RosterMember => {
+  if (!isRecord(value)) return fail(`Roster member ${index} is not an object.`);
+  return {
+    deviceId: text(value.deviceId, `Roster member ${index}'s device id`),
+    name: text(value.name, `Roster member ${index}'s name`),
+    platform: text(value.platform, `Roster member ${index}'s platform`),
+    signingKey: text(value.signingKey, `Roster member ${index}'s signing key`),
+    agreementKey: text(value.agreementKey, `Roster member ${index}'s agreement key`),
+    epoch: count(value.epoch, `Roster member ${index}'s epoch`, 1),
+    addedAt: text(value.addedAt, `Roster member ${index}'s added time`),
+    revokedAt: nullableText(value.revokedAt, `Roster member ${index}'s revoked time`),
+    revokedSeq: nullableCount(
+      value.revokedSeq,
+      `Roster member ${index}'s revocation sequence`,
+      0,
+    ),
+  };
+};
+
+export const batchPayload = (batch: SyncBatch | UnsignedSyncBatch): UnsignedSyncBatch => ({
+  version: batch.version,
+  epoch: batch.epoch,
+  baseCurrency: batch.baseCurrency,
+  sender: batch.sender,
+  ops: batch.ops,
+  heads: batch.heads,
+  roster: batch.roster,
+});
+
+export const authenticateBatch = (
+  batch: UnsignedSyncBatch,
+  secretKey: SigningSecretKey,
+): SyncBatch => ({
+  ...batch,
+  signature: signBatchPayload(batchPayload(batch), secretKey),
+});
+
+export const verifyBatchAuthentication = (
+  batch: SyncBatch,
+  publicKey: SigningPublicKey,
+): boolean => verifyBatchPayload(batchPayload(batch), batch.signature, publicKey);
 
 // ---------------------------------------------------------------------------
 // Ops
@@ -107,7 +179,7 @@ const decodeOp = (value: unknown, index: number): SyncOp => {
     // An unsealed op has never been signed, so nothing about it can be verified and nothing
     // downstream would catch that. Only sealed ops are ever transmitted, which makes an
     // empty signature here a malformed batch rather than a batch that needs verifying.
-    signature: text(value.signature, `Op ${index}'s signature`),
+    signature: signature(value.signature, `Op ${index}'s signature`),
   };
 };
 
@@ -161,11 +233,29 @@ export function decodeBatch(bytes: Uint8Array): SyncBatch {
     heads[deviceId] = count(seq, `The sender's position on chain ${deviceId}`, 0);
   }
 
+  if (!Array.isArray(parsed.roster)) return fail('That batch has no signed device roster.');
+  if (parsed.roster.length > MAX_ROSTER_MEMBERS) {
+    throw new SyncEngineError(
+      `That batch carries ${parsed.roster.length} devices; the limit is ${MAX_ROSTER_MEMBERS}.`,
+      'tooLarge',
+    );
+  }
+
+  const version = count(parsed.version, "That batch's format version", 1);
+  if (version !== BATCH_FORMAT_VERSION) {
+    fail(
+      `That device uses sync batch format v${version}; this app requires v${BATCH_FORMAT_VERSION}.`,
+    );
+  }
+
   return {
+    version: BATCH_FORMAT_VERSION,
     epoch: count(parsed.epoch, "That batch's vault epoch", 1),
     baseCurrency: text(parsed.baseCurrency, "That batch's base currency"),
     sender: text(parsed.sender, "That batch's sender"),
     ops: ops.map(decodeOp),
     heads,
+    roster: parsed.roster.map(decodeRosterMember),
+    signature: signature(parsed.signature, "That batch's sender signature"),
   };
 }

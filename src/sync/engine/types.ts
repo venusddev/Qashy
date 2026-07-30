@@ -16,13 +16,34 @@
 
 import type { SyncOp } from '@/sync/oplog';
 
+/** Breaking format version for authenticated sync batches, independent of stored envelopes. */
+export const BATCH_FORMAT_VERSION = 2;
+
+/**
+ * The portable part of a peer row.
+ *
+ * A signed snapshot lets a device learn about peers that were paired or revoked elsewhere.
+ * Local delivery state (`acked`, `known`, `lastSeenAt`) is intentionally absent.
+ */
+export interface RosterMember {
+  readonly deviceId: string;
+  readonly name: string;
+  readonly platform: string;
+  readonly signingKey: string;
+  readonly agreementKey: string;
+  readonly epoch: number;
+  readonly addedAt: string;
+  readonly revokedAt: string | null;
+  /** Highest authored sequence accepted when revoked; null while active. */
+  readonly revokedSeq: number | null;
+}
+
 /**
  * One device's outgoing message to another.
  *
- * There is no version field, and its absence is deliberate rather than an oversight: this
- * shape only ever travels sealed inside an envelope, and `open` refuses a frame whose
- * protocol version differs before a byte of this is parsed. A second version number here
- * would be a second thing to bump and a second thing to disagree with the first.
+ * `version` is independent of the outer envelope version. The envelope version also protects
+ * backups and keystore records, which must remain readable when the live sync protocol gains
+ * a new authentication requirement.
  *
  * `epoch` and `baseCurrency` are the two preconditions that are checked *before* any op is
  * applied. Both describe the vault rather than the batch, and both are unmergeable: a stale
@@ -32,6 +53,7 @@ import type { SyncOp } from '@/sync/oplog';
  * relay drop safe — a blob sitting in a bucket for a week still says what it assumed.
  */
 export interface SyncBatch {
+  readonly version: typeof BATCH_FORMAT_VERSION;
   readonly epoch: number;
   readonly baseCurrency: string;
   /** The device that assembled this batch, which is not necessarily the author of its ops. */
@@ -53,7 +75,13 @@ export interface SyncBatch {
    * sync that runs forever without converging.
    */
   readonly heads: Readonly<Record<string, number>>;
+  /** Signed membership state known to the sender, excluding the recipient. */
+  readonly roster: readonly RosterMember[];
+  /** Ed25519 over every preceding field, made by `sender`. */
+  readonly signature: string;
 }
+
+export type UnsignedSyncBatch = Omit<SyncBatch, 'signature'>;
 
 /**
  * Why a batch was refused.

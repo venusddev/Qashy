@@ -19,6 +19,7 @@ import { errorMessage, showError } from '@/utils/confirm';
 import { csvCategoryForRow, parseCsvTable } from '@/utils/csv';
 import { todayLocal } from '@/utils/date';
 import { hapticSuccess } from '@/utils/haptics';
+import { MAX_CSV_IMPORT_BYTES, assertFileSize } from '@/utils/file-size';
 
 type CsvField = Exclude<keyof CsvImportRow, 'rowNumber'>;
 
@@ -66,7 +67,13 @@ export function CsvScreen() {
       const result = await DocumentPicker.getDocumentAsync({ type: ['text/csv', 'text/comma-separated-values', 'text/plain'], copyToCacheDirectory: true, base64: false });
       if (result.canceled) return;
       const asset = result.assets[0];
-      const text = asset.file ? await asset.file.text() : await new ExpoFile(asset.uri).text();
+      const nativeFile = asset.file ? null : new ExpoFile(asset.uri);
+      assertFileSize(
+        asset.size ?? asset.file?.size ?? nativeFile?.size,
+        MAX_CSV_IMPORT_BYTES,
+        'CSV file',
+      );
+      const text = asset.file ? await asset.file.text() : await nativeFile!.text();
       const table = parseCsvTable(text);
       setRows([]);
       setPreview(null);

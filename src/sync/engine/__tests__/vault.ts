@@ -130,6 +130,7 @@ export class VaultDevice {
       epoch: EPOCH,
       addedAt: new Date(0).toISOString(),
       revokedAt: null,
+      revokedSeq: null,
       acked: {},
       known: {},
       lastSeenAt: null,

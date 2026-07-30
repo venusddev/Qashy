@@ -21,9 +21,12 @@
 
 import type { StorageAdapter, StorageTx } from '@/data/storage-adapter';
 import { SYNC_META, readMeta, readOutbox } from '@/data/sync-store';
+import type { SigningSecretKey } from '@/sync/crypto';
 import { canServeDelta } from '@/sync/oplog';
+import { authenticateBatch } from '@/sync/engine/batch';
 import { headsRecord } from '@/sync/engine/receive';
-import type { Peer } from '@/sync/engine/roster';
+import { readRoster, toRosterMember, type Peer } from '@/sync/engine/roster';
+import { BATCH_FORMAT_VERSION } from '@/sync/engine/types';
 import type { SyncBatch } from '@/sync/engine/types';
 
 /**
@@ -40,6 +43,7 @@ export const SEND_BATCH_OPS = 1_000;
 export interface SendDeps {
   readonly storage: StorageAdapter;
   readonly deviceId: string;
+  readonly signingKey: SigningSecretKey;
   readonly limit?: number;
 }
 
@@ -71,18 +75,20 @@ export interface OutgoingBatch {
  * costs one redundant exchange, which is the cheapest possible failure here.
  */
 export async function buildBatch(deps: SendDeps, peer: Peer): Promise<OutgoingBatch> {
-  const { storage, deviceId, limit = SEND_BATCH_OPS } = deps;
-  return storage.transact((tx) => assemble(tx, deviceId, peer, limit));
+  const { storage, deviceId, signingKey, limit = SEND_BATCH_OPS } = deps;
+  return storage.transact((tx) => assemble(tx, deviceId, signingKey, peer, limit));
 }
 
 async function assemble(
   tx: StorageTx,
   deviceId: string,
+  signingKey: SigningSecretKey,
   peer: Peer,
   limit: number,
 ): Promise<OutgoingBatch> {
   const meta = await readMeta(tx, [SYNC_META.epoch, SYNC_META.baseCurrency]);
   const outbox = await readOutbox(tx, peer.acked, limit);
+  const roster = await readRoster(tx);
 
   // A peer that has never heard of a chain sits at 0, which is servable unless retention has
   // already cut into that chain's history — in which case the ops that would bridge the gap
@@ -92,13 +98,20 @@ async function assemble(
   );
 
   return {
-    batch: {
-      epoch: Number(meta.get(SYNC_META.epoch) ?? '1'),
-      baseCurrency: meta.get(SYNC_META.baseCurrency) ?? '',
-      sender: deviceId,
-      ops: outbox.ops,
-      heads: headsRecord(outbox.heads),
-    },
+    batch: authenticateBatch(
+      {
+        version: BATCH_FORMAT_VERSION,
+        epoch: Number(meta.get(SYNC_META.epoch) ?? '1'),
+        baseCurrency: meta.get(SYNC_META.baseCurrency) ?? '',
+        sender: deviceId,
+        ops: outbox.ops,
+        heads: headsRecord(outbox.heads),
+        roster: [...roster.values()]
+          .filter((member) => member.deviceId !== peer.deviceId)
+          .map(toRosterMember),
+      },
+      signingKey,
+    ),
     more: outbox.more,
     needsFullState,
   };

@@ -6,8 +6,9 @@
  * copies a derivation, forgets to change the label, and two logically separate keys
  * silently become one. Adding a label here is a deliberate act with a diff.
  *
- * Labels are versioned with the protocol. Changing a label changes every key derived
- * from it, so it is a breaking wire change and requires a `PROTOCOL_VERSION` bump.
+ * Existing labels are versioned with the protocol. Changing one changes every key derived
+ * from it, so it is a breaking wire change and requires a `PROTOCOL_VERSION` bump. A new,
+ * independently-versioned wire construction may add a label that carries its own version.
  */
 
 /**
@@ -47,6 +48,8 @@ export const LABELS = {
   transcript: 'qashy/sync/v1/transcript',
   /** Prefix over an op's chain input that yields its hash — and the bytes each device signs. */
   op: 'qashy/sync/v1/op',
+  /** Prefix over the canonical v2 batch payload that proves which device assembled it. */
+  batchAuth: 'qashy/sync/batch/v2/auth',
 } as const;
 
 export type LabelName = keyof typeof LABELS;

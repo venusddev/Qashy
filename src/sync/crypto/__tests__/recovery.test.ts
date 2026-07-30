@@ -101,7 +101,9 @@ describe('the passphrase-protected backup', () => {
   });
 
   it('refuses a passphrase short enough to be guessed', () => {
-    expect(() => createPassphraseBackup('short', payload, params)).toThrow(/at least 8 characters/);
+    expect(() => createPassphraseBackup('too-short', payload, params)).toThrow(
+      /at least 12 characters/,
+    );
   });
 
   it('rejects a file that is not a Qashy backup', () => {
@@ -120,22 +122,38 @@ describe('the passphrase-protected backup', () => {
   });
 
   describe('a hostile header', () => {
-    const withN = (n: number) => {
+    const withParams = (over: Partial<{ N: number; r: number; p: number }>) => {
       const file = createPassphraseBackup('correct horse battery', payload, params);
-      new DataView(file.buffer, file.byteOffset, file.byteLength).setUint32(5, n, false);
+      const view = new DataView(file.buffer, file.byteOffset, file.byteLength);
+      view.setUint32(5, over.N ?? params.N, false);
+      view.setUint32(9, over.r ?? params.r, false);
+      view.setUint32(13, over.p ?? params.p, false);
       return file;
     };
 
-    it('refuses to spend gigabytes on a work factor an attacker chose', () => {
+    it('refuses aggregate memory above the mobile-safe ceiling', () => {
       // The header is attacker-controlled input on any file that arrives from outside. Left
       // unbounded it is a denial of service that the victim's own device carries out.
-      expect(() => openPassphraseBackup('correct horse battery', withN(2 ** 23))).toThrow(
+      expect(() =>
+        openPassphraseBackup('correct horse battery', withParams({ N: 2 ** 17 })),
+      ).toThrow(
         /unreasonable amount of work/,
       );
     });
 
+    it('refuses CPU amplification hidden in the parallelization field', () => {
+      expect(() =>
+        openPassphraseBackup(
+          'correct horse battery',
+          withParams({ N: 2 ** 16, r: 1, p: 5 }),
+        ),
+      ).toThrow(/unreasonable amount of work/);
+    });
+
     it('refuses parameters too weak to have protected anything', () => {
-      expect(() => openPassphraseBackup('correct horse battery', withN(1024))).toThrow(/4096/);
+      expect(() =>
+        openPassphraseBackup('correct horse battery', withParams({ N: 1024 })),
+      ).toThrow(/4096/);
     });
   });
 });

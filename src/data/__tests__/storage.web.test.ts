@@ -201,6 +201,49 @@ describe('web storage adapter', () => {
     expect(meta?.value).toBe('D');
   });
 
+  it('adds conservative revocation cutoffs to peer rows written before v4', async () => {
+    await Dexie.delete('qashy');
+    const v3 = new Dexie('qashy');
+    v3.version(1).stores({ records: '&key, type, entityId, updatedAt, deletedAt' });
+    v3.version(2).stores({
+      records: '&key, type, entityId, updatedAt, deletedAt, [type+updatedAt]',
+      syncOps: '&opId, [deviceId+seq], [entityType+entityId], hlc, [sealed+deviceId+seq]',
+      syncState: '&key, type, maxHlc',
+      syncPeers: '&peerId',
+      syncMeta: '&key',
+      syncQuarantine: '&key',
+    });
+    v3.version(3).stores({ syncActivity: '&key' });
+    await v3.open();
+    const base = {
+      name: 'Old phone',
+      platform: 'ios',
+      signingKey: 'signing',
+      agreementKey: 'agreement',
+      epoch: 1,
+      addedAt: '2026-01-01T00:00:00.000Z',
+      acked: '{}',
+      known: '{}',
+      lastSeenAt: null,
+    };
+    await v3.table('syncPeers').bulkPut([
+      { ...base, peerId: 'active', revokedAt: null },
+      { ...base, peerId: 'revoked', revokedAt: '2026-02-01T00:00:00.000Z' },
+    ]);
+    v3.close();
+
+    const adapter = newAdapter();
+    await adapter.initialize();
+    const peers = await adapter.transact((tx) => tx.table('syncPeers').all());
+
+    expect(peers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ peerId: 'active', revokedSeq: null }),
+        expect.objectContaining({ peerId: 'revoked', revokedSeq: 0 }),
+      ]),
+    );
+  });
+
   it('rolls back records and sync rows together when a transaction throws', async () => {
     const adapter = await freshAdapter();
     await adapter.transact(async (tx) => {

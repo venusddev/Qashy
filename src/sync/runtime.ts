@@ -28,6 +28,7 @@
 
 import type { StorageAdapter } from '@/data/storage-adapter';
 import type { FinanceRepository } from '@/data/repository';
+import { fetch as expoFetch } from 'expo/fetch';
 import { SYNC_META, readMeta, writeMeta } from '@/data/sync-store';
 import {
   deriveBucketId,
@@ -185,7 +186,7 @@ export class SyncRuntime {
   checkRelay(signal?: AbortSignal): Promise<RelayHealth> {
     const { storage, nowIso = defaultNowIso, requestTimeoutMs } = this.deps;
     return checkRelayHealth({
-      fetch: this.deps.fetch ?? globalThis.fetch,
+      fetch: this.deps.fetch ?? expoFetch,
       timeoutMs: requestTimeoutMs,
       transact: (work) => storage.transact(work, { silent: true }),
       nowIso,
@@ -391,7 +392,7 @@ export class SyncRuntime {
       endpoints.relayEnabled ? '1' : '0',
       endpoints.directEnabled ? '1' : '0',
       endpoints.iceServers.map((server) => server.urls).join(' '),
-    ].join(' ');
+    ].join('\0');
 
     const held = this.wiring;
     if (held?.fingerprint === fingerprint) return held;
@@ -485,7 +486,7 @@ export class SyncRuntime {
     const { storage } = this.deps;
 
     return new RelayTransport({
-      fetch: this.deps.fetch ?? globalThis.fetch,
+      fetch: this.deps.fetch ?? expoFetch,
       timeoutMs: this.deps.requestTimeoutMs,
       baseUrl: endpoints.relayUrl,
       bucketId: deriveBucketId(vault.vaultKey),

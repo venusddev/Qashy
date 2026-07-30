@@ -25,6 +25,7 @@ import {
   SYNC_META,
   appendActivity,
   readActivity,
+  readHeldChains,
   readMeta,
   writeMeta,
   type SyncActivityInput,
@@ -377,7 +378,10 @@ export async function revokePeer(deps: SyncSetupDeps, peerId: string): Promise<v
     const roster = await readRoster(tx);
     const peer = roster.get(peerId);
     if (!peer || peer.revokedAt) return;
-    await writePeers(tx, [{ ...peer, revokedAt: at }]);
+    const held = await readHeldChains(tx);
+    await writePeers(tx, [
+      { ...peer, revokedAt: at, revokedSeq: held.heads.get(peer.deviceId)?.seq ?? 0 },
+    ]);
     await appendActivity(tx, [activityEntry({ kind: 'revoked', recordedAt: at, peerId })]);
   });
 }
@@ -433,8 +437,16 @@ export async function rotateVaultKey(deps: SyncSetupDeps): Promise<number> {
   await deps.storage.transact(async (tx) => {
     await writeMeta(tx, { [SYNC_META.epoch]: String(epoch) });
     const roster = await readRoster(tx);
+    const held = await readHeldChains(tx);
     const live = [...roster.values()].filter((peer) => !peer.revokedAt);
-    await writePeers(tx, live.map((peer) => ({ ...peer, revokedAt: at })));
+    await writePeers(
+      tx,
+      live.map((peer) => ({
+        ...peer,
+        revokedAt: at,
+        revokedSeq: held.heads.get(peer.deviceId)?.seq ?? 0,
+      })),
+    );
     await appendActivity(tx, [
       // The cursor counts slots in a bucket this vault no longer uses.
       ...live.map((peer) => activityEntry({ kind: 'revoked', recordedAt: at, peerId: peer.deviceId })),
@@ -485,8 +497,16 @@ export async function disableSync(
     if (!options.forget) return;
 
     const roster = await readRoster(tx);
+    const held = await readHeldChains(tx);
     const live = [...roster.values()].filter((peer) => !peer.revokedAt);
-    await writePeers(tx, live.map((peer) => ({ ...peer, revokedAt: at })));
+    await writePeers(
+      tx,
+      live.map((peer) => ({
+        ...peer,
+        revokedAt: at,
+        revokedSeq: held.heads.get(peer.deviceId)?.seq ?? 0,
+      })),
+    );
 
     const entries: SyncActivityInput[] = live.map((peer) =>
       activityEntry({ kind: 'revoked', recordedAt: at, peerId: peer.deviceId }),

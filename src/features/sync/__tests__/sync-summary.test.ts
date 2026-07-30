@@ -37,6 +37,7 @@ const peer = (over: Partial<Peer> = {}): Peer => ({
   epoch: 1,
   addedAt: '2026-07-01T00:00:00.000Z',
   revokedAt: null,
+  revokedSeq: null,
   acked: {},
   known: {},
   lastSeenAt: '2026-07-29T11:58:00.000Z',
@@ -135,7 +136,11 @@ describe('summarizeSync', () => {
   });
 
   it('does not count a revoked device as a device', () => {
-    const revoked = peer({ deviceId: 'peer-2', revokedAt: '2026-07-20T00:00:00.000Z' });
+    const revoked = peer({
+      deviceId: 'peer-2',
+      revokedAt: '2026-07-20T00:00:00.000Z',
+      revokedSeq: 0,
+    });
     expect(summarize({ peers: [peer(), revoked] }).subtitle).toBe('2 devices · 5 minutes ago');
     expect(livePeers([peer(), revoked])).toHaveLength(1);
   });
@@ -189,7 +194,10 @@ describe('describePeer', () => {
   });
 
   it('says a revoked device is gone rather than merely quiet', () => {
-    const described = describePeer(peer({ revokedAt: '2026-07-20T00:00:00.000Z' }), NOW);
+    const described = describePeer(
+      peer({ revokedAt: '2026-07-20T00:00:00.000Z', revokedSeq: 0 }),
+      NOW,
+    );
     expect(described.subtitle).toBe('Removed from this vault');
   });
 

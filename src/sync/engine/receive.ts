@@ -12,9 +12,9 @@
  * behalf of a peer that was never going to be trusted:
  *
  *   1. epoch and base currency — two integers and two strings, and both are unmergeable
- *   2. the sender is a live member of the roster
+ *   2. the sender is a live member of the roster and its batch signature authenticates the roster
  *   3. ops we already hold match what we hold, then drop them — re-delivery costs nothing
- *   4. every remaining op's author is known and its signature verifies
+ *   4. every remaining op's author is known, is within its revocation cutoff, and its signature verifies
  *   5. every chain continues our history without a gap, a rewind, or a rewrite
  *
  * **All of that happens inside one storage transaction, and that is deliberate.** The roster
@@ -59,8 +59,17 @@ import {
   type SyncOp,
 } from '@/sync/oplog';
 import { activityEntry, rejectionEntry } from '@/sync/engine/activity';
+import { verifyBatchAuthentication } from '@/sync/engine/batch';
 import { describeFailure, healQuarantine, recordQuarantine } from '@/sync/engine/quarantine';
-import { mergeHeads, readRoster, requireAuthor, requireSender, writePeers } from '@/sync/engine/roster';
+import {
+  mergeAuthenticatedRoster,
+  mergeHeads,
+  readRoster,
+  requireAuthor,
+  requireAuthorSequence,
+  requireSender,
+  writePeers,
+} from '@/sync/engine/roster';
 import { SyncEngineError, type RejectionCode, type SyncBatch } from '@/sync/engine/types';
 
 export interface ReceiveDeps {
@@ -179,13 +188,27 @@ async function verifyAndStore(
     );
   }
 
-  const roster = await readRoster(tx);
-  const sender = requireSender(roster, batch.sender);
-
+  const storedRoster = await readRoster(tx);
+  const sender = requireSender(storedRoster, batch.sender);
+  if (!verifyBatchAuthentication(batch, sender.signingKey)) {
+    throw new SyncEngineError(
+      'That batch was not signed by the device it claims to come from.',
+      'badSignature',
+      batch.sender,
+    );
+  }
   const { heads: held, hashes } = await readHeldChains(
     tx,
     new Set(batch.ops.map((op) => op.opId)),
   );
+  const rosterMerge = mergeAuthenticatedRoster(
+    storedRoster,
+    batch.roster,
+    batch.epoch,
+    batch.sender,
+    held,
+  );
+  const roster = rosterMerge.roster;
 
   // Re-delivery is ordinary: a relay hands back overlapping ranges, and a peer that lost its
   // ack record resends from the start. Every one of those ops is dropped as already-held a
@@ -218,6 +241,7 @@ async function verifyAndStore(
     // history everybody else holds.
     const author = requireAuthor(roster, deviceId, batch.sender);
     for (const op of ops) {
+      requireAuthorSequence(author, op.seq);
       if (!op.signature) {
         throw new SyncEngineError(
           `Op ${op.opId} arrived without a signature.`,
@@ -256,8 +280,9 @@ async function verifyAndStore(
   }
 
   await writePeers(tx, [
+    ...rosterMerge.changed.filter((peer) => peer.deviceId !== sender.deviceId),
     {
-      ...sender,
+      ...(roster.get(sender.deviceId) ?? sender),
       // What the peer holds — monotone, so a blob that sat in a relay bucket for a week
       // cannot rewind the watermark compaction depends on.
       acked: mergeHeads(sender.acked, batch.heads),

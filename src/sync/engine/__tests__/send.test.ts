@@ -24,7 +24,12 @@ import {
 
 const outbox = (sender: TestDevice, peer: TestDevice, acked: Record<string, number> = {}, limit = 100) =>
   buildBatch(
-    { storage: sender.storage, deviceId: sender.deviceId, limit },
+    {
+      storage: sender.storage,
+      deviceId: sender.deviceId,
+      signingKey: sender.identity.signing.secretKey,
+      limit,
+    },
     { ...peer.asPeer(), acked },
   );
 
@@ -137,6 +142,9 @@ describe('buildBatch', () => {
       new Set([alice.deviceId, carol.deviceId]),
     );
     expect(outgoing.batch.heads).toMatchObject({ [alice.deviceId]: 1, [carol.deviceId]: 1 });
+    // Alice also introduces Carol to Bob. The recipient itself is omitted because Bob already
+    // knows its own identity and does not belong in its local peer roster.
+    expect(outgoing.batch.roster.map((member) => member.deviceId)).toEqual([carol.deviceId]);
   });
 
   it('skips what the peer already has', async () => {
