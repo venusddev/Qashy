@@ -67,6 +67,7 @@ import {
   enableSync,
   readSyncStatus,
   recordPairedPeer,
+  resumeSync,
   type DeviceProfile,
   type SyncStatus,
 } from '@/sync/setup';
@@ -116,6 +117,7 @@ export function PairScreen() {
   const [remaining, setRemaining] = useState(0);
   const [sas, setSas] = useState<readonly string[] | null>(null);
   const [outcome, setOutcome] = useState<{ headline: string; body: string } | null>(null);
+  const [scannerKey, setScannerKey] = useState(0);
 
   const session = useRef<Session | null>(null);
   // Held apart from `sas` because the confirmation closure differs by role while the words
@@ -171,10 +173,20 @@ export function PairScreen() {
     setBusy(true);
     setError(null);
     try {
-      // A device that has never synced becomes a vault first. This is the only place a
-      // `VaultRootKey` is ever minted, and doing it here rather than on the sync screen means
-      // a key only exists once somebody has actually started adding a second device.
-      if (!status?.deviceId) await enableSync(setup, profile());
+      // Read the keystore at action time. `status` can still be the render from before the first
+      // host attempt created its vault, especially after that attempt expires and the user tries
+      // again. Calling enableSync from that stale render would refuse a perfectly valid vault.
+      const currentBeforeStart = await readSyncStatus(setup);
+      if (currentBeforeStart.keystore === 'empty') {
+        // A device that has never synced becomes a vault first. This is the only place a
+        // `VaultRootKey` is ever minted, and doing it here rather than on the sync screen means
+        // a key only exists once somebody has actually started adding a second device.
+        await enableSync(setup, profile());
+      } else if (!currentBeforeStart.enabled) {
+        // Hosting is an explicit sync action. It also repairs the useful case where a reset or
+        // an older build left the device key intact but removed the enabled metadata.
+        await resumeSync(setup);
+      }
       const vault = await setup.keystore.read();
       if (!vault) throw new Error('This device’s vault key could not be read.');
       // Read straight from storage rather than trusting `status`: `enableSync` has usually just
@@ -285,6 +297,9 @@ export function PairScreen() {
       setSas(confirmation.sas);
       move('confirm');
     } catch (reason) {
+      // QrScanner claims one code per mount so a camera frame cannot start a dozen handshakes.
+      // A failed or expired code is a new attempt, so give the scanner a fresh claim slot.
+      setScannerKey((value) => value + 1);
       setError(errorMessage(reason, 'That code could not be used. Show a fresh one and try again.'));
     } finally {
       setBusy(false);
@@ -405,6 +420,7 @@ export function PairScreen() {
                 one at the code it shows.
               </AppText>
               <QrScanner
+                key={scannerKey}
                 onCode={(value) => void startJoining(value)}
                 hint="The code works once and expires after a minute and a half."
               />

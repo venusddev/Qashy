@@ -143,6 +143,30 @@ describe('pairing', () => {
     target.joiner.close();
   });
 
+  it('generates a fresh code when the host restarts in the same vault', () => {
+    const target = rig();
+    const previous = target.host.code;
+    target.host.close();
+
+    const replacement = new PairingHost({
+      identity: target.ids.host,
+      vaultKey,
+      epoch: EPOCH,
+      baseCurrency: 'USD',
+      self: { name: 'Kitchen iPad', platform: 'ios' },
+      roster: [],
+      relayUrl: RELAY,
+      now: () => NOW_SECONDS,
+      nowIso: () => NOW_ISO,
+      openSocket: target.hub.open,
+      idleTimeoutMs: IDLE_MS,
+    });
+
+    expect(replacement.code).not.toBe(previous);
+    replacement.close();
+    target.joiner.close();
+  });
+
   it('closes the host session when the advertised code deadline passes', async () => {
     jest.useFakeTimers();
     try {

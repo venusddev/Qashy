@@ -536,24 +536,44 @@ describe('turning it off', () => {
     const status = await readSyncStatus(target.deps);
     expect(status.enabled).toBe(false);
     expect(status.keystore).toBe('empty');
+    expect(status.deviceId).toBe('');
+    expect(status.deviceName).toBe('');
+    expect(status.baseCurrency).toBe('');
     expect(status.epoch).toBe(0);
-    expect(status.peers.map((peer) => peer.revokedAt)).toEqual([LATER_ISO]);
-    expect(status.peers.map((peer) => peer.revokedSeq)).toEqual([0]);
-    // The key is the only thing that was ever a secret, and the only thing whose absence
-    // actually prevents anything.
+    expect(status.peers).toEqual([]);
+    // Leaving starts a genuinely fresh vault boundary. The finance records remain, but the old
+    // roster, chain, activity, and key are not allowed to masquerade as the next vault.
+    expect(await opCount(target.storage)).toBe(0);
     expect(target.cell.bytes).toBeNull();
   });
 
-  it('keeps the finance data and the op log even when forgetting', async () => {
+  it('keeps the finance data and can genesis it again after forgetting', async () => {
     const target = await rig({ records: populated() });
     await enableSync(target.deps, PROFILE);
 
     await disableSync(target.deps, { forget: true });
 
-    // `records` is projected from `sync_state`, and the op log is the only record of what
-    // this device has already told its peers. Dropping either is data loss, not cleanup.
+    // Finance records are not part of the vault key boundary and remain untouched.
     expect(await recordCount(target.storage)).toBe(1);
+    expect(await opCount(target.storage)).toBe(0);
+
+    // A later setup describes those same records under the new identity instead of continuing
+    // the old device's chain.
+    await expect(enableSync(target.deps, PROFILE)).resolves.toMatchObject({ opCount: 3 });
     expect(await opCount(target.storage)).toBe(3);
+  });
+
+  it('treats stale metadata as unpaired when the device-only key is gone', async () => {
+    const target = await rig();
+    await enableSync(target.deps, PROFILE);
+    target.cell.bytes = null;
+
+    await expect(readSyncStatus({ ...target.deps, keystore: new MemoryKeystore(target.cell) })).resolves.toMatchObject({
+      enabled: false,
+      keystore: 'empty',
+      deviceId: '',
+      epoch: 0,
+    });
   });
 
   it('clears the cached relay verdict, which described a bucket it can no longer address', async () => {

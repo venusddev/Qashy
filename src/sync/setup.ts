@@ -20,6 +20,7 @@
  */
 
 import type { StorageAdapter, StorageTx } from '@/data/storage-adapter';
+import { syncRowKey } from '@/data/sync-tables';
 import { runGenesisMigration } from '@/data/sync-genesis';
 import {
   SYNC_META,
@@ -28,7 +29,6 @@ import {
   readHeldChains,
   readMeta,
   writeMeta,
-  type SyncActivityInput,
 } from '@/data/sync-store';
 import type { SyncActivityRow } from '@/data/sync-tables';
 import {
@@ -114,6 +114,47 @@ const toInt = (value: string | undefined, fallback: number) => {
 /** Ops moved, in either direction. What "last synced" honestly means. */
 const MOVED = new Set(['sent', 'received']);
 
+/** Tables that belong to the vault being left, rather than to the finance records themselves. */
+const FORGOTTEN_VAULT_TABLES = [
+  'syncOps',
+  'syncState',
+  'syncPeers',
+  'syncQuarantine',
+  'syncActivity',
+] as const;
+
+/**
+ * Drops the local copy of a vault's sync history while leaving the finance records and the
+ * user's transport configuration alone. A later setup must genesis the records under its new
+ * identity; retaining the old chain would make the new identity continue at the old sequence
+ * and would make a peer list from the old vault look current.
+ */
+async function clearForgottenVaultState(tx: StorageTx): Promise<void> {
+  for (const name of FORGOTTEN_VAULT_TABLES) {
+    const table = tx.table(name);
+    const rows = await table.all();
+    if (rows.length) await table.delete(rows.map((row) => syncRowKey(name, row)));
+  }
+
+  await tx.table('syncMeta').delete([
+    SYNC_META.deviceId,
+    SYNC_META.deviceName,
+    SYNC_META.epoch,
+    SYNC_META.seq,
+    SYNC_META.headHash,
+    SYNC_META.hlcWall,
+    SYNC_META.hlcCounter,
+    SYNC_META.baseCurrency,
+    SYNC_META.genesisAt,
+    SYNC_META.enabled,
+    SYNC_META.relayCursor,
+    SYNC_META.relayStatus,
+    SYNC_META.relayCheckedAt,
+    SYNC_META.relayDetail,
+    SYNC_META.relayFailures,
+  ]);
+}
+
 // ---------------------------------------------------------------------------
 // Reading
 // ---------------------------------------------------------------------------
@@ -129,6 +170,11 @@ export async function readSyncStatus(deps: SyncSetupDeps): Promise<SyncStatus> {
   // Outside the transaction on purpose. The keystore is the Keychain or a WebCrypto unwrap,
   // and awaiting either inside `work` would leave Dexie's promise zone mid-transaction.
   const keystore = await readKeystoreStatus(deps.keystore);
+  // An unlocked key is the authority for this device's membership. This also repairs the
+  // read-only view after a database reset that removed sync_meta but left the device-only key
+  // intact; the next explicit sync action can then re-arm metadata instead of offering a
+  // second vault.
+  const vault = keystore === 'unlocked' ? await deps.keystore.read() : null;
 
   const status = await deps.storage.transact(async (tx) => {
     const meta = await readMeta(tx, [
@@ -142,13 +188,16 @@ export async function readSyncStatus(deps: SyncSetupDeps): Promise<SyncStatus> {
     const activity = await readActivity(tx, ACTIVITY_VIEW_LIMIT);
     const moved = activity.find((row) => MOVED.has(row.kind) && row.count > 0);
 
+    const hasVault = keystore !== 'empty' && (keystore !== 'unlocked' || vault !== null);
+    const deviceId = keystore === 'empty' ? '' : vault?.identity.deviceId ?? meta.get(SYNC_META.deviceId) ?? '';
+
     return {
-      enabled: meta.get(SYNC_META.enabled) === '1',
+      enabled: hasVault && meta.get(SYNC_META.enabled) === '1',
       keystore,
-      deviceId: meta.get(SYNC_META.deviceId) ?? UNPAIRED.deviceId,
-      deviceName: meta.get(SYNC_META.deviceName) ?? UNPAIRED.deviceName,
-      epoch: toInt(meta.get(SYNC_META.epoch), UNPAIRED.epoch),
-      baseCurrency: meta.get(SYNC_META.baseCurrency) ?? UNPAIRED.baseCurrency,
+      deviceId: deviceId || UNPAIRED.deviceId,
+      deviceName: keystore === 'empty' ? UNPAIRED.deviceName : meta.get(SYNC_META.deviceName) ?? UNPAIRED.deviceName,
+      epoch: keystore === 'empty' ? UNPAIRED.epoch : vault?.epoch ?? toInt(meta.get(SYNC_META.epoch), UNPAIRED.epoch),
+      baseCurrency: keystore === 'empty' ? UNPAIRED.baseCurrency : meta.get(SYNC_META.baseCurrency) ?? UNPAIRED.baseCurrency,
       peers: [...roster.values()].sort((first, second) => first.addedAt.localeCompare(second.addedAt)),
       endpoints: await readEndpoints(tx),
       relay: await readRelayHealth(tx),
@@ -475,12 +524,10 @@ export interface DisableOptions {
 /**
  * Stops syncing, optionally for good.
  *
- * **Finance data is never touched, and neither is the op log.** Those rows are this device's
- * own history in plaintext on its own disk; deleting them would destroy the only record of what
- * this device has already told its peers, and `records` is projected from `sync_state`, so
- * dropping either is data loss rather than a cleanup. What `forget` erases is the *key* — which
- * is the only thing that was ever a secret, and the only thing whose absence actually prevents
- * anything.
+ * **Finance data is never touched.** When `forget` is requested, this device's old sync history
+ * is discarded with the vault it belonged to so the next setup can genesis the same finance
+ * records under a fresh identity. The other devices retain their own history and keep syncing;
+ * the only user data kept here is the finance projection itself.
  *
  * The keystore is erased last. An erase that succeeded before a failed transaction would leave
  * a device still marked as a vault member with no key to act as one, which reads as `unpaired`
@@ -490,37 +537,14 @@ export async function disableSync(
   deps: SyncSetupDeps,
   options: DisableOptions = {},
 ): Promise<void> {
-  const at = (deps.nowIso ?? defaultNowIso)();
-
   await deps.storage.transact(async (tx) => {
     await writeMeta(tx, { [SYNC_META.enabled]: '0' });
     if (!options.forget) return;
 
-    const roster = await readRoster(tx);
-    const held = await readHeldChains(tx);
-    const live = [...roster.values()].filter((peer) => !peer.revokedAt);
-    await writePeers(
-      tx,
-      live.map((peer) => ({
-        ...peer,
-        revokedAt: at,
-        revokedSeq: held.heads.get(peer.deviceId)?.seq ?? 0,
-      })),
-    );
-
-    const entries: SyncActivityInput[] = live.map((peer) =>
-      activityEntry({ kind: 'revoked', recordedAt: at, peerId: peer.deviceId }),
-    );
-    if (entries.length) await appendActivity(tx, entries);
-
-    await writeMeta(tx, {
-      [SYNC_META.epoch]: '0',
-      [SYNC_META.relayCursor]: '0',
-      [SYNC_META.relayStatus]: '',
-      [SYNC_META.relayCheckedAt]: '',
-      [SYNC_META.relayDetail]: '',
-      [SYNC_META.relayFailures]: '0',
-    });
+    // This device is leaving, not revoking a peer from a vault it still owns. Its local roster,
+    // chain, and activity belong to the old vault and must not be presented as the next one.
+    // The other devices retain their own copies and continue syncing with one another.
+    await clearForgottenVaultState(tx);
   });
 
   if (options.forget) await deps.keystore.erase();
