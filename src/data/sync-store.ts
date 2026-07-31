@@ -68,6 +68,10 @@ export const SYNC_META = {
   enabled: 'enabled',
   /** What this device calls itself in another device's list. Chosen by the user at pairing. */
   deviceName: 'deviceName',
+  /** Set by the first device; later transfers are signed control events in the op log. */
+  ownerDeviceId: 'ownerDeviceId',
+  /** The product-selected default is immediate removal by any paired device. */
+  revocationMode: 'revocationMode',
 
   // -- Transport configuration. Non-secret by construction; see `sync/transport/endpoints.ts`.
 

@@ -48,6 +48,8 @@ export const BUNDLE_MIME = 'application/octet-stream';
  * history, and it is what stops a crafted file from being a memory exhaustion attack.
  */
 export const MAX_BUNDLE_FRAMES = 512;
+/** Total decoded ciphertext accepted from one file, independent of its frame count. */
+export const MAX_BUNDLE_DECODED_BYTES = 64 * 1024 * 1024;
 
 export interface BundleFrame {
   /** Route-blinded recipient. Which device the frame was sealed for. */
@@ -137,6 +139,9 @@ export class FileTransport implements SyncTransport {
   bundle(): SyncBundle {
     const frames: BundleFrame[] = [];
     for (const channel of this.channels.values()) frames.push(...channel.collected);
+    if (frames.length > MAX_BUNDLE_FRAMES || frames.reduce((total, held) => total + held.frame.length, 0) > MAX_BUNDLE_DECODED_BYTES) {
+      throw new BundleError('That export is too large for one sync file. Sync in smaller passes.');
+    }
     return { version: BUNDLE_VERSION, from: this.deps.deviceId, frames };
   }
 
@@ -223,6 +228,7 @@ export function decodeBundle(text: string): SyncBundle {
   }
 
   const frames: BundleFrame[] = [];
+  let decodedBytes = 0;
   for (const entry of body.frames) {
     if (!entry || typeof entry !== 'object') throw new BundleError('That sync file is damaged.');
     const row = entry as Record<string, unknown>;
@@ -236,6 +242,12 @@ export function decodeBundle(text: string): SyncBundle {
     // make this device allocate the megabytes the cap exists to refuse.
     if (row.frame.length > Math.ceil((MAX_FRAME_BYTES * 4) / 3) + 4) {
       throw new BundleError('That sync file is damaged.');
+    }
+    // Base64url expands by at most 4/3. Bound the aggregate before any individual decoder can
+    // allocate the next frame, so many near-limit frames cannot exhaust memory.
+    decodedBytes += Math.floor((row.frame.length * 3) / 4);
+    if (decodedBytes > MAX_BUNDLE_DECODED_BYTES) {
+      throw new BundleError('That sync file is too large to import.');
     }
 
     let frame: Uint8Array;

@@ -39,6 +39,12 @@ export function addRecurrence(
   interval: number,
   anchorValue = value,
 ) {
+  if (!Number.isSafeInteger(interval) || interval < 1) {
+    throw new RangeError('Recurrence interval must be a positive safe integer.');
+  }
+  if (!isLocalDate(value) || !isLocalDate(anchorValue)) {
+    throw new RangeError('Recurrence dates must be valid local calendar dates.');
+  }
   const date = parseLocalDate(value);
   const anchor = parseLocalDate(anchorValue);
   const anchorDay = anchor.getDate();
@@ -58,6 +64,9 @@ export function addRecurrence(
     date.setFullYear(date.getFullYear() + interval, anchorMonth, 1);
     const maxDay = new Date(date.getFullYear(), anchorMonth + 1, 0).getDate();
     date.setDate(anchorWasMonthEnd ? maxDay : Math.min(anchorDay, maxDay));
+  }
+  if (!Number.isFinite(date.getTime())) {
+    throw new RangeError('Recurrence interval is outside the supported calendar range.');
   }
   return toLocalDate(date);
 }

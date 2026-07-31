@@ -34,6 +34,7 @@ import type { StorageAdapter, StorageTx } from '@/data/storage-adapter';
 import {
   SYNC_META,
   appendActivity,
+  fromOpRow,
   readChainState,
   readHeldChains,
   readMeta,
@@ -47,6 +48,7 @@ import {
   GENESIS_HASH,
   MAX_CLOCK_SKEW_MS,
   OpLogError,
+  hasCompleteKnownRegisters,
   isEntityType,
   metaKey,
   observe,
@@ -71,6 +73,7 @@ import {
   writePeers,
 } from '@/sync/engine/roster';
 import { SyncEngineError, type RejectionCode, type SyncBatch } from '@/sync/engine/types';
+import { RevocationError, deriveRevocationState } from '@/sync/revocation';
 
 export interface ReceiveDeps {
   readonly storage: StorageAdapter;
@@ -165,7 +168,13 @@ async function verifyAndStore(
   nowMs: number,
   nowIso: string,
 ): Promise<SyncOp[]> {
-  const meta = await readMeta(tx, [SYNC_META.epoch, SYNC_META.baseCurrency]);
+  const meta = await readMeta(tx, [
+    SYNC_META.epoch,
+    SYNC_META.baseCurrency,
+    SYNC_META.deviceId,
+    SYNC_META.ownerDeviceId,
+    SYNC_META.revocationMode,
+  ]);
 
   const epoch = Number(meta.get(SYNC_META.epoch) ?? '1');
   if (batch.epoch !== epoch) {
@@ -207,6 +216,7 @@ async function verifyAndStore(
     batch.epoch,
     batch.sender,
     held,
+    meta.get(SYNC_META.deviceId) ?? '',
   );
   const roster = rosterMerge.roster;
 
@@ -256,6 +266,13 @@ async function verifyAndStore(
           batch.sender,
         );
       }
+      if (!hasCompleteKnownRegisters(op)) {
+        throw new SyncEngineError(
+          `Op ${op.opId} contains a partial field group and cannot be applied safely.`,
+          'badBatch',
+          batch.sender,
+        );
+      }
     }
     try {
       held.set(deviceId, verifyChain(ops, held.get(deviceId) ?? { seq: 0, headHash: GENESIS_HASH }));
@@ -266,6 +283,24 @@ async function verifyAndStore(
   }
 
   // Past every refusal. From here the batch is being kept.
+  let revocations: ReturnType<typeof deriveRevocationState>['revocations'];
+  try {
+    const existing = (await tx.table('syncOps').all()).map(fromOpRow);
+    const initial = {
+      ownerDeviceId: meta.get(SYNC_META.ownerDeviceId) ?? (meta.get(SYNC_META.deviceId) ?? ''),
+      mode: meta.get(SYNC_META.revocationMode) === 'quorum'
+        ? 'quorum' as const
+        : meta.get(SYNC_META.revocationMode) === 'owner'
+          ? 'owner' as const
+          : 'any' as const,
+    };
+    revocations = deriveRevocationState([...existing, ...accepted], roster, initial, meta.get(SYNC_META.deviceId) ?? '').revocations;
+  } catch (error) {
+    if (error instanceof RevocationError) {
+      throw new SyncEngineError(error.message, 'badBatch', batch.sender);
+    }
+    throw error;
+  }
   await storeOps(tx, accepted, 1);
 
   // The local clock adopts the batch's readings so the next local edit sorts after them.
@@ -291,6 +326,12 @@ async function verifyAndStore(
       known: headsRecord(held),
       lastSeenAt: nowIso,
     },
+    ...revocations.flatMap((decision) => {
+      const peer = roster.get(decision.targetId);
+      return peer && !peer.revokedAt
+        ? [{ ...peer, revokedAt: decision.at, revokedSeq: decision.cutoff }]
+        : [];
+    }),
   ]);
 
   return accepted;

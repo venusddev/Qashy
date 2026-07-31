@@ -378,6 +378,12 @@ describe('pairing', () => {
     expect(target.hub.sockets).toHaveLength(0);
   });
 
+  it('refuses an unencrypted relay carried by a pairing code before opening a socket', () => {
+    expect(() => rig({ tamper: (code) => ({ ...code, relayUrl: 'http://attacker.example' }) })).toThrow(
+      /https/i,
+    );
+  });
+
   it('turns a malformed hello into a restartable pairing error', async () => {
     const target = rig();
     const hostAttempt = target.host.handshake();

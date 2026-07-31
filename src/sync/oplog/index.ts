@@ -68,6 +68,7 @@ export {
   applyOps,
   changedTypes,
   finalize,
+  hasCompleteKnownRegisters,
   isElementPresent,
   materialize,
   mergeMeta,

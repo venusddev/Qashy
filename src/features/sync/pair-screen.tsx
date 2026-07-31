@@ -204,6 +204,8 @@ export function PairScreen() {
         vaultKey: vault.vaultKey,
         epoch: vault.epoch,
         baseCurrency: current.baseCurrency,
+        ownerDeviceId: current.revocation.ownerDeviceId,
+        revocationMode: current.revocation.mode,
         self: profile(),
         roster: current.peers,
         relayUrl: current.endpoints.relayUrl,
@@ -312,6 +314,8 @@ export function PairScreen() {
           vaultKey: joined.vaultKey,
           epoch: joined.epoch,
           baseCurrency: joined.baseCurrency,
+          ownerDeviceId: joined.ownerDeviceId,
+          revocationMode: joined.revocationMode,
           peers: joined.peers,
           profile: profile(),
         });

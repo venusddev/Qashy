@@ -16,6 +16,7 @@ import { useFinanceRepository, useFinanceState } from '@/providers/finance-provi
 import { useQashyTheme } from '@/theme/theme';
 import { confirmDestructive, errorMessage, showError } from '@/utils/confirm';
 import { todayLocal } from '@/utils/date';
+import { stashRecurringDraft } from '@/features/more/recurring-draft';
 import {
   validateDateInput,
   validateMoneyInput,
@@ -276,7 +277,14 @@ export function TransactionFormScreen() {
       <Card style={{ gap: 14 }}>
         <FormField label="Note" value={note} onChangeText={setNote} placeholder="Optional context" multiline style={{ minHeight: 92, textAlignVertical: 'top' }} />
         {!existing && kind !== 'transfer' ? (
-          <TextButton title="Make this recurring instead" onPress={() => router.push({ pathname: '/recurring', params: { kind, title, amount, accountId, categoryId } })} style={{ alignSelf: 'flex-start' }} />
+          <TextButton
+            title="Make this recurring instead"
+            onPress={() => router.push({
+              pathname: '/recurring',
+              params: { draftId: stashRecurringDraft({ kind, title, amount, accountId, categoryId }) },
+            })}
+            style={{ alignSelf: 'flex-start' }}
+          />
         ) : null}
       </Card>
 

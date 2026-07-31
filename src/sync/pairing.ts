@@ -63,7 +63,9 @@ import {
   type SessionKey,
   type VaultRootKey,
 } from '@/sync/crypto';
+import { normalizeEndpointUrl } from '@/sync/transport/endpoints';
 import type { Peer } from '@/sync/engine/roster';
+import type { RevocationMode } from '@/sync/revocation';
 import { SyncEngineError } from '@/sync/engine/types';
 import {
   SignalingClient,
@@ -112,6 +114,8 @@ export interface HostPairingDeps {
   readonly epoch: number;
   /** `''` on a device that has not finished onboarding, which then accepts any partner. */
   readonly baseCurrency: string;
+  readonly ownerDeviceId?: string;
+  readonly revocationMode?: RevocationMode;
   readonly self: PairingSelf;
   /** Every other device already in this vault. `readRoster` yields exactly this set. */
   readonly roster: readonly Peer[];
@@ -150,6 +154,8 @@ export interface JoinPairingResult {
   readonly vaultKey: VaultRootKey;
   readonly epoch: number;
   readonly baseCurrency: string;
+  readonly ownerDeviceId: string;
+  readonly revocationMode: RevocationMode;
   /** The host, plus every device the host already knew. Never this device. */
   readonly peers: readonly Peer[];
 }
@@ -199,6 +205,8 @@ type HostAnswer =
       readonly vaultKey: string;
       readonly epoch: number;
       readonly baseCurrency: string;
+      readonly ownerDeviceId: string;
+      readonly revocationMode: RevocationMode;
       readonly host: { readonly name: string; readonly platform: string; readonly agreementKey: string };
       readonly peers: readonly WirePeer[];
     }
@@ -563,11 +571,17 @@ export class PairingHost {
         throw currencyRefusal(this.deps.baseCurrency, hello.baseCurrency);
       }
 
+      // This becomes a durable roster key immediately after the vault key crosses the
+      // channel. Validate it first: an authenticated hello is not automatically a valid key.
+      const keys = restorePeerKeys(session.peerSigningPublicKey, hello.agreementKey);
+
       sendSealed(this.signaling, session.sendKey, toJoiner, {
         ok: true,
         vaultKey: toBase64Url(this.deps.vaultKey),
         epoch: this.deps.epoch,
         baseCurrency: this.deps.baseCurrency,
+        ownerDeviceId: this.deps.ownerDeviceId ?? this.deps.identity.deviceId,
+        revocationMode: this.deps.revocationMode ?? 'any',
         host: {
           name: this.deps.self.name,
           platform: this.deps.self.platform,
@@ -578,7 +592,6 @@ export class PairingHost {
           .map(toWirePeer),
       });
 
-      const keys = restorePeerKeys(session.peerSigningPublicKey, hello.agreementKey);
       return {
         peer: {
           deviceId: session.peerDeviceId,
@@ -635,7 +648,9 @@ export class PairingJoiner {
   constructor(private readonly deps: JoinPairingDeps) {
     this.pending = startHandshake(deps.identity);
     this.signaling = new SignalingClient({
-      baseUrl: deps.code.relayUrl,
+      // Pairing codes cross a trust boundary. Apply the same endpoint policy as Settings
+      // before opening a signaling socket.
+      baseUrl: normalizeEndpointUrl(deps.code.relayUrl),
       rendezvousId: derivePairingRendezvousId(deps.code.pairingSecret),
       open: deps.openSocket ?? platformSocket,
       idleTimeoutMs: deps.idleTimeoutMs ?? PAIRING_IDLE_TIMEOUT_MS,
@@ -712,6 +727,11 @@ export class PairingJoiner {
       fail('That vault did not say which epoch it is on.');
     }
     const baseCurrency = optionalText(answer.baseCurrency, "That vault's base currency");
+    const ownerDeviceId = optionalText(answer.ownerDeviceId, "That vault's owner");
+    const revocationMode = answer.revocationMode;
+    if (revocationMode !== 'any' && revocationMode !== 'quorum' && revocationMode !== 'owner') {
+      fail("That vault did not say which removal policy it uses.");
+    }
     // Checked again on this side even though the host checks it first. The host's check
     // protects the *host* from an older or hostile build; this one protects this device, and a
     // precondition that only one party enforces is a precondition one party can skip.
@@ -760,6 +780,8 @@ export class PairingJoiner {
       vaultKey: restoreVaultRootKey(bytes(answer.vaultKey, 'That vault key')),
       epoch: epoch as number,
       baseCurrency,
+      ownerDeviceId,
+      revocationMode: revocationMode as RevocationMode,
       peers,
     };
   }

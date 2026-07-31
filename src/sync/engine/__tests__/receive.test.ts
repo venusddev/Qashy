@@ -30,6 +30,8 @@ import { toPeerRow, toRosterMember } from '@/sync/engine/roster';
 import { MAX_CLOCK_SKEW_MS, hashOp, sealOp } from '@/sync/oplog';
 import { receiveBatch } from '@/sync/engine/receive';
 import { SyncEngineError } from '@/sync/engine/types';
+import { SYNC_CONTROL_ENTITY } from '@/sync/revocation';
+import type { EntityType } from '@/domain/models';
 
 /** Receives, expecting a refusal, and returns the error so a test can inspect its code. */
 async function expectRejected(receiver: TestDevice, batch: Parameters<typeof receiveBatch>[1]) {
@@ -152,7 +154,7 @@ describe('receiveBatch — trust', () => {
     expect(await rejections(bob)).toHaveLength(0);
   });
 
-  it('propagates revocation monotonically and will not accept a stale un-revocation', async () => {
+  it('ignores a roster snapshot that tries to remove a device', async () => {
     const [alice, bob, carol] = await makeVault(3);
 
     await receiveBatch(
@@ -162,23 +164,27 @@ describe('receiveBatch — trust', () => {
       }),
     );
     expect(await peerRow(bob, carol.deviceId)).toMatchObject({
-      revokedAt: NOW_ISO,
-      revokedSeq: 0,
+      revokedAt: null,
     });
+  });
 
-    await receiveBatch(
-      bob.deps,
-      alice.batch([], {
-        roster: [toRosterMember(carol.asPeer({ revokedAt: null }))],
-      }),
-    );
+  it('applies a signed immediate-removal control instead of trusting the roster', async () => {
+    const [alice, bob, carol] = await makeVault(3);
+    const control = {
+      ...alice.body('accounts', 'control'),
+      entityType: SYNC_CONTROL_ENTITY as EntityType,
+      entityId: 'revocation',
+      kind: 'set' as const,
+      payload: { control: 'revoke', targetId: carol.deviceId, cutoff: 0, at: NOW_ISO },
+    };
+    await receiveBatch(bob.deps, alice.batch(alice.author([control])));
     expect(await peerRow(bob, carol.deviceId)).toMatchObject({
       revokedAt: NOW_ISO,
       revokedSeq: 0,
     });
   });
 
-  it('converges a revocation cutoff above history accepted before this peer learned of it', async () => {
+  it('does not let a roster cutoff reject a device’s history', async () => {
     const [alice, bob, carol] = await makeVault(3);
     const acceptedBeforeNotice = carol.author([carol.body('accounts', 'account-1')]);
     await receiveBatch(bob.deps, alice.batch(acceptedBeforeNotice));
@@ -190,16 +196,12 @@ describe('receiveBatch — trust', () => {
       }),
     );
     expect(await peerRow(bob, carol.deviceId)).toMatchObject({
-      revokedAt: NOW_ISO,
-      revokedSeq: 1,
+      revokedAt: null,
     });
 
     const authoredAfterNotice = carol.author([carol.body('accounts', 'account-2')]);
-    await expectRejected(bob, alice.batch(authoredAfterNotice));
-    expect(await opRows(bob)).toHaveLength(1);
-    expect(await rejections(bob)).toMatchObject([
-      { code: 'revokedPeer', peerId: carol.deviceId },
-    ]);
+    await receiveBatch(bob.deps, alice.batch(authoredAfterNotice));
+    expect(await opRows(bob)).toHaveLength(2);
   });
 
   it('refuses a forwarded op attributed to a device the vault has never heard of', async () => {
@@ -419,6 +421,18 @@ describe('receiveBatch — forward compatibility', () => {
 
     expect((await receiveBatch(bob.deps, alice.batch(ops))).stored).toBe(1);
     expect(await opRows(bob)).toMatchObject([{ schema: 99 }]);
+  });
+
+  it('rejects a signed set that omits members of a known field group before storing it', async () => {
+    const [alice, bob] = await makeVault();
+    const partial = alice.author([{
+      ...alice.body('transactions', 'txn-1'),
+      kind: 'set',
+      payload: { registers: { ledger: { amountMinor: 999_999 } } },
+    }]);
+
+    await expect(receiveBatch(bob.deps, alice.batch(partial))).rejects.toMatchObject({ code: 'badBatch' });
+    expect(await opRows(bob)).toHaveLength(0);
   });
 });
 

@@ -117,6 +117,16 @@ describe('observe', () => {
     expect(clock).toEqual({ wall: 1_000, counter: 8 });
   });
 
+  it('borrows a millisecond when a received maximum counter must be observed', () => {
+    const { clock } = observe(
+      { wall: 1_000, counter: MAX_COUNTER },
+      at(1_000, DEVICE_B, MAX_COUNTER),
+      1_000,
+    );
+    expect(clock).toEqual({ wall: 1_001, counter: 0 });
+    expect(() => tick(clock, DEVICE_A, 1_000)).not.toThrow();
+  });
+
   it('refuses to adopt a clock beyond the skew bound', () => {
     const far = at(1_000 + MAX_CLOCK_SKEW_MS + 1, DEVICE_B);
     const { clock, skewed } = observe(ZERO_CLOCK, far, 1_000);

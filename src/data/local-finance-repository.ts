@@ -310,7 +310,7 @@ export class LocalFinanceRepository implements FinanceRepository {
           recurringRules: list<RecurringRule>('recurringRules'),
           exchangeRates: list<ExchangeRate>('exchangeRates'),
         });
-        this.assertMergedSetSafe(repaired.accounts, repaired.transactions);
+        this.assertMergedSetSafe(repaired);
 
         const records: StoredEntity[] = [];
         const touched = new Set<EntityType>();
@@ -1236,38 +1236,34 @@ export class LocalFinanceRepository implements FinanceRepository {
   private async deleteEntitiesNow(type: keyof FinanceState, ids: string[]) {
     if (type === 'ready' || type === 'settings') return;
     const list = this.state[type] as FinanceEntity[];
-    const deleted = list.filter((entity) => ids.includes(entity.id)).map((entity) => updateEntity(entity, { deletedAt: nowIso() }));
-    const deletedIds = new Set(ids);
+    let deletedIds = new Set(ids);
+    let deleted = list.filter((entity) => deletedIds.has(entity.id)).map((entity) => updateEntity(entity, { deletedAt: nowIso() }));
+    let archivedAccounts: Account[] = [];
+    let pausedRules: RecurringRule[] = [];
 
     // Accounts are part of every ledger entry's identity and cannot be nulled
     // or reassigned without changing history. Convert deletion of a referenced
     // account into the same safe archive operation exposed by the UI.
     if (type === 'accounts') {
-      const referenced = this.state.transactions.some((item) =>
-        deletedIds.has(item.accountId) || Boolean(item.destinationAccountId && deletedIds.has(item.destinationAccountId))) ||
-        this.state.recurringRules.some((item) => deletedIds.has(item.template.accountId)) ||
-        this.state.budgets.some((item) => item.filters.accountIds.some((id) => deletedIds.has(id))) ||
-        this.state.goals.some((item) => Boolean(item.linkedAccountId && deletedIds.has(item.linkedAccountId)));
-      if (referenced) {
-        const archivedAccounts = this.state.accounts
-          .filter((account) => deletedIds.has(account.id))
+      const referencedIds = new Set(this.state.accounts.filter((account) =>
+        this.state.transactions.some((item) =>
+          item.accountId === account.id || item.destinationAccountId === account.id) ||
+        this.state.recurringRules.some((item) => item.template.accountId === account.id) ||
+        this.state.budgets.some((item) => item.filters.accountIds.includes(account.id)) ||
+        this.state.goals.some((item) => item.linkedAccountId === account.id),
+      ).map((account) => account.id));
+      const archiveIds = new Set(ids.filter((id) => referencedIds.has(id)));
+      if (archiveIds.size) {
+        // A mixed batch may contain both a referenced and an unused account. Archive only the
+        // former; the latter still receives the user-requested soft deletion in this same write.
+        deletedIds = new Set(ids.filter((id) => !archiveIds.has(id)));
+        deleted = list.filter((entity) => deletedIds.has(entity.id)).map((entity) => updateEntity(entity, { deletedAt: nowIso() }));
+        archivedAccounts = this.state.accounts
+          .filter((account) => archiveIds.has(account.id))
           .map((account) => updateEntity(account, { archived: true }));
-        const pausedRules = this.state.recurringRules
-          .filter((rule) => rule.active && deletedIds.has(rule.template.accountId))
+        pausedRules = this.state.recurringRules
+          .filter((rule) => rule.active && archiveIds.has(rule.template.accountId))
           .map((rule) => updateEntity(rule, { active: false, pausedByDependency: true }));
-        await this.storage.putMany([
-          ...archivedAccounts.map((entity) => ({ type: 'accounts' as const, entity })),
-          ...pausedRules.map((entity) => ({ type: 'recurringRules' as const, entity })),
-        ], this);
-        const accountReplacements = new Map(archivedAccounts.map((account) => [account.id, account]));
-        const ruleReplacements = new Map(pausedRules.map((rule) => [rule.id, rule]));
-        this.state = {
-          ...this.state,
-          accounts: this.state.accounts.map((account) => accountReplacements.get(account.id) ?? account),
-          recurringRules: this.state.recurringRules.map((rule) => ruleReplacements.get(rule.id) ?? rule),
-        };
-        this.emit();
-        return;
       }
     }
 
@@ -1364,7 +1360,9 @@ export class LocalFinanceRepository implements FinanceRepository {
     }
     await this.storage.putMany([
       ...deleted.map((entity) => ({ type: type as EntityType, entity })),
+      ...archivedAccounts.map((entity) => ({ type: 'accounts' as const, entity })),
       ...ruleChanges.map((entity) => ({ type: 'recurringRules' as const, entity })),
+      ...pausedRules.map((entity) => ({ type: 'recurringRules' as const, entity })),
       ...contributions.map((entity) => ({ type: 'contributions' as const, entity })),
       ...orphanedContributions.map((entity) => ({ type: 'contributions' as const, entity })),
       ...budgetPeriods.map((entity) => ({ type: 'budgetPeriods' as const, entity })),
@@ -1379,12 +1377,16 @@ export class LocalFinanceRepository implements FinanceRepository {
         if (occurrenceKey) this.deletedOccurrenceKeys.add(occurrenceKey);
       });
     }
-    const recurringReplacements = new Map(ruleChanges.map((rule) => [rule.id, rule]));
+    const recurringReplacements = new Map([...ruleChanges, ...pausedRules].map((rule) => [rule.id, rule]));
     const nextState = {
       ...this.state,
       [type]: (this.state[type] as FinanceEntity[]).filter((entity) => !deletedIds.has(entity.id)),
     } as FinanceState;
     nextState.recurringRules = nextState.recurringRules.map((rule) => recurringReplacements.get(rule.id) ?? rule);
+    if (archivedAccounts.length) {
+      const replacements = new Map(archivedAccounts.map((account) => [account.id, account]));
+      nextState.accounts = nextState.accounts.map((account) => replacements.get(account.id) ?? account);
+    }
     if (transactionChanges.length) {
       const edits = new Map(transactionChanges.map((item) => [item.id, item]));
       nextState.transactions = nextState.transactions.map((item) => edits.get(item.id) ?? item);
@@ -1803,18 +1805,21 @@ export class LocalFinanceRepository implements FinanceRepository {
         existing.destinationBaseAmountMinor !== null;
       if (input.destinationBaseAmountMinor !== undefined && input.destinationBaseAmountMinor !== null) {
         this.assertPositiveMinor(input.destinationBaseAmountMinor, 'Destination base amount');
-        const expectedDestinationBaseAmountMinor = this.expectedDestinationBaseAmount(
-          destinationAmountMinor,
-          destination!.currency,
-          account.currency,
-          baseAmountMinor,
-          input.localDate,
-        );
-        if (expectedDestinationBaseAmountMinor === null) {
-          throw new Error('Destination base amount cannot be verified without an effective exchange rate.');
-        }
-        if (input.destinationBaseAmountMinor !== expectedDestinationBaseAmountMinor) {
-          throw new Error('Destination base amount does not match the destination amount and exchange rate.');
+        // A cross-currency CSV carries this as a historical snapshot. Re-resolving today's
+        // editable destination-to-base rate would reject a valid export after that rate changed
+        // or was deleted. Same-currency and destination-base legs remain derivable, so keep
+        // their forged-value protection without making historical non-base legs unimportable.
+        if (destination!.currency === this.state.settings.baseCurrency || destination!.currency === account.currency) {
+          const expectedDestinationBaseAmountMinor = this.expectedDestinationBaseAmount(
+            destinationAmountMinor,
+            destination!.currency,
+            account.currency,
+            baseAmountMinor,
+            input.localDate,
+          );
+          if (expectedDestinationBaseAmountMinor === null || input.destinationBaseAmountMinor !== expectedDestinationBaseAmountMinor) {
+            throw new Error('Destination base amount does not match the destination amount and exchange rate.');
+          }
         }
         destinationBaseAmountMinor = input.destinationBaseAmountMinor;
       } else if (preservesDestinationSnapshot) {
@@ -2474,10 +2479,33 @@ export class LocalFinanceRepository implements FinanceRepository {
    * Anything it rejects is a merged state no local mutation could have produced, so failing
    * closed here is the whole point — nothing is written and the batch can be retried.
    */
-  private assertMergedSetSafe(
-    accounts: readonly Account[],
-    transactions: readonly TransactionRecord[],
-  ) {
+  private assertMergedSetSafe(repaired: ReturnType<typeof repairMergedState>) {
+    const {
+      settings,
+      accounts,
+      categories,
+      tags,
+      transactions,
+      budgets,
+      budgetPeriods,
+      goals,
+      contributions,
+      recurringRules,
+      exchangeRates,
+    } = repaired;
+    this.assertMergedDomainValues({
+      settings,
+      accounts,
+      categories,
+      tags,
+      transactions,
+      budgets,
+      budgetPeriods,
+      goals,
+      contributions,
+      recurringRules,
+      exchangeRates,
+    });
     const posted = transactions.filter((item) => !item.deletedAt && item.status === 'posted');
     for (const account of accounts.filter((item) => !item.deletedAt)) {
       const label = `${account.name} balance`;
@@ -2502,6 +2530,139 @@ export class LocalFinanceRepository implements FinanceRepository {
       posted.filter((item) => item.kind === 'expense').map((item) => item.baseAmountMinor),
       'Expense total',
     );
+  }
+
+  /**
+   * Remote ops are authenticated, not inherently valid finance input. This is deliberately
+   * pure and complete enough to reject every value shape that the local mutation paths refuse,
+   * before a malformed projection is allowed to poison future local saves.
+   */
+  private assertMergedDomainValues({
+    settings,
+    accounts,
+    categories,
+    tags,
+    transactions,
+    budgets,
+    budgetPeriods,
+    goals,
+    contributions,
+    recurringRules,
+    exchangeRates,
+  }: Parameters<typeof repairMergedState>[0]) {
+    const assertText = (value: unknown, label: string) => {
+      if (typeof value !== 'string') throw new Error(`${label} must be text.`);
+    };
+    const assertDate = (value: unknown, label: string) => {
+      if (typeof value !== 'string' || !isLocalDate(value)) throw new Error(`${label} must be a calendar date.`);
+    };
+    const assertMinor = (value: unknown, label: string, positive = false) => {
+      if (typeof value !== 'number' || !isSafeMinor(value) || (positive && value <= 0)) {
+        throw new Error(`${label} must be ${positive ? 'a positive ' : 'a '}safe minor-unit integer.`);
+      }
+    };
+    const assertCurrency = (value: unknown, label: string) => {
+      if (typeof value !== 'string' || !isSupportedCurrencyCode(value)) {
+        throw new Error(`${label} must be a supported currency.`);
+      }
+    };
+    const assertEnum = (value: unknown, values: readonly string[], label: string) => {
+      if (typeof value !== 'string' || !values.includes(value)) throw new Error(`${label} is invalid.`);
+    };
+    const assertRate = (value: unknown, label: string) => {
+      if (typeof value !== 'string') throw new Error(`${label} must be a decimal string.`);
+      let rate: Decimal;
+      try {
+        rate = new Decimal(value);
+      } catch {
+        throw new Error(`${label} must be a decimal string.`);
+      }
+      if (!rate.isFinite() || rate.lte(0)) throw new Error(`${label} must be positive.`);
+    };
+
+    // A freshly paired device can receive account and transaction history before its settings
+    // create reaches it. Hold the settings-specific checks until that create lands rather than
+    // rejecting otherwise well-formed history.
+    if (settings) {
+      assertCurrency(settings.baseCurrency, 'Base currency');
+      assertEnum(settings.themeMode, THEME_MODES, 'Theme mode');
+      assertEnum(settings.accentSource, ACCENT_SOURCES, 'Accent source');
+      if (validateLocale(settings.locale)) throw new Error('Settings locale is invalid.');
+    }
+
+    for (const account of accounts) {
+      assertEnum(account.type, ACCOUNT_TYPES, 'Account type');
+      assertCurrency(account.currency, 'Account currency');
+      assertMinor(account.openingBalanceMinor, 'Opening balance');
+    }
+    for (const category of categories) assertEnum(category.kind, CATEGORY_KINDS, 'Category kind');
+    for (const tag of tags) assertText(tag.name, 'Tag name');
+    for (const transaction of transactions) {
+      assertEnum(transaction.kind, TRANSACTION_TYPES, 'Transaction type');
+      assertEnum(transaction.status, TRANSACTION_STATUSES, 'Transaction status');
+      assertDate(transaction.localDate, 'Transaction date');
+      assertMinor(transaction.amountMinor, 'Transaction amount', true);
+      assertMinor(transaction.baseAmountMinor, 'Transaction base amount', true);
+      assertCurrency(transaction.currency, 'Transaction currency');
+      assertRate(transaction.exchangeRate, 'Transaction exchange rate');
+      const source = accounts.find((account) => account.id === transaction.accountId);
+      if (!source || source.currency !== transaction.currency) throw new Error('Transaction currency must match its account.');
+      if (transaction.kind === 'transfer') {
+        const destination = accounts.find((account) => account.id === transaction.destinationAccountId);
+        if (!destination || transaction.destinationAmountMinor === null || transaction.destinationBaseAmountMinor === null ||
+          transaction.destinationCurrency !== destination.currency) {
+          throw new Error('Transfer destination does not match its account.');
+        }
+        assertMinor(transaction.destinationAmountMinor, 'Transfer destination amount', true);
+        assertMinor(transaction.destinationBaseAmountMinor, 'Transfer destination base amount', true);
+      } else if (transaction.destinationAccountId !== null || transaction.destinationAmountMinor !== null ||
+        transaction.destinationBaseAmountMinor !== null || transaction.destinationCurrency !== null || transaction.transferGroupId !== null) {
+        throw new Error('Non-transfer transaction has transfer fields.');
+      }
+    }
+    for (const budget of budgets) {
+      assertMinor(budget.limitMinor, 'Budget limit', true);
+      assertEnum(budget.period.unit, PERIOD_UNITS, 'Budget period');
+      assertDate(budget.period.anchorDate, 'Budget anchor date');
+      if (!Number.isSafeInteger(budget.period.interval) || budget.period.interval < 1) throw new Error('Budget interval is invalid.');
+      if (budget.period.unit === 'custom' && (!budget.period.endDate || !isLocalDate(budget.period.endDate))) throw new Error('Custom budget end date is invalid.');
+      for (const limit of budget.categoryLimits) assertMinor(limit.limitMinor, 'Budget category limit', true);
+    }
+    for (const period of budgetPeriods) {
+      assertDate(period.periodStart, 'Budget period start');
+      assertDate(period.periodEnd, 'Budget period end');
+      assertMinor(period.limitMinor, 'Budget period limit', true);
+      assertMinor(period.rolloverMinor, 'Budget period rollover');
+    }
+    for (const goal of goals) {
+      assertEnum(goal.kind, GOAL_KINDS, 'Goal kind');
+      assertMinor(goal.targetMinor, 'Goal target', true);
+      assertMinor(goal.initialMinor, 'Goal initial progress');
+      if (goal.initialMinor < 0) throw new Error('Goal initial progress cannot be negative.');
+      if (goal.targetDate !== null) assertDate(goal.targetDate, 'Goal target date');
+    }
+    for (const contribution of contributions) {
+      assertMinor(contribution.amountMinor, 'Contribution amount', true);
+      assertDate(contribution.localDate, 'Contribution date');
+    }
+    for (const rule of recurringRules) {
+      assertEnum(rule.template.kind, CATEGORY_KINDS, 'Recurring transaction type');
+      assertCurrency(rule.template.currency, 'Recurring transaction currency');
+      assertMinor(rule.template.amountMinor, 'Recurring transaction amount', true);
+      assertEnum(rule.unit, RECURRENCE_UNITS, 'Recurring period');
+      if (!Number.isSafeInteger(rule.interval) || rule.interval < 1) throw new Error('Recurring interval is invalid.');
+      assertDate(rule.startDate, 'Recurring start date');
+      assertDate(rule.nextDueDate, 'Recurring next date');
+      if (rule.endDate !== null) assertDate(rule.endDate, 'Recurring end date');
+      const account = accounts.find((item) => item.id === rule.template.accountId);
+      if (!account || account.currency !== rule.template.currency) throw new Error('Recurring currency must match its account.');
+    }
+    for (const rate of exchangeRates) {
+      assertCurrency(rate.fromCurrency, 'Exchange-rate source currency');
+      assertCurrency(rate.toCurrency, 'Exchange-rate destination currency');
+      assertDate(rate.effectiveDate, 'Exchange-rate date');
+      assertRate(rate.rate, 'Exchange rate');
+    }
   }
 
   private assertTransactionSetSafe(

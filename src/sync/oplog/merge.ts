@@ -218,6 +218,24 @@ const asStrings = (value: unknown): string[] =>
 const isInterpretable = (op: SyncOpBody) =>
   op.schema <= OP_SCHEMA_VERSION && isEntityType(op.entityType) && OP_KINDS.includes(op.kind);
 
+/**
+ * A grouped register is atomic on the wire as well as during local diffing. Without this
+ * check, a signed partial group can win LWW and erase the omitted fields from the projection.
+ * Unknown registers remain forward-compatible; only a register this build understands is
+ * constrained by its declared field group.
+ */
+export const hasCompleteKnownRegisters = (op: SyncOpBody): boolean => {
+  if (!isInterpretable(op) || op.kind !== 'set') return true;
+  const registers = asRecord(op.payload.registers);
+  for (const spec of registersOf(op.entityType)) {
+    if (!(spec.name in registers)) continue;
+    const value = registers[spec.name];
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+    if (spec.fields.some((field) => !(field in value))) return false;
+  }
+  return true;
+};
+
 /** Identity of an uninterpretable op within one entity: one write, one reading, one kind. */
 const unknownKey = (op: SyncOpBody) => `${op.hlc}:${op.kind}`;
 

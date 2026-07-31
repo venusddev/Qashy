@@ -451,6 +451,16 @@ describe('changing the arrangement', () => {
 });
 
 describe('rotating the vault key', () => {
+  it('preserves the op log when an interrupted rotation leaves storage and keystore epochs mismatched', async () => {
+    const target = await rig({ records: populated() });
+    await enableSync(target.deps, PROFILE);
+    const before = await opCount(target.storage);
+    await target.setMeta({ [SYNC_META.epoch]: String(INITIAL_EPOCH + 1) });
+
+    await expect(resumeSync(target.deps)).rejects.toThrow(/rotation was interrupted/i);
+    expect(await opCount(target.storage)).toBe(before);
+  });
+
   it('replaces the key, bumps the epoch, and revokes everyone', async () => {
     const target = await rig({ nowIso: () => LATER_ISO });
     await enableSync(target.deps, PROFILE);

@@ -70,6 +70,8 @@ const status = (over: Partial<SyncStatus> = {}): SyncStatus => ({
   deviceName: 'Phone',
   epoch: 1,
   baseCurrency: 'ILS',
+  revocation: { mode: 'any', ownerDeviceId: 'this-device' },
+  proposals: [],
   peers: [peer()],
   endpoints: { relayUrl: 'https://relay.example.com', relayEnabled: true, directEnabled: true, iceServers: [] },
   relay: relay('reachable'),

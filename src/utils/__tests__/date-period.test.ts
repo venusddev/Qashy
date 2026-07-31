@@ -23,6 +23,10 @@ describe('calendar behavior', () => {
     expect(firstRecurrenceOnOrAfter('2026-01-31', 'month', 1, '2026-03-01')).toBe('2026-03-31');
   });
 
+  it('refuses an interval that would create an invalid calendar date', () => {
+    expect(() => addRecurrence('2026-01-01', 'year', Number.MAX_SAFE_INTEGER)).toThrow(RangeError);
+  });
+
   it('snaps monthly periods to calendar months regardless of anchor day', () => {
     // Intentional behavior: see the comment in resolvePeriod. Persisted budget
     // snapshots are keyed by periodStart, so these boundaries must stay stable.

@@ -66,6 +66,13 @@ export function CsvScreen() {
     try {
       const result = await DocumentPicker.getDocumentAsync({ type: ['text/csv', 'text/comma-separated-values', 'text/plain'], copyToCacheDirectory: true, base64: false });
       if (result.canceled) return;
+      // A replacement attempt must never leave the last file armed. Otherwise a validation
+      // error can make the next Import commit a different ledger than the user just reviewed.
+      setSourceRows([]);
+      setHeaders([]);
+      setMapping(inferMapping([]));
+      setRows([]);
+      setPreview(null);
       const asset = result.assets[0];
       const nativeFile = asset.file ? null : new ExpoFile(asset.uri);
       assertFileSize(
@@ -75,8 +82,6 @@ export function CsvScreen() {
       );
       const text = asset.file ? await asset.file.text() : await nativeFile!.text();
       const table = parseCsvTable(text);
-      setRows([]);
-      setPreview(null);
       if (!table.rows.length) {
         setSourceRows([]);
         setHeaders([]);

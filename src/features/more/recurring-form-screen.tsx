@@ -10,6 +10,7 @@ import { ChoiceChip } from '@/components/ui/choice-chip';
 import { FormField } from '@/components/ui/form-field';
 import { FormScreen } from '@/components/ui/form-screen';
 import type { CategoryKind, RecurrenceUnit } from '@/domain/models';
+import { takeRecurringDraft } from '@/features/more/recurring-draft';
 import { useFinanceRepository, useFinanceState } from '@/providers/finance-provider';
 import { useQashyTheme } from '@/theme/theme';
 import { useLocalization } from '@/localization/localization';
@@ -24,22 +25,23 @@ import { hapticSuccess } from '@/utils/haptics';
 import { minorToLocalizedDecimalString, parseMoney } from '@/utils/money';
 
 export function RecurringFormScreen() {
-  const params = useLocalSearchParams<{ id?: string; kind?: CategoryKind; title?: string; amount?: string; accountId?: string; categoryId?: string }>();
+  const params = useLocalSearchParams<{ id?: string; draftId?: string }>();
   const repository = useFinanceRepository();
   const state = useFinanceState();
   const theme = useQashyTheme();
   const { t } = useLocalization();
   const existing = params.id ? state.recurringRules.find((item) => item.id === params.id) : undefined;
+  const [draft] = useState(() => existing ? null : takeRecurringDraft(params.draftId));
   const [expectedRevision] = useState(existing?.revision);
-  const initialAccount = state.accounts.find((item) => item.id === (existing?.template.accountId ?? params.accountId))
+  const initialAccount = state.accounts.find((item) => item.id === (existing?.template.accountId ?? draft?.accountId))
     ?? state.accounts.find((item) => !item.archived);
-  const [kind, setKind] = useState<CategoryKind>(existing?.template.kind ?? params.kind ?? 'expense');
-  const [title, setTitle] = useState(existing?.template.title ?? params.title ?? '');
+  const [kind, setKind] = useState<CategoryKind>(existing?.template.kind ?? draft?.kind ?? 'expense');
+  const [title, setTitle] = useState(existing?.template.title ?? draft?.title ?? '');
   const [note, setNote] = useState(existing?.template.note ?? '');
   const [tagIds, setTagIds] = useState(existing?.template.tagIds ?? []);
-  const [amount, setAmount] = useState(existing ? minorToLocalizedDecimalString(existing.template.amountMinor, existing.template.currency, state.settings.locale) : params.amount ?? '');
+  const [amount, setAmount] = useState(existing ? minorToLocalizedDecimalString(existing.template.amountMinor, existing.template.currency, state.settings.locale) : draft?.amount ?? '');
   const [accountId, setAccountId] = useState(initialAccount?.id ?? '');
-  const [categoryId, setCategoryId] = useState(existing?.template.categoryId ?? params.categoryId ?? '');
+  const [categoryId, setCategoryId] = useState(existing?.template.categoryId ?? draft?.categoryId ?? '');
   const [unit, setUnit] = useState<RecurrenceUnit>(existing?.unit ?? 'month');
   const [interval, setInterval] = useState(String(existing?.interval ?? 1));
   const [startDate, setStartDate] = useState(existing?.startDate ?? todayLocal());

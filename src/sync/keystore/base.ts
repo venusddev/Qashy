@@ -45,6 +45,9 @@ export abstract class BaseKeystore implements SyncKeystore {
    */
   private passphrase: string | null = null;
 
+  /** Advances on an explicit lock so an older asynchronous unlock cannot reopen the vault. */
+  private lockGeneration = 0;
+
   /** Serializes every operation, so a rotation cannot interleave with a read. */
   private chain: Promise<unknown> = Promise.resolve();
 
@@ -122,6 +125,7 @@ export abstract class BaseKeystore implements SyncKeystore {
   }
 
   async unlock(passphrase: string): Promise<void> {
+    const lockGeneration = this.lockGeneration;
     return this.serial(async () => {
       await this.requireAvailable();
       const container = await this.readContainer();
@@ -142,12 +146,19 @@ export abstract class BaseKeystore implements SyncKeystore {
       // Validate before caching, so a record that survives the AEAD but is not a vault
       // fails now rather than on the next read.
       decodeVaultRecord(record);
+      if (lockGeneration !== this.lockGeneration) {
+        // Preserve the user's later lock request. The decrypted record has not entered the
+        // keystore cache, so wipe it before making the cancelled state explicit.
+        zeroize(record);
+        throw new KeystoreError('Unlock was cancelled because this device was locked.', 'locked');
+      }
       this.record = record;
       this.passphrase = passphrase;
     });
   }
 
   lock(): void {
+    this.lockGeneration += 1;
     this.forget();
   }
 

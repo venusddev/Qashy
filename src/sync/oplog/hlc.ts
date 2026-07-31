@@ -173,15 +173,22 @@ export function observe(clock: HlcClock, incoming: Hlc, nowMs: number): HlcObser
   }
   const wall = Math.max(clock.wall, remote.wall, local);
   if (wall === clock.wall && wall === remote.wall) {
-    return { clock: { wall, counter: Math.max(clock.counter, remote.counter) + 1 }, skewed: false };
+    return { clock: advanceCounter(wall, Math.max(clock.counter, remote.counter)), skewed: false };
   }
-  if (wall === clock.wall) return { clock: { wall, counter: clock.counter + 1 }, skewed: false };
-  if (wall === remote.wall) return { clock: { wall, counter: remote.counter + 1 }, skewed: false };
+  if (wall === clock.wall) return { clock: advanceCounter(wall, clock.counter), skewed: false };
+  if (wall === remote.wall) return { clock: advanceCounter(wall, remote.counter), skewed: false };
   return { clock: { wall, counter: 0 }, skewed: false };
 }
 
+/** Borrow a millisecond once the four-hex-digit counter is exhausted. */
+const advanceCounter = (wall: number, counter: number): HlcClock => {
+  if (counter < MAX_COUNTER) return { wall, counter: counter + 1 };
+  if (wall >= MAX_WALL_MS) throw new HlcError('Clock cannot advance beyond its maximum wall time.');
+  return { wall: wall + 1, counter: 0 };
+};
+
 const advanceToLocal = (clock: HlcClock, local: number): HlcClock =>
-  local > clock.wall ? { wall: local, counter: 0 } : { wall: clock.wall, counter: clock.counter + 1 };
+  local > clock.wall ? { wall: local, counter: 0 } : advanceCounter(clock.wall, clock.counter);
 
 /**
  * Builds an HLC for an entity that predates sync, seeded from its own `createdAt`.

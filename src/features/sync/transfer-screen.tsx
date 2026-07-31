@@ -192,6 +192,11 @@ export function TransferScreen() {
       async () => {
         const file = await pickBytes();
         if (!file) return;
+        // Once a new file was selected, the old archive must not remain restorable if this one
+        // turns out not to be a vault backup.
+        setArchive(null);
+        setPicked(null);
+        setSecret('');
         const wants = readBackupLock(file.bytes);
         if (!wants) {
           showError(
@@ -200,8 +205,6 @@ export function TransferScreen() {
           );
           return;
         }
-        setArchive(null);
-        setSecret('');
         setPicked({ name: file.name, bytes: file.bytes, wants });
       },
       'Couldn’t read that file',

@@ -51,6 +51,8 @@ import { canonicalJson } from '@/utils/canonical-json';
  */
 export const MAX_BATCH_OPS = 10_000;
 export const MAX_ROSTER_MEMBERS = 64;
+/** One head per paired device, never an unbounded attacker-controlled persisted map. */
+export const MAX_BATCH_HEADS = MAX_ROSTER_MEMBERS;
 
 const fail = (message: string): never => {
   throw new SyncEngineError(message, 'badBatch');
@@ -225,6 +227,12 @@ export function decodeBatch(bytes: Uint8Array): SyncBatch {
   }
 
   if (!isRecord(parsed.heads)) return fail('That batch does not say what the sender holds.');
+  if (Object.keys(parsed.heads).length > MAX_BATCH_HEADS) {
+    throw new SyncEngineError(
+      `That batch carries too many chain heads; the limit is ${MAX_BATCH_HEADS}.`,
+      'tooLarge',
+    );
+  }
   const heads: Record<string, number> = {};
   for (const [deviceId, seq] of Object.entries(parsed.heads)) {
     // Rebuilt entry by entry rather than passed through, so nothing a peer chose the name of

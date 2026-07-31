@@ -34,6 +34,8 @@ import { RelayError } from '@/sync/transport/http';
  * behalf of a peer that may not exist.
  */
 export const MAX_SIGNAL_BYTES = 64 * 1024;
+/** Pairing has a fixed message exchange; anything beyond this is only memory pressure. */
+export const MAX_SIGNAL_INBOX = 32;
 
 /** How long to wait for the socket to open before giving up on the rendezvous. */
 export const SIGNAL_OPEN_TIMEOUT_MS = 10_000;
@@ -321,6 +323,10 @@ export class SignalingClient {
 
     const waiter = this.waiters.shift();
     if (!waiter) {
+      if (this.inbox.length >= MAX_SIGNAL_INBOX) {
+        this.fail(new RelayError('The pairing rendezvous sent too many queued messages.', 'tooLarge'));
+        return;
+      }
       this.inbox.push(payload);
       return;
     }

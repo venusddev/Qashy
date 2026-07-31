@@ -17,7 +17,7 @@
 import type { SyncOp } from '@/sync/oplog';
 
 /** Breaking format version for authenticated sync batches, independent of stored envelopes. */
-export const BATCH_FORMAT_VERSION = 2;
+export const BATCH_FORMAT_VERSION = 3;
 
 /**
  * The portable part of a peer row.

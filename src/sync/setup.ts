@@ -25,20 +25,33 @@ import { runGenesisMigration } from '@/data/sync-genesis';
 import {
   SYNC_META,
   appendActivity,
+  fromOpRow,
+  readChainState,
   readActivity,
   readHeldChains,
   readMeta,
+  storeOps,
+  writeChainState,
   writeMeta,
 } from '@/data/sync-store';
 import type { SyncActivityRow } from '@/data/sync-tables';
 import {
   createDeviceIdentity,
   createVaultRootKey,
+  OP_SCHEMA_VERSION,
   type DeviceIdentity,
   type VaultRootKey,
 } from '@/sync/crypto';
 import { activityEntry, hasUnsealed, quarantineCount, readRoster, writePeers, type Peer } from '@/sync/engine';
 import { KeystoreError, type KeystoreStatus, type SyncKeystore } from '@/sync/keystore';
+import { buildOp, sealOp, tick, type SyncOpBody } from '@/sync/oplog';
+import {
+  SYNC_CONTROL_ENTITY,
+  deriveRevocationState,
+  type RevocationMode,
+  type RevocationPolicy,
+  type RevocationProposal,
+} from '@/sync/revocation';
 import {
   readEndpoints,
   writeEndpoints,
@@ -46,7 +59,7 @@ import {
   type SyncEndpoints,
 } from '@/sync/transport/endpoints';
 import { readRelayHealth, type RelayHealth } from '@/sync/transport/relay-health';
-import { nowIso as defaultNowIso } from '@/utils/entity';
+import { makeId, nowIso as defaultNowIso } from '@/utils/entity';
 
 /**
  * The epoch a brand-new vault starts on.
@@ -90,6 +103,8 @@ export interface SyncStatus {
   readonly epoch: number;
   /** The vault's base currency, which every incoming batch is checked against. */
   readonly baseCurrency: string;
+  readonly revocation: RevocationPolicy;
+  readonly proposals: readonly RevocationProposal[];
   /** Peers only — this device is never in its own roster. Includes revoked ones. */
   readonly peers: readonly Peer[];
   readonly endpoints: SyncEndpoints;
@@ -110,6 +125,9 @@ const toInt = (value: string | undefined, fallback: number) => {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : fallback;
 };
+
+const parseRevocationMode = (value: string | undefined): RevocationMode =>
+  value === 'quorum' || value === 'owner' ? value : 'any';
 
 /** Ops moved, in either direction. What "last synced" honestly means. */
 const MOVED = new Set(['sent', 'received']);
@@ -145,6 +163,8 @@ async function clearForgottenVaultState(tx: StorageTx): Promise<void> {
     SYNC_META.hlcWall,
     SYNC_META.hlcCounter,
     SYNC_META.baseCurrency,
+    SYNC_META.ownerDeviceId,
+    SYNC_META.revocationMode,
     SYNC_META.genesisAt,
     SYNC_META.enabled,
     SYNC_META.relayCursor,
@@ -186,6 +206,8 @@ export async function readSyncStatus(deps: SyncSetupDeps): Promise<SyncStatus> {
       SYNC_META.headHash,
       SYNC_META.baseCurrency,
       SYNC_META.genesisAt,
+      SYNC_META.ownerDeviceId,
+      SYNC_META.revocationMode,
     ]);
 
     if (keystore === 'empty' && (await hasForgottenVaultState(tx, meta))) {
@@ -203,6 +225,14 @@ export async function readSyncStatus(deps: SyncSetupDeps): Promise<SyncStatus> {
 
     const hasVault = keystore !== 'empty' && (keystore !== 'unlocked' || vault !== null);
     const deviceId = keystore === 'empty' ? '' : vault?.identity.deviceId ?? meta.get(SYNC_META.deviceId) ?? '';
+    const initial: RevocationPolicy = {
+      ownerDeviceId: meta.get(SYNC_META.ownerDeviceId) ?? deviceId,
+      mode: parseRevocationMode(meta.get(SYNC_META.revocationMode)),
+    };
+    const controls = (await tx.table('syncOps').all()).map(fromOpRow);
+    const revocation = deviceId
+      ? deriveRevocationState(controls, roster, initial, deviceId)
+      : { ...initial, proposals: [], revocations: [] };
 
     return {
       enabled: hasVault && meta.get(SYNC_META.enabled) === '1',
@@ -211,6 +241,8 @@ export async function readSyncStatus(deps: SyncSetupDeps): Promise<SyncStatus> {
       deviceName: keystore === 'empty' ? UNPAIRED.deviceName : meta.get(SYNC_META.deviceName) ?? UNPAIRED.deviceName,
       epoch: keystore === 'empty' ? UNPAIRED.epoch : vault?.epoch ?? toInt(meta.get(SYNC_META.epoch), UNPAIRED.epoch),
       baseCurrency: keystore === 'empty' ? UNPAIRED.baseCurrency : meta.get(SYNC_META.baseCurrency) ?? UNPAIRED.baseCurrency,
+      revocation,
+      proposals: revocation.proposals.filter((proposal) => proposal.approvals.length < proposal.required),
       peers: [...roster.values()].sort((first, second) => first.addedAt.localeCompare(second.addedAt)),
       endpoints: await readEndpoints(tx),
       relay: await readRelayHealth(tx),
@@ -321,6 +353,8 @@ export async function enableSync(
       profile,
       epoch: INITIAL_EPOCH,
       baseCurrency: await readLocalBaseCurrency(tx),
+      ownerDeviceId: identity.deviceId,
+      revocationMode: 'any',
     });
     const genesis = await runGenesisMigration(tx, identity.deviceId, at);
     await appendActivity(tx, [activityEntry({ kind: 'paired', recordedAt: at, count: 0 })]);
@@ -348,6 +382,8 @@ export async function adoptVault(
     readonly vaultKey: VaultRootKey;
     readonly epoch: number;
     readonly baseCurrency: string;
+    readonly ownerDeviceId?: string;
+    readonly revocationMode?: RevocationMode;
     readonly peers: readonly Peer[];
     readonly profile: DeviceProfile;
   },
@@ -368,6 +404,8 @@ export async function adoptVault(
       // has nothing to re-base and adopts it outright; one that had, only got this far because
       // `PairingJoiner` already checked the two agree.
       baseCurrency: input.baseCurrency || (await readLocalBaseCurrency(tx)),
+      ownerDeviceId: input.ownerDeviceId,
+      revocationMode: input.revocationMode,
     });
     await writePeers(tx, input.peers);
     // This device's own rows become ops too. Skipping it here is the mistake that makes a
@@ -409,6 +447,8 @@ async function enrol(
     readonly profile: DeviceProfile;
     readonly epoch: number;
     readonly baseCurrency: string;
+    readonly ownerDeviceId?: string;
+    readonly revocationMode?: RevocationMode;
   },
 ): Promise<void> {
   await writeMeta(tx, {
@@ -417,6 +457,8 @@ async function enrol(
     [SYNC_META.epoch]: String(input.epoch),
     [SYNC_META.baseCurrency]: input.baseCurrency,
     [SYNC_META.enabled]: '1',
+    [SYNC_META.ownerDeviceId]: input.ownerDeviceId ?? input.deviceId,
+    [SYNC_META.revocationMode]: input.revocationMode ?? 'any',
   });
 }
 
@@ -455,19 +497,90 @@ export const renameDevice = (deps: SyncSetupDeps, name: string) =>
  * `rotateVaultKey` is what stops it reading the drop-box — it cannot take back the plaintext the
  * device already has, and the UI says so.
  */
-export async function revokePeer(deps: SyncSetupDeps, peerId: string): Promise<void> {
+const initialPolicy = (meta: ReadonlyMap<string, string>, deviceId: string): RevocationPolicy => ({
+  ownerDeviceId: meta.get(SYNC_META.ownerDeviceId) ?? deviceId,
+  mode: parseRevocationMode(meta.get(SYNC_META.revocationMode)),
+});
+
+const controlBody = (hlc: string, payload: Readonly<Record<string, unknown>>): SyncOpBody => ({
+  hlc: hlc as SyncOpBody['hlc'],
+  // This deliberately remains an unknown entity to the finance projection. The sync engine
+  // stores and forwards it like any other signed op, while membership code interprets it.
+  entityType: SYNC_CONTROL_ENTITY as SyncOpBody['entityType'],
+  entityId: 'revocation',
+  kind: 'set',
+  payload,
+  schema: OP_SCHEMA_VERSION,
+});
+
+async function appendMembershipControl(
+  deps: SyncSetupDeps,
+  makePayload: (
+    state: ReturnType<typeof deriveRevocationState>,
+    roster: ReadonlyMap<string, Peer>,
+    deviceId: string,
+    heads: ReadonlyMap<string, { readonly seq: number }>,
+    at: string,
+  ) => Readonly<Record<string, unknown>>,
+): Promise<void> {
+  const vault = await deps.keystore.read();
+  if (!vault) throw new KeystoreError('There is no vault on this device.', 'empty');
   const at = (deps.nowIso ?? defaultNowIso)();
   await deps.storage.transact(async (tx) => {
+    const meta = await readMeta(tx, [SYNC_META.deviceId, SYNC_META.ownerDeviceId, SYNC_META.revocationMode]);
+    const deviceId = meta.get(SYNC_META.deviceId) ?? vault.identity.deviceId;
+    if (deviceId !== vault.identity.deviceId) throw new Error('This device identity does not match its vault.');
     const roster = await readRoster(tx);
-    const peer = roster.get(peerId);
-    if (!peer || peer.revokedAt) return;
+    const existing = (await tx.table('syncOps').all()).map(fromOpRow);
+    const before = deriveRevocationState(existing, roster, initialPolicy(meta, deviceId), deviceId);
     const held = await readHeldChains(tx);
-    await writePeers(tx, [
-      { ...peer, revokedAt: at, revokedSeq: held.heads.get(peer.deviceId)?.seq ?? 0 },
-    ]);
-    await appendActivity(tx, [activityEntry({ kind: 'revoked', recordedAt: at, peerId })]);
+    const { clock, head } = await readChainState(tx);
+    const stamped = tick(clock, deviceId, Date.parse(at));
+    const payload = makePayload(before, roster, deviceId, held.heads, at);
+    const built = buildOp([controlBody(stamped.hlc, payload)], deviceId, head.seq, head.headHash);
+    const op = sealOp(built.ops[0], vault.identity.signing.secretKey);
+    const after = deriveRevocationState([...existing, op], roster, initialPolicy(meta, deviceId), deviceId);
+
+    await storeOps(tx, [op], 0);
+    await writeChainState(tx, { clock: stamped.clock, head: { seq: built.seq, headHash: built.headHash } });
+    const changed: Peer[] = [];
+    for (const decision of after.revocations) {
+      const peer = roster.get(decision.targetId);
+      if (peer && !peer.revokedAt) {
+        changed.push({ ...peer, revokedAt: decision.at, revokedSeq: decision.cutoff });
+      }
+    }
+    if (changed.length) {
+      await writePeers(tx, changed);
+      await appendActivity(tx, changed.map((peer) => activityEntry({ kind: 'revoked', recordedAt: peer.revokedAt!, peerId: peer.deviceId })));
+    }
   });
 }
+
+/** Starts or approves a signed removal under the vault's selected policy. */
+export async function revokePeer(deps: SyncSetupDeps, peerId: string): Promise<void> {
+  const exists = await deps.storage.transact(async (tx) => {
+    const peer = (await readRoster(tx)).get(peerId);
+    return Boolean(peer && !peer.revokedAt);
+  }, { silent: true });
+  if (!exists) return;
+  await appendMembershipControl(deps, (state, roster, deviceId, heads, at) => {
+    const cutoff = heads.get(peerId)?.seq ?? 0;
+    if (state.mode === 'quorum') {
+      const existing = state.proposals.find((proposal) => proposal.targetId === peerId && proposal.approvals.length < proposal.required);
+      if (existing) return { control: 'approve', proposalId: existing.id, targetId: peerId };
+      const voters = [deviceId, ...[...roster.values()].filter((peer) => !peer.revokedAt).map((peer) => peer.deviceId)].sort();
+      return { control: 'propose', proposalId: makeId(), targetId: peerId, voters, required: Math.ceil(voters.length / 2), cutoff, at };
+    }
+    return { control: 'revoke', targetId: peerId, cutoff, at };
+  });
+}
+
+export const setRevocationPolicy = (deps: SyncSetupDeps, mode: RevocationMode) =>
+  appendMembershipControl(deps, () => ({ control: 'policy', mode }));
+
+export const transferVaultOwnership = (deps: SyncSetupDeps, ownerDeviceId: string) =>
+  appendMembershipControl(deps, () => ({ control: 'owner', ownerDeviceId }));
 
 /** Validates and stores the transport configuration. Throws `EndpointError` on a bad address. */
 export const setEndpoints = (deps: SyncSetupDeps, patch: EndpointPatch) =>
@@ -506,6 +619,16 @@ export async function resumeSync(deps: SyncSetupDeps): Promise<void> {
     if (complete) {
       await writeMeta(tx, { [SYNC_META.enabled]: '1' });
       return;
+    }
+
+    // A keystore write and a database transaction cannot be one atomic primitive. Treat an
+    // epoch disagreement as an interrupted rotation, never as a forgotten vault: clearing the
+    // oplog here would destroy the only recoverable copy of the local sync history.
+    const storedEpoch = meta.get(SYNC_META.epoch);
+    if (meta.get(SYNC_META.deviceId) === vault.identity.deviceId && storedEpoch && storedEpoch !== String(vault.epoch)) {
+      throw new Error(
+        'Sync key rotation was interrupted before local state could be finalized. Your local history is preserved; restore the matching vault key before resuming sync.',
+      );
     }
 
     // A reset from an older build (or a partial database restore) may leave the key while

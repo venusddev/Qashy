@@ -31,6 +31,7 @@ import {
   type SigningPublicKey,
 } from '@/sync/crypto';
 import type { PeerAcks } from '@/sync/oplog';
+import { MAX_ROSTER_MEMBERS } from '@/sync/engine/batch';
 import { SyncEngineError, type RosterMember } from '@/sync/engine/types';
 
 /** A roster entry, with its keys usable rather than encoded. */
@@ -221,6 +222,7 @@ export function mergeAuthenticatedRoster(
   batchEpoch: number,
   sender: string,
   heldHeads: ReadonlyMap<string, { readonly seq: number }>,
+  localDeviceId: string,
 ): { readonly roster: Roster; readonly changed: readonly Peer[] } {
   const merged = new Map(roster);
   const changed: Peer[] = [];
@@ -231,9 +233,15 @@ export function mergeAuthenticatedRoster(
       badRoster('That batch names the same roster device more than once.', sender);
     }
     seen.add(member.deviceId);
+    if (member.deviceId === localDeviceId) {
+      badRoster('That batch attempted to alter this device’s own roster entry.', sender);
+    }
     const incoming = fromRosterMember(member, batchEpoch, sender);
     const current = merged.get(incoming.deviceId);
     if (!current) {
+      if (merged.size >= MAX_ROSTER_MEMBERS) {
+        badRoster(`That batch would exceed the ${MAX_ROSTER_MEMBERS}-device roster limit.`, sender);
+      }
       if (incoming.epoch < batchEpoch && !incoming.revokedAt) {
         badRoster('That batch introduces an active device from an old vault epoch.', sender);
       }
@@ -248,36 +256,40 @@ export function mergeAuthenticatedRoster(
     ) {
       badRoster('A known device arrived with different identity keys.', sender);
     }
+    // A batch signature authenticates its sender, not a decision made by every device it
+    // mentions. Ignore revocation fields here: only signed control ops can change them. This
+    // also lets the control op that explains a newer roster snapshot arrive in the same batch.
+    const membership = { ...incoming, revokedAt: current.revokedAt, revokedSeq: current.revokedSeq };
 
-    if (incoming.epoch < current.epoch) continue;
-    const newerEpoch = incoming.epoch > current.epoch;
-    if (newerEpoch && incoming.epoch !== batchEpoch) {
+    if (membership.epoch < current.epoch) continue;
+    const newerEpoch = membership.epoch > current.epoch;
+    if (newerEpoch && membership.epoch !== batchEpoch) {
       badRoster('A re-paired device does not match the current vault epoch.', sender);
     }
 
     const revokedAt = newerEpoch
-      ? incoming.revokedAt
-      : current.revokedAt && incoming.revokedAt
-        ? current.revokedAt < incoming.revokedAt
+      ? membership.revokedAt
+      : current.revokedAt && membership.revokedAt
+        ? current.revokedAt < membership.revokedAt
           ? current.revokedAt
-          : incoming.revokedAt
-        : current.revokedAt ?? incoming.revokedAt;
-    const heldSeq = heldHeads.get(incoming.deviceId)?.seq ?? 0;
+          : membership.revokedAt
+        : current.revokedAt ?? membership.revokedAt;
+    const heldSeq = heldHeads.get(membership.deviceId)?.seq ?? 0;
     const revokedSeq = newerEpoch
-      ? incoming.revokedAt
-        ? Math.max(incoming.revokedSeq ?? 0, heldSeq)
+      ? membership.revokedAt
+        ? Math.max(membership.revokedSeq ?? 0, heldSeq)
         : null
       : current.revokedAt
-        ? incoming.revokedAt
-          ? Math.max(current.revokedSeq ?? 0, incoming.revokedSeq ?? 0, heldSeq)
+        ? membership.revokedAt
+          ? Math.max(current.revokedSeq ?? 0, membership.revokedSeq ?? 0, heldSeq)
           : Math.max(current.revokedSeq ?? 0, heldSeq)
-        : incoming.revokedAt
-          ? Math.max(incoming.revokedSeq ?? 0, heldSeq)
+        : membership.revokedAt
+          ? Math.max(membership.revokedSeq ?? 0, heldSeq)
           : null;
     const next: Peer = {
       ...current,
-      epoch: incoming.epoch,
-      addedAt: current.addedAt < incoming.addedAt ? current.addedAt : incoming.addedAt,
+      epoch: membership.epoch,
+      addedAt: current.addedAt < membership.addedAt ? current.addedAt : membership.addedAt,
       revokedAt,
       revokedSeq,
       acked: newerEpoch ? {} : current.acked,

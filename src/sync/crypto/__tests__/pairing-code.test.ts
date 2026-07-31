@@ -89,6 +89,10 @@ describe('a pairing code that should be refused', () => {
     expect(() => decodePairingCode(encoded, NOW)).toThrow(/Update whichever is older/);
   });
 
+  it('rejects oversized input before decoding any encoded key material', () => {
+    expect(() => decodePairingCode(`qashy-pair:${'A'.repeat(4_096)}`, NOW)).toThrow(/too large/);
+  });
+
   it('is not a pairing code at all', () => {
     for (const value of ['', 'hello', 'qashy-pair', 'https://example.com', 'qashy-pair:1:a:b:c']) {
       expect(() => decodePairingCode(value, NOW)).toThrow(SyncCryptoError);

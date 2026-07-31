@@ -20,6 +20,8 @@ import { SyncCryptoError, brand, type PairingSecret } from '@/sync/crypto/types'
 
 const SCHEME = 'qashy-pair';
 const SEPARATOR = ':';
+/** Reject before base32/base64 decoding so pasted input cannot allocate without bound. */
+export const MAX_PAIRING_CODE_LENGTH = 4_096;
 
 export interface PairingCode {
   readonly version: number;
@@ -54,7 +56,11 @@ export const encodePairingCode = (code: PairingCode) =>
  * that fails any check is rejected whole — there is no partially-usable pairing code.
  */
 export const decodePairingCode = (value: string, nowSeconds: number): PairingCode => {
-  const parts = value.trim().split(SEPARATOR);
+  const trimmed = value.trim();
+  if (trimmed.length > MAX_PAIRING_CODE_LENGTH) {
+    throw new SyncCryptoError('That pairing code is too large.', 'badLength');
+  }
+  const parts = trimmed.split(SEPARATOR);
   if (parts.length !== 8 || parts[0] !== SCHEME) {
     throw new SyncCryptoError('That is not a Qashy pairing code.', 'badFormat');
   }
@@ -70,6 +76,10 @@ export const decodePairingCode = (value: string, nowSeconds: number): PairingCod
   }
 
   const deviceId = parts[2];
+  // These fields are fixed-size protocol values. Check their encoded length before decoding.
+  if (parts[2].length > 128 || parts[3].length > 64 || parts[4].length > 64 || parts[5].length > 64) {
+    throw new SyncCryptoError('That pairing code is damaged.', 'badLength');
+  }
   const signingPublicKey = fromBase32(parts[3]);
   const ephemeralPublicKey = fromBase32(parts[4]);
   const pairingSecret = fromBase32(parts[5]);
