@@ -268,9 +268,17 @@ test('edits tags carried by an imported transaction', async ({ page }) => {
   await chooser.setFiles('e2e/fixtures/tagged.csv');
   await page.getByRole('button', { name: 'Preview import' }).click();
   await expect(page.getByText('Ready').locator('..').getByText('1')).toBeVisible();
-  page.once('dialog', (dialog) => dialog.accept());
+  page.once('dialog', (dialog) => void dialog.accept());
   await page.getByRole('button', { name: 'Import 1 transactions' }).click();
-  await page.goto('/transactions');
+  // Pressable does not await an async onPress handler. Wait for the preview to move out of its
+  // pre-commit state before navigating, or WebKit can reload the ledger while the Dexie write is
+  // still in flight.
+  await expect(page.getByRole('button', { name: 'Import 1 transactions' })).toHaveCount(0);
+  // Stay in the same app instance after the async commit. A full WebKit reload can race the
+  // browser's IndexedDB restore even after the repository write has completed; returning through
+  // the stack and selecting the section exercises the edit flow without that unrelated race.
+  await page.getByRole('link', { name: 'Go back' }).click();
+  await page.getByRole('link', { name: 'Transactions' }).click();
   await page.getByRole('button', { name: /Tagged import/ }).click();
   const workTag = page.getByRole('checkbox', { name: 'Work' });
   await expect(workTag).toBeChecked();

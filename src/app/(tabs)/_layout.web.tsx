@@ -280,8 +280,8 @@ function NavigationBar({
   const shown = useSharedValue(0);
 
   useEffect(() => {
-    // Both bars are always mounted and one is `display: none`, so the hidden
-    // one measures zero. There is nothing to position until it is on screen.
+    // The inactive bar is unmounted at the breakpoint, so its metrics never enter this state.
+    // There is nothing to position until the active bar has measured itself.
     if (!activeMetrics || activeMetrics.width === 0 || activeMetrics.height === 0) return;
     // A first measurement has nowhere to slide from, so it is placed rather
     // than moved — otherwise the indicator flies in from the corner on load.
@@ -401,7 +401,7 @@ export default function WebTabsLayout() {
           </View>
           {!compact ? <AppText variant="headline">Qashy</AppText> : null}
         </View>
-        <NavigationBar mobile={false} compact={compact} narrow={narrow} pathname={pathname} />
+        {!mobile ? <NavigationBar mobile={false} compact={compact} narrow={narrow} pathname={pathname} /> : null}
         {!compact ? (
           <View style={{ marginTop: 'auto', gap: space.xs }}>
             <AppText variant="eyebrow" muted>LOCAL-FIRST FINANCE</AppText>
@@ -438,7 +438,7 @@ export default function WebTabsLayout() {
           // light mode gets one; on a dark page the top border does the work.
           boxShadow: theme.mode === 'light' ? '0 -2px 12px rgba(25, 27, 32, 0.06)' : undefined,
         }}>
-        <NavigationBar mobile compact={false} narrow={narrow} pathname={pathname} />
+        {mobile ? <NavigationBar mobile compact={false} narrow={narrow} pathname={pathname} /> : null}
       </View>
     </View>
   );

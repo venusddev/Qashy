@@ -563,17 +563,44 @@ describe('turning it off', () => {
     expect(await opCount(target.storage)).toBe(3);
   });
 
-  it('treats stale metadata as unpaired when the device-only key is gone', async () => {
-    const target = await rig();
+  it('clears stale sync state before a restored database can create a new identity', async () => {
+    const target = await rig({ records: populated() });
     await enableSync(target.deps, PROFILE);
+    await target.addPeers(peerNamed('Laptop'));
     target.cell.bytes = null;
 
-    await expect(readSyncStatus({ ...target.deps, keystore: new MemoryKeystore(target.cell) })).resolves.toMatchObject({
+    const restored = { ...target.deps, keystore: new MemoryKeystore(target.cell) };
+    await expect(readSyncStatus(restored)).resolves.toMatchObject({
       enabled: false,
       keystore: 'empty',
       deviceId: '',
       epoch: 0,
+      peers: [],
     });
+    expect(await opCount(target.storage)).toBe(0);
+    expect((await target.meta(SYNC_META.deviceId)).get(SYNC_META.deviceId)).toBeUndefined();
+
+    // Setup now describes the finance records under the new identity instead of skipping over
+    // the old genesis marker and silently leaving subsequent edits uncaptured.
+    await expect(enableSync(restored, PROFILE)).resolves.toMatchObject({ opCount: 3 });
+    expect(await opCount(target.storage)).toBe(3);
+  });
+
+  it('rebuilds a key-backed vault before resuming incomplete metadata', async () => {
+    const target = await rig({ records: populated() });
+    await enableSync(target.deps, PROFILE);
+    await target.storage.clear();
+
+    await resumeSync(target.deps);
+
+    const status = await readSyncStatus(target.deps);
+    expect(status).toMatchObject({
+      enabled: true,
+      deviceId: (await target.keystore.read())?.identity.deviceId,
+      epoch: INITIAL_EPOCH,
+    });
+    expect(await opCount(target.storage)).toBe(0);
+    expect((await target.meta(SYNC_META.genesisAt)).get(SYNC_META.genesisAt)).toBeTruthy();
   });
 
   it('clears the cached relay verdict, which described a bucket it can no longer address', async () => {

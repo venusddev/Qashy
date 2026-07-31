@@ -43,9 +43,11 @@ import { buildOp, diffRecords, metaKey, tick, type DiffInput } from '@/sync/oplo
 
 /** Surfaced after commit rather than thrown: the write itself is legitimate and complete. */
 export type DiffWarningListener = (warnings: readonly string[]) => void;
+export type ResetHandler = () => Promise<void>;
 
 export class SyncingStorageAdapter implements StorageAdapter {
   private readonly warningListeners = new Set<DiffWarningListener>();
+  private resetHandler: ResetHandler | null = null;
 
   /**
    * `deviceId` is `null` until this device joins a vault, and the parameter is deliberately
@@ -72,6 +74,20 @@ export class SyncingStorageAdapter implements StorageAdapter {
    */
   setDeviceId(deviceId: string | null) {
     this.deviceId = deviceId;
+  }
+
+  /**
+   * Installs the device-key half of a full local reset.
+   *
+   * The finance repository owns the storage wipe, while the sync provider owns the keystore.
+   * Keeping this seam on the already-shared adapter makes the two boundaries one operation in
+   * the app without putting keystore imports into the finance layer.
+   */
+  setResetHandler(handler: ResetHandler | null) {
+    this.resetHandler = handler;
+    return () => {
+      if (this.resetHandler === handler) this.resetHandler = null;
+    };
   }
 
   initialize() {
@@ -158,8 +174,13 @@ export class SyncingStorageAdapter implements StorageAdapter {
    * peer's data with one message. Reset unpairs this device instead, which the confirm
    * dialog states plainly.
    */
-  clear(source?: object) {
-    return this.inner.clear(source);
+  async clear(source?: object) {
+    // Erase first. If the storage wipe fails, the finance data remains and the key is already
+    // gone; the next status read will discard any leftover sync metadata rather than leave a
+    // usable key beside a half-reset database.
+    if (this.resetHandler) await this.resetHandler();
+    this.deviceId = null;
+    await this.inner.clear(source);
   }
 
   subscribe(listener: (source?: object) => void) {

@@ -85,7 +85,9 @@ Cloudflare docs.
 | --- | --- | --- |
 | Retention window for undelivered blobs | `RETENTION_DAYS` in `wrangler.toml` | 14 days |
 | Request logging | `[observability]` in `wrangler.toml` | **off** |
-| Aggregate bucket requests | `REQUEST_RATE_LIMITER` in `wrangler.toml` | 120/minute per Cloudflare location |
+| Authenticated bucket requests | `REQUEST_RATE_LIMITER` in `wrangler.toml` | 120/minute per Cloudflare location |
+| New bucket allocations | `ALLOCATION_RATE_LIMITER` in `wrangler.toml` | 120/minute per source |
+| New rendezvous rooms | `RENDEZVOUS_RATE_LIMITER` in `wrangler.toml` | 120/minute in aggregate |
 
 Shortening retention is safe. A device that was away longer simply receives the ops again from
 the sender's outbox, which never got an acknowledgement for them — nothing is lost by expiring
@@ -103,7 +105,9 @@ to prevent. If you turn it on to debug a deploy, turn it back off.
 | Request body | 2 MiB, counted while streaming | `413` before a Durable Object is created |
 | Blobs per bucket | 5 000 | `429` → the app shows a relay error and names the device that has been away |
 | Page size | 500 (default 100) | silently clamped |
-| Requests across bucket ids | 120/minute per Cloudflare location | `429` |
+| Authenticated requests across bucket ids | 120/minute per Cloudflare location | `429` |
+| New bucket allocations per source | 120/minute | `429` before object naming |
+| New rendezvous rooms | 120/minute in aggregate | `429` before object naming |
 | Requests per bucket | ~600/minute additional coarse brake | `429` |
 | Signaling message | 64 KiB | socket closed with `1009` |
 | Parties per rendezvous | 2 | `409` |
@@ -114,12 +118,13 @@ relay cause a silent divergence.
 
 ### Rate limiting
 
-The Worker rate-limit binding is checked before a Durable Object is named or created. It uses
-one constant key, so an attacker cannot obtain a new quota by changing bucket ids or tokens,
-and the application stores no IP address. Cloudflare applies this limit per location and
-documents the result as eventually consistent, so the per-bucket in-memory counter remains as
-an additional coarse brake. A public, high-traffic deployment can also add a Cloudflare WAF
-rule, but that is optional hardening rather than the only protection.
+The authenticated bucket rate-limit binding is checked after the Durable Object verifies the
+capability, so random bearer strings cannot consume the shared vault quota. A separate
+source-keyed allocation limit protects object naming, while the rendezvous binding caps fresh
+rooms in aggregate. These bindings do not store IP addresses or bucket ids in application
+storage. Cloudflare applies the limits eventually consistently; the per-bucket in-memory
+counter remains an additional coarse brake. A public, high-traffic deployment can also add a
+Cloudflare WAF rule, but that is optional hardening rather than the only protection.
 
 ## Authorization
 

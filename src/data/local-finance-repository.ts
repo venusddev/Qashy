@@ -1803,6 +1803,19 @@ export class LocalFinanceRepository implements FinanceRepository {
         existing.destinationBaseAmountMinor !== null;
       if (input.destinationBaseAmountMinor !== undefined && input.destinationBaseAmountMinor !== null) {
         this.assertPositiveMinor(input.destinationBaseAmountMinor, 'Destination base amount');
+        const expectedDestinationBaseAmountMinor = this.expectedDestinationBaseAmount(
+          destinationAmountMinor,
+          destination!.currency,
+          account.currency,
+          baseAmountMinor,
+          input.localDate,
+        );
+        if (expectedDestinationBaseAmountMinor === null) {
+          throw new Error('Destination base amount cannot be verified without an effective exchange rate.');
+        }
+        if (input.destinationBaseAmountMinor !== expectedDestinationBaseAmountMinor) {
+          throw new Error('Destination base amount does not match the destination amount and exchange rate.');
+        }
         destinationBaseAmountMinor = input.destinationBaseAmountMinor;
       } else if (preservesDestinationSnapshot) {
         // Historical destination-leg value is a transaction snapshot. A title,
@@ -2592,6 +2605,36 @@ export class LocalFinanceRepository implements FinanceRepository {
     throw new Error(
       `Destination amount is far from the known ${fromCurrency} → ${toCurrency} rate for ${localDate}. Check the amount, or update the rate first.`,
     );
+  }
+
+  /**
+   * Reconstructs the base snapshot that a CSV row is allowed to claim.
+   *
+   * A destination-base snapshot is historical data, but a CSV is editable and the value affects
+   * linked goal progress. The source-side snapshot is enough when both legs use the same
+   * currency; otherwise the destination leg must be priced by the current effective rate. A
+   * missing rate is deliberately unverifiable rather than a reason to trust the supplied number.
+   */
+  private expectedDestinationBaseAmount(
+    destinationAmountMinor: number,
+    destinationCurrency: string,
+    sourceCurrency: string,
+    sourceBaseAmountMinor: number,
+    localDate: string,
+  ): number | null {
+    if (destinationCurrency === this.state.settings.baseCurrency) return destinationAmountMinor;
+    if (destinationCurrency === sourceCurrency) return sourceBaseAmountMinor;
+    try {
+      return convertMinor(
+        destinationAmountMinor,
+        destinationCurrency,
+        this.state.settings.baseCurrency,
+        this.resolveRate(destinationCurrency, this.state.settings.baseCurrency, localDate),
+        this.state.settings.locale,
+      );
+    } catch {
+      return null;
+    }
   }
 
   // Inclusive whole-day count. Compared through UTC midnights so a daylight

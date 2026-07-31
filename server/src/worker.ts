@@ -43,8 +43,12 @@ interface RateLimitBinding {
 export interface Env {
   readonly BUCKET: DurableObjectNamespace;
   readonly RENDEZVOUS: DurableObjectNamespace;
-  /** Edge-wide brake that cannot be bypassed by choosing fresh bucket ids. */
+  /** Edge-wide quota for requests that have already passed bucket capability authentication. */
   readonly REQUEST_RATE_LIMITER: RateLimitBinding;
+  /** Per-source brake used before an untrusted id can name a new bucket object. */
+  readonly ALLOCATION_RATE_LIMITER: RateLimitBinding;
+  /** Aggregate brake that bounds fresh rendezvous rooms before they name a Durable Object. */
+  readonly RENDEZVOUS_RATE_LIMITER: RateLimitBinding;
   /** Days an undelivered blob is kept. Defaults to 14; see `wrangler.toml`. */
   readonly RETENTION_DAYS?: string;
 }
@@ -166,8 +170,11 @@ export default {
 
     const rendezvous = /^\/rendezvous\/([^/]+)$/.exec(path);
     if (rendezvous) {
-      const id = decodeURIComponent(rendezvous[1]);
+      const id = decodePathSegment(rendezvous[1]);
+      if (id === null) return fail(400, 'id');
       if (!ID_PATTERN.test(id)) return fail(400, 'id');
+      const allowed = await env.RENDEZVOUS_RATE_LIMITER.limit({ key: 'all-rendezvous-requests' });
+      if (!allowed.success) return fail(429, 'rate', { 'retry-after': '60' });
       // Named by the id itself, so two devices computing the same HKDF output land in the same
       // object without either of them ever telling the server who they are.
       const stub = env.RENDEZVOUS.get(env.RENDEZVOUS.idFromName(id));
@@ -176,13 +183,15 @@ export default {
 
     const bucket = /^\/bucket\/([^/]+)$/.exec(path);
     if (bucket) {
-      const id = decodeURIComponent(bucket[1]);
+      const id = decodePathSegment(bucket[1]);
+      if (id === null) return fail(400, 'id');
       if (!ID_PATTERN.test(id)) return fail(400, 'id');
-      // Reject malformed capabilities and abusive traffic before naming or creating a Durable
-      // Object. Otherwise arbitrary bucket ids turn object creation itself into the attack.
+      // An untrusted id can still name a new Durable Object, so keep a per-source allocation
+      // brake. This is intentionally separate from the authenticated shared quota below: a
+      // caller with a made-up bearer token must not spend the quota legitimate vaults share.
+      const allocated = await env.ALLOCATION_RATE_LIMITER.limit({ key: allocationKey(request) });
+      if (!allocated.success) return fail(429, 'rate', { 'retry-after': '60' });
       if (!bearer(request)) return fail(401, 'token');
-      const allowed = await env.REQUEST_RATE_LIMITER.limit({ key: 'all-bucket-requests' });
-      if (!allowed.success) return fail(429, 'rate', { 'retry-after': '60' });
 
       let forwarded = request;
       if (request.method === 'PUT') {
@@ -271,6 +280,12 @@ export class BucketRoom {
 
     const authorized = await this.authorize(token);
     if (!authorized) return fail(401, 'token');
+
+    // Capability verification must happen before the shared edge quota. Otherwise a caller can
+    // submit syntactically valid random bearer strings and make legitimate vaults at the same
+    // Cloudflare location receive 429 responses without ever knowing a real token.
+    const allowed = await this.env.REQUEST_RATE_LIMITER.limit({ key: 'all-bucket-requests' });
+    if (!allowed.success) return fail(429, 'rate', { 'retry-after': '60' });
 
     switch (request.method) {
       case 'PUT':
@@ -533,6 +548,19 @@ function bearer(request: Request): string | null {
   const token = match[1].trim();
   // Bounded before it is hashed, so a 10 MB header is refused rather than digested.
   return token.length > 0 && token.length <= 512 ? token : null;
+}
+
+function decodePathSegment(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
+
+function allocationKey(request: Request): string {
+  const source = request.headers.get('CF-Connecting-IP')?.trim();
+  return source && source.length <= 128 ? `allocation:${source}` : 'allocation:unknown';
 }
 
 function integer(raw: string | null, fallback: number): number {

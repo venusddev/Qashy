@@ -29,12 +29,19 @@ const oversizedPut = () => {
   } as unknown as Request;
 };
 
-const environment = (rateAllowed = true) => {
+const environment = (allocationAllowed = true, rendezvousAllowed = true) => {
   let named = 0;
+  const rendezvousGet = jest.fn();
   return {
     env: {
       REQUEST_RATE_LIMITER: {
-        limit: () => Promise.resolve({ success: rateAllowed }),
+        limit: () => Promise.resolve({ success: true }),
+      },
+      ALLOCATION_RATE_LIMITER: {
+        limit: () => Promise.resolve({ success: allocationAllowed }),
+      },
+      RENDEZVOUS_RATE_LIMITER: {
+        limit: () => Promise.resolve({ success: rendezvousAllowed }),
       },
       BUCKET: {
         idFromName: () => {
@@ -43,9 +50,13 @@ const environment = (rateAllowed = true) => {
         },
         get: () => ({ fetch: () => Promise.resolve(new Response('{}')) }),
       },
-      RENDEZVOUS: {},
+      RENDEZVOUS: {
+        idFromName: () => ({}),
+        get: rendezvousGet,
+      },
     },
     named: () => named,
+    rendezvousGet,
   };
 };
 
@@ -59,12 +70,36 @@ describe('relay outer request gate', () => {
     expect(target.named()).toBe(0);
   });
 
-  it('applies the shared quota before naming a Durable Object', async () => {
+  it('applies the allocation quota before naming a Durable Object', async () => {
     const target = environment(false);
 
     const response = await worker.fetch(oversizedPut(), target.env);
 
     expect(response.status).toBe(429);
     expect(target.named()).toBe(0);
+  });
+
+  it('returns a controlled 4xx for malformed encoded ids', async () => {
+    const target = environment();
+
+    const response = await worker.fetch(
+      new Request('https://relay.example.test/rendezvous/%'),
+      target.env,
+    );
+
+    expect(response.status).toBe(400);
+    expect(target.rendezvousGet).not.toHaveBeenCalled();
+  });
+
+  it('bounds fresh rendezvous allocation before naming a Durable Object', async () => {
+    const target = environment(true, false);
+
+    const response = await worker.fetch(
+      new Request('https://relay.example.test/rendezvous/bbbbbbbbbbbbbbbb'),
+      target.env,
+    );
+
+    expect(response.status).toBe(429);
+    expect(target.rendezvousGet).not.toHaveBeenCalled();
   });
 });

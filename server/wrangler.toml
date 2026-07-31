@@ -30,12 +30,22 @@ RETENTION_DAYS = "14"
 [observability]
 enabled = false
 
-# One shared edge limit for bucket traffic. The constant key is deliberate: choosing fresh
-# opaque ids or bearer tokens must not create a fresh quota. This binding does not record IP
-# addresses or bucket ids in application storage.
+# Shared edge limits. The authenticated bucket quota uses a constant key so a vault cannot evade
+# it by choosing a fresh opaque id. The allocation quota is keyed by Cloudflare's source address
+# only before a Durable Object can be named, and the rendezvous quota is an aggregate room cap.
 [[ratelimits]]
 name = "REQUEST_RATE_LIMITER"
 namespace_id = "1001"
+simple = { limit = 120, period = 60 }
+
+[[ratelimits]]
+name = "ALLOCATION_RATE_LIMITER"
+namespace_id = "1002"
+simple = { limit = 120, period = 60 }
+
+[[ratelimits]]
+name = "RENDEZVOUS_RATE_LIMITER"
+namespace_id = "1003"
 simple = { limit = 120, period = 60 }
 
 [[durable_objects.bindings]]

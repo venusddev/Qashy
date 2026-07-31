@@ -1090,6 +1090,53 @@ describe('FinanceRepository contract', () => {
     }, edited.id)).resolves.toMatchObject({ destinationBaseAmountMinor: 20000 });
   });
 
+  it('rejects a forged destination base snapshot during CSV import', async () => {
+    const { repository } = await createRepository();
+    const eur = await repository.saveAccount({ name: 'Euro', type: 'checking', currency: 'EUR', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
+    const savings = await repository.saveAccount({ name: 'Savings', type: 'savings', currency: 'USD', openingBalanceMinor: 0, icon: 'wallet', color: '#5966E9', archived: false });
+    await repository.saveExchangeRate({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '2', effectiveDate: '2026-01-01' });
+
+    const result = await repository.importCsv([{
+      rowNumber: 2,
+      date: '2026-07-15',
+      type: 'transfer',
+      status: 'posted',
+      title: 'Forged snapshot',
+      amount: '10.00',
+      currency: 'EUR',
+      account: eur.name,
+      category: '',
+      tags: '',
+      note: '',
+      exchangeRate: '2',
+      destinationAccount: savings.name,
+      destinationAmount: '20.00',
+      destinationBaseAmountMinor: '900000000',
+    }], false);
+
+    expect(result.validRows).toEqual([]);
+    expect(result.rejectedRows[0]?.reason).toContain('Destination base amount');
+
+    const valid = await repository.importCsv([{
+      rowNumber: 3,
+      date: '2026-07-15',
+      type: 'transfer',
+      status: 'posted',
+      title: 'Verified snapshot',
+      amount: '10.00',
+      currency: 'EUR',
+      account: eur.name,
+      category: '',
+      tags: '',
+      note: '',
+      exchangeRate: '2',
+      destinationAccount: savings.name,
+      destinationAmount: '20.00',
+      destinationBaseAmountMinor: '2000',
+    }], false);
+    expect(valid.validRows).toHaveLength(1);
+  });
+
   it('preserves existing tags when an edit payload omits tagIds', async () => {
     const { repository } = await createRepository();
     const account = repository.getSnapshot().accounts[0];

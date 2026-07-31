@@ -162,28 +162,41 @@ async function clearForgottenVaultState(tx: StorageTx): Promise<void> {
 /**
  * The whole picture, with no network access.
  *
- * Safe to call on every foreground and after every mutation: it is one read-only transaction,
- * and a read-only transaction notifies nobody, so this cannot loop with the subscription that
- * triggers it.
+ * Safe to call on every foreground and after every mutation. A database restore can leave the
+ * finance records beside sync metadata whose device-only key was not restored; that state is
+ * discarded here before it can be paired with a newly generated identity.
  */
 export async function readSyncStatus(deps: SyncSetupDeps): Promise<SyncStatus> {
   // Outside the transaction on purpose. The keystore is the Keychain or a WebCrypto unwrap,
   // and awaiting either inside `work` would leave Dexie's promise zone mid-transaction.
   const keystore = await readKeystoreStatus(deps.keystore);
-  // An unlocked key is the authority for this device's membership. This also repairs the
-  // read-only view after a database reset that removed sync_meta but left the device-only key
-  // intact; the next explicit sync action can then re-arm metadata instead of offering a
-  // second vault.
+  // An unlocked key is the authority for this device's membership. An empty keystore paired
+  // with leftover vault rows is the inverse failure: the database was restored without the
+  // device-only key, so those rows are discarded in the transaction below before setup can
+  // create a new identity over them.
   const vault = keystore === 'unlocked' ? await deps.keystore.read() : null;
 
   const status = await deps.storage.transact(async (tx) => {
-    const meta = await readMeta(tx, [
+    let meta = await readMeta(tx, [
       SYNC_META.enabled,
       SYNC_META.deviceId,
       SYNC_META.deviceName,
       SYNC_META.epoch,
+      SYNC_META.seq,
+      SYNC_META.headHash,
       SYNC_META.baseCurrency,
+      SYNC_META.genesisAt,
     ]);
+
+    if (keystore === 'empty' && (await hasForgottenVaultState(tx, meta))) {
+      // The key is the authority for membership. Without it, this metadata and its chain can
+      // never be resumed, and allowing setup to continue over it would pair a new identity with
+      // old signed history. Keep finance records and transport configuration, but start a fresh
+      // vault boundary before the next explicit setup action.
+      await clearForgottenVaultState(tx);
+      meta = new Map();
+    }
+
     const roster = await readRoster(tx);
     const activity = await readActivity(tx, ACTIVITY_VIEW_LIMIT);
     const moved = activity.find((row) => MOVED.has(row.kind) && row.count > 0);
@@ -214,6 +227,27 @@ export async function readSyncStatus(deps: SyncSetupDeps): Promise<SyncStatus> {
     ...status,
     pending: status.deviceId ? await hasUnsealed(deps.storage, status.deviceId) : false,
   };
+}
+
+async function hasForgottenVaultState(
+  tx: StorageTx,
+  meta: ReadonlyMap<string, string>,
+): Promise<boolean> {
+  if (
+    meta.has(SYNC_META.deviceId)
+    || meta.has(SYNC_META.deviceName)
+    || meta.has(SYNC_META.epoch)
+    || meta.has(SYNC_META.seq)
+    || meta.has(SYNC_META.headHash)
+    || meta.has(SYNC_META.baseCurrency)
+    || meta.has(SYNC_META.genesisAt)
+    || meta.has(SYNC_META.enabled)
+  ) return true;
+
+  for (const name of FORGOTTEN_VAULT_TABLES) {
+    if ((await tx.table(name).all()).length) return true;
+  }
+  return false;
 }
 
 /**
@@ -452,10 +486,43 @@ export const setEndpoints = (deps: SyncSetupDeps, patch: EndpointPatch) =>
  * there is no state where both would work and no state where neither does.
  */
 export async function resumeSync(deps: SyncSetupDeps): Promise<void> {
-  if (!(await deps.keystore.read())) {
+  const vault = await deps.keystore.read();
+  if (!vault) {
     throw new KeystoreError('There is no vault on this device to resume.', 'empty');
   }
-  await deps.storage.transact((tx) => writeMeta(tx, { [SYNC_META.enabled]: '1' }));
+
+  const at = (deps.nowIso ?? defaultNowIso)();
+  await deps.storage.transact(async (tx) => {
+    const meta = await readMeta(tx, [
+      SYNC_META.deviceId,
+      SYNC_META.deviceName,
+      SYNC_META.epoch,
+      SYNC_META.baseCurrency,
+      SYNC_META.genesisAt,
+    ]);
+    const complete = meta.get(SYNC_META.deviceId) === vault.identity.deviceId
+      && meta.get(SYNC_META.epoch) === String(vault.epoch)
+      && meta.has(SYNC_META.genesisAt);
+    if (complete) {
+      await writeMeta(tx, { [SYNC_META.enabled]: '1' });
+      return;
+    }
+
+    // A reset from an older build (or a partial database restore) may leave the key while
+    // removing the local roster, chain, and genesis marker. Never merely flip enabled in that
+    // state: the next local edit would extend a different history under an old identity.
+    const baseCurrency = meta.get(SYNC_META.baseCurrency) ?? await readLocalBaseCurrency(tx);
+    const deviceName = meta.get(SYNC_META.deviceName) ?? '';
+    await clearForgottenVaultState(tx);
+    await enrol(tx, {
+      deviceId: vault.identity.deviceId,
+      profile: { name: deviceName, platform: 'unknown' },
+      epoch: vault.epoch,
+      baseCurrency,
+    });
+    const genesis = await runGenesisMigration(tx, vault.identity.deviceId, at);
+    await appendActivity(tx, [activityEntry({ kind: 'paired', recordedAt: at, count: genesis.opCount })]);
+  });
 }
 
 /**

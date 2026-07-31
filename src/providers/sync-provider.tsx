@@ -176,6 +176,11 @@ export function SyncProvider({ children, keystore, runtime }: SyncProviderProps)
   // First read, and teardown. `close()` on unmount matters on web, where a hot reload would
   // otherwise leave the previous runtime's data channel and socket open alongside the new one.
   useEffect(() => {
+    const unregisterReset = syncingStorage.setResetHandler(() => deps.keystore.erase());
+    return unregisterReset;
+  }, [deps]);
+
+  useEffect(() => {
     void refresh();
     return () => {
       syncingStorage.setDeviceId(null);
