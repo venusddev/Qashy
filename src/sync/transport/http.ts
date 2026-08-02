@@ -48,7 +48,7 @@ export class RelayError extends Error {
  * entirely unrelated reasons. Conflating them would mean every op-format change forced a
  * server redeploy.
  */
-export const RELAY_API_VERSION = 1;
+export const RELAY_API_VERSION = 2;
 
 /** How long any single request is allowed to take before it counts as unreachable. */
 export const REQUEST_TIMEOUT_MS = 15_000;

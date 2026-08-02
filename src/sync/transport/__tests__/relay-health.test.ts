@@ -70,7 +70,7 @@ describe('checkRelayHealth', () => {
     const adapter = await vault();
     const { deps: healthDeps, http } = deps(adapter, {
       kind: 'json',
-      body: { ok: true, version: 1 },
+      body: { ok: true, version: 2 },
     });
 
     const health = await checkRelayHealth(healthDeps);
@@ -153,7 +153,7 @@ describe('checkRelayHealth', () => {
     expect(health.status).toBe('degraded');
     // The difference between a five-minute fix and an afternoon is knowing which side is old.
     expect(health.detail).toContain('v99');
-    expect(health.detail).toContain('v1');
+    expect(health.detail).toContain('v2');
   });
 
   it('never throws, whatever the relay does', async () => {
@@ -175,7 +175,7 @@ describe('checkRelayHealth', () => {
       }
     });
 
-    const { deps: healthDeps } = deps(adapter, { kind: 'json', body: { ok: true, version: 1 } });
+    const { deps: healthDeps } = deps(adapter, { kind: 'json', body: { ok: true, version: 2 } });
     const health = await checkRelayHealth(healthDeps);
 
     expect(health.status).toBe('degraded');

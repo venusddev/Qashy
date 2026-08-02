@@ -25,9 +25,9 @@ import {
   strangerKeys,
   type TestDevice,
 } from '@/sync/engine/__tests__/helpers';
-import { SYNC_META, readMeta } from '@/data/sync-store';
+import { SYNC_META, readMeta, readStates } from '@/data/sync-store';
 import { toPeerRow, toRosterMember } from '@/sync/engine/roster';
-import { MAX_CLOCK_SKEW_MS, hashOp, sealOp } from '@/sync/oplog';
+import { MAX_CLOCK_SKEW_MS, emptyMeta, hashOp, sealOp } from '@/sync/oplog';
 import { receiveBatch } from '@/sync/engine/receive';
 import { SyncEngineError } from '@/sync/engine/types';
 import { SYNC_CONTROL_ENTITY } from '@/sync/revocation';
@@ -43,6 +43,17 @@ const rejections = async (device: TestDevice) =>
   (await activityRows(device)).filter((row) => row.kind === 'rejected');
 
 describe('receiveBatch — trust', () => {
+  it('rejects a roster member that has neither a pairing control nor an authored op', async () => {
+    const [alice, bob, stranger] = await makeVault(3);
+    await bob.storage.transact((tx) => tx.table('syncPeers').delete([stranger.deviceId]));
+
+    await expectRejected(
+      bob,
+      alice.batch([], { roster: [toRosterMember(stranger.asPeer())] }),
+    );
+    expect(await peerRow(bob, stranger.deviceId)).toBeUndefined();
+  });
+
   it('accepts a signed batch from a rostered peer', async () => {
     const [alice, bob] = await makeVault();
     const ops = alice.author([alice.body('accounts', 'account-1')]);
@@ -181,6 +192,29 @@ describe('receiveBatch — trust', () => {
     expect(await peerRow(bob, carol.deviceId)).toMatchObject({
       revokedAt: NOW_ISO,
       revokedSeq: 0,
+    });
+  });
+
+  it('raises a removal cutoff to the target chain already held by the receiver', async () => {
+    const [alice, bob, carol] = await makeVault(3);
+    const carolOps = carol.author([
+      carol.body('accounts', 'account-1'),
+      carol.body('accounts', 'account-2'),
+    ]);
+    await receiveBatch(bob.deps, alice.batch(carolOps));
+
+    const control = {
+      ...alice.body('accounts', 'control'),
+      entityType: SYNC_CONTROL_ENTITY as EntityType,
+      entityId: 'revocation',
+      kind: 'set' as const,
+      payload: { control: 'revoke', targetId: carol.deviceId, cutoff: 0, at: NOW_ISO },
+    };
+    await receiveBatch(bob.deps, alice.batch(alice.author([control])));
+
+    expect(await peerRow(bob, carol.deviceId)).toMatchObject({
+      revokedAt: NOW_ISO,
+      revokedSeq: 2,
     });
   });
 
@@ -398,6 +432,33 @@ describe('receiveBatch — unmergeable preconditions', () => {
 });
 
 describe('receiveBatch — forward compatibility', () => {
+  it('applies a state snapshot when the sender can no longer provide the delta prefix', async () => {
+    const [alice, bob] = await makeVault();
+    const [op] = alice.author([alice.body('accounts', 'account-1')]);
+    const state = emptyMeta('accounts', 'account-1', op.hlc);
+
+    const outcome = await receiveBatch(
+      bob.deps,
+      alice.batch([], { fullState: [state], heads: { [alice.deviceId]: 9 } }),
+    );
+
+    expect(outcome).toMatchObject({ stored: 0, applied: 1 });
+    await expect(
+      bob.storage.transact((tx) => readStates(tx, ['accounts:account-1'])),
+    ).resolves.toHaveProperty('size', 1);
+  });
+
+  it('rejects a create whose payload identity disagrees with its authenticated entity key', async () => {
+    const [alice, bob] = await makeVault();
+    const ops = alice.author([{
+      ...alice.body('accounts', 'claimed-id'),
+      payload: { entity: { id: 'stored-under-a-different-id' } },
+    }]);
+
+    await expect(receiveBatch(bob.deps, alice.batch(ops))).rejects.toMatchObject({ code: 'badBatch' });
+    expect(await opRows(bob)).toHaveLength(0);
+  });
+
   it('stores and forwards an op naming an entity type this build has never heard of', async () => {
     const [alice, bob] = await makeVault();
     const body = { ...alice.body('accounts', 'account-1'), entityType: 'holdings' as never };

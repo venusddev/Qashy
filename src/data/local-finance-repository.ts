@@ -47,7 +47,9 @@ import {
   isEntityType,
   materialize,
   metaKey,
+  mergeMetaMaps,
   repairMergedState,
+  type CausalMeta,
   type SyncOpBody,
 } from '@/sync/oplog';
 import { readAllStates, writeStates } from '@/data/sync-store';
@@ -233,6 +235,15 @@ export class LocalFinanceRepository implements FinanceRepository {
     });
   }
 
+  applyRemoteState(states: readonly CausalMeta[]) {
+    return this.enqueueMutation(async () => {
+      const { writtenTypes, repairs } = await this.projectNow([], new Map(
+        states.map((state) => [metaKey(state.entityType, state.entityId), state]),
+      ));
+      return { applied: states.length, changedTypes: writtenTypes, repairs };
+    });
+  }
+
   /**
    * Re-runs the repair sweep over the stored op log without applying anything new.
    *
@@ -246,7 +257,10 @@ export class LocalFinanceRepository implements FinanceRepository {
     });
   }
 
-  private async projectNow(known: readonly SyncOpBody[]) {
+  private async projectNow(
+    known: readonly SyncOpBody[],
+    remoteStates?: ReadonlyMap<string, CausalMeta>,
+  ) {
     // One transaction, and every read inside it. `transact`, deliberately, not `putMany`:
     // once `SyncingStorageAdapter` is installed, `putMany` is the change-capturing path and
     // would diff this merged result against the rows it replaces, emitting *local* ops that
@@ -262,8 +276,13 @@ export class LocalFinanceRepository implements FinanceRepository {
         // object never observes, so a cached copy goes stale for precisely the fields both
         // devices touched — and a register missing from a stale copy has no HLC to lose to,
         // silently handing an older remote op the win over a newer local edit.
-        const keys = [...new Set(known.map((op) => metaKey(op.entityType, op.entityId)))];
-        const merged = applyOps(await readAllStates(tx), known);
+        const keys = remoteStates
+          ? [...remoteStates.keys()]
+          : [...new Set(known.map((op) => metaKey(op.entityType, op.entityId)))];
+        const localStates = await readAllStates(tx);
+        const merged = remoteStates
+          ? mergeMetaMaps(localStates, remoteStates)
+          : applyOps(localStates, known);
 
         // Read through storage rather than `this.state`: the snapshot drops tombstones, and
         // the repair pass has to see them. Resurrecting an account that a merged-in
@@ -348,7 +367,7 @@ export class LocalFinanceRepository implements FinanceRepository {
         // advances the state — that is what makes redelivery a no-op rather than a re-merge.
         await writeStates(
           tx,
-          keys.map((key) => merged.get(key)!),
+          remoteStates ? [...merged.values()] : keys.map((key) => merged.get(key)!),
         );
         return {
           written: records.length,

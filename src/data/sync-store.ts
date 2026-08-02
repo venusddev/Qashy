@@ -27,6 +27,7 @@ import {
   GENESIS_HASH,
   applyOps,
   metaKey,
+  SYNC_CONTROL_ENTITY,
   type CausalMeta,
   type ChainHead,
   type HlcClock,
@@ -217,6 +218,12 @@ export const fromOpRow = (row: SyncOpRow): SyncOp => ({
   schema: row.schema,
   signature: row.signature,
 });
+
+/** Membership controls are the only stored ops with no finance projection. */
+export async function readControlOps(tx: StorageTx): Promise<SyncOp[]> {
+  const rows = await tx.table('syncOps').all();
+  return rows.filter((row) => row.entityType === SYNC_CONTROL_ENTITY).map(fromOpRow);
+}
 
 // ---------------------------------------------------------------------------
 // Causal state
@@ -440,6 +447,7 @@ export async function findUnprojected(tx: StorageTx): Promise<SyncOp[]> {
   const applied = new Map((await tx.table('syncState').all()).map((row) => [row.key, row.maxHlc]));
   const byKey = new Map<string, SyncOpRow[]>();
   for (const row of rows) {
+    if (row.entityType === SYNC_CONTROL_ENTITY) continue;
     const key = `${row.entityType}:${row.entityId}`;
     const list = byKey.get(key);
     if (list) list.push(row);

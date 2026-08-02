@@ -44,6 +44,34 @@ const control = (
 });
 
 describe('signed revocation controls', () => {
+  it('replays sequential revocations even after the roster marks both authors as revoked', () => {
+    const firstAuthor = createDeviceIdentity();
+    const secondAuthor = createDeviceIdentity();
+    const firstTarget = createDeviceIdentity();
+    const secondTarget = createDeviceIdentity();
+    const roster = new Map([
+      [firstAuthor.deviceId, peer({ ...firstAuthor })],
+      [secondAuthor.deviceId, peer({ ...secondAuthor })],
+      [firstTarget.deviceId, { ...peer(firstTarget), revokedAt: AT, revokedSeq: 0 }],
+      [secondTarget.deviceId, { ...peer(secondTarget), revokedAt: AT, revokedSeq: 0 }],
+    ]);
+    const first = control(firstAuthor, 1, {
+      control: 'revoke', targetId: firstTarget.deviceId, cutoff: 1, at: AT,
+    });
+    const second = control(secondAuthor, 1, {
+      control: 'revoke', targetId: secondTarget.deviceId, cutoff: 1, at: AT,
+    });
+
+    expect(
+      deriveRevocationState(
+        [first, second],
+        roster,
+        { mode: 'any', ownerDeviceId: firstAuthor.deviceId },
+        firstAuthor.deviceId,
+      ).revocations.map((entry) => entry.targetId).sort(),
+    ).toEqual([firstTarget.deviceId, secondTarget.deviceId].sort());
+  });
+
   it('requires a 50%-or-more quorum and keeps each approval attributable', () => {
     const owner = createDeviceIdentity();
     const approver = createDeviceIdentity();

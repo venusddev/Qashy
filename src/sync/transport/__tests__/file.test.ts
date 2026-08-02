@@ -101,6 +101,24 @@ describe('FileTransport', () => {
 });
 
 describe('FileTransport.ingest', () => {
+  it('routes an imported bundle only to the channel for its sender', async () => {
+    const transport = transportFor();
+    const channelA = await transport.connect({ deviceId: 'device-c', name: 'Tablet' });
+    const channelB = await transport.connect(PEER);
+    const heardA: number[] = [];
+    const heardB: number[] = [];
+    channelA.onFrame((_frame, seq) => heardA.push(seq));
+    channelB.onFrame((_frame, seq) => heardB.push(seq));
+
+    expect(transport.ingest({
+      version: BUNDLE_VERSION,
+      from: PEER.deviceId,
+      frames: [{ to: SELF_TAG, seq: 4, frame: bytes(9) }],
+    })).toBe(1);
+    expect(heardA).toEqual([]);
+    expect(heardB).toEqual([4]);
+  });
+
   it('pushes frames addressed to this device into the receive path', async () => {
     const transport = transportFor();
     const channel = await transport.connect(PEER);

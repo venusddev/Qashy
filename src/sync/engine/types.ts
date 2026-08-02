@@ -14,10 +14,10 @@
  * edit arrives. A generic failure would collapse all of those into a shrug.
  */
 
-import type { SyncOp } from '@/sync/oplog';
+import type { CausalMeta, SyncOp } from '@/sync/oplog';
 
 /** Breaking format version for authenticated sync batches, independent of stored envelopes. */
-export const BATCH_FORMAT_VERSION = 3;
+export const BATCH_FORMAT_VERSION = 4;
 
 /**
  * The portable part of a peer row.
@@ -66,6 +66,8 @@ export interface SyncBatch {
    * history through the tablet that saw both.
    */
   readonly ops: readonly SyncOp[];
+  /** State-based catch-up when retention removed the delta a peer needs. */
+  readonly fullState?: readonly CausalMeta[];
   /**
    * `{ [deviceId]: seq }` — the highest `seq` the sender holds of each chain.
    *

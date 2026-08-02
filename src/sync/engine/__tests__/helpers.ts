@@ -138,6 +138,11 @@ export class FakeRepository {
     return { applied: ops.length, changedTypes: changed, repairs: [] };
   }
 
+  async applyRemoteState(states: readonly CausalMeta[]): Promise<ApplyResult> {
+    await this.storage.transact((tx) => writeStates(tx, states), { silent: true });
+    return { applied: states.length, changedTypes: [], repairs: [] };
+  }
+
   /** Every op ever handed over, flattened — the "what actually landed" assertion. */
   get flat(): SyncOpBody[] {
     return this.applied.flat();

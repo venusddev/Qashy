@@ -25,8 +25,8 @@ import { runGenesisMigration } from '@/data/sync-genesis';
 import {
   SYNC_META,
   appendActivity,
-  fromOpRow,
   readChainState,
+  readControlOps,
   readActivity,
   readHeldChains,
   readMeta,
@@ -229,7 +229,7 @@ export async function readSyncStatus(deps: SyncSetupDeps): Promise<SyncStatus> {
       ownerDeviceId: meta.get(SYNC_META.ownerDeviceId) ?? deviceId,
       mode: parseRevocationMode(meta.get(SYNC_META.revocationMode)),
     };
-    const controls = (await tx.table('syncOps').all()).map(fromOpRow);
+    const controls = await readControlOps(tx);
     const revocation = deviceId
       ? deriveRevocationState(controls, roster, initial, deviceId)
       : { ...initial, proposals: [], revocations: [] };
@@ -243,7 +243,9 @@ export async function readSyncStatus(deps: SyncSetupDeps): Promise<SyncStatus> {
       baseCurrency: keystore === 'empty' ? UNPAIRED.baseCurrency : meta.get(SYNC_META.baseCurrency) ?? UNPAIRED.baseCurrency,
       revocation,
       proposals: revocation.proposals.filter((proposal) => proposal.approvals.length < proposal.required),
-      peers: [...roster.values()].sort((first, second) => first.addedAt.localeCompare(second.addedAt)),
+      peers: [...roster.values()].sort((first, second) =>
+        first.addedAt < second.addedAt ? -1 : first.addedAt > second.addedAt ? 1 : 0,
+      ),
       endpoints: await readEndpoints(tx),
       relay: await readRelayHealth(tx),
       activity,
@@ -437,6 +439,7 @@ export async function recordPairedPeer(deps: SyncSetupDeps, peer: Peer): Promise
       activityEntry({ kind: 'paired', recordedAt: at, peerId: peer.deviceId }),
     ]);
   });
+  await appendMembershipControl(deps, () => ({ control: 'add', deviceId: peer.deviceId }));
 }
 
 /** The `sync_meta` half of joining a vault, shared by both ways of doing it. */
@@ -531,7 +534,7 @@ async function appendMembershipControl(
     const deviceId = meta.get(SYNC_META.deviceId) ?? vault.identity.deviceId;
     if (deviceId !== vault.identity.deviceId) throw new Error('This device identity does not match its vault.');
     const roster = await readRoster(tx);
-    const existing = (await tx.table('syncOps').all()).map(fromOpRow);
+    const existing = await readControlOps(tx);
     const before = deriveRevocationState(existing, roster, initialPolicy(meta, deviceId), deviceId);
     const held = await readHeldChains(tx);
     const { clock, head } = await readChainState(tx);
@@ -547,7 +550,11 @@ async function appendMembershipControl(
     for (const decision of after.revocations) {
       const peer = roster.get(decision.targetId);
       if (peer && !peer.revokedAt) {
-        changed.push({ ...peer, revokedAt: decision.at, revokedSeq: decision.cutoff });
+        changed.push({
+          ...peer,
+          revokedAt: decision.at,
+          revokedSeq: Math.max(decision.cutoff, held.heads.get(decision.targetId)?.seq ?? 0),
+        });
       }
     }
     if (changed.length) {

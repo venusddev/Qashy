@@ -72,7 +72,7 @@ const NOW_ISO = new Date(NOW).toISOString();
 const PASS: readonly Reply[] = [
   { kind: 'json', body: { blobs: [] } },
   { kind: 'status', status: 200 },
-  { kind: 'json', body: { ok: true, version: 1 } },
+  { kind: 'json', body: { ok: true, version: 2 } },
 ];
 
 /**
@@ -354,9 +354,9 @@ describe('what the relay is told', () => {
   it('resumes the drop-box from the stored cursor and advances it', async () => {
     const target = await rig({
       replies: [
-        { kind: 'json', body: { blobs: [{ slot: 41, to: 'somebody-else', seq: 0, frame: 'AA' }] } },
+        { kind: 'json', body: { blobs: [{ slot: 41, from: 'sender-tag', to: 'somebody-else', seq: 0, frame: 'AA' }] } },
         { kind: 'status', status: 200 },
-        { kind: 'json', body: { ok: true, version: 1 } },
+        { kind: 'json', body: { ok: true, version: 2 } },
       ],
     });
     await target.set({ [SYNC_META.relayCursor]: '17' });
@@ -467,7 +467,7 @@ describe('relay health', () => {
         { kind: 'status', status: 500 },
         { kind: 'json', body: { blobs: [] } },
         { kind: 'status', status: 500 },
-        { kind: 'json', body: { ok: true, version: 1 } },
+        { kind: 'json', body: { ok: true, version: 2 } },
       ],
     });
 
@@ -490,7 +490,7 @@ describe('relay health', () => {
         { kind: 'status', status: 500 },
         { kind: 'json', body: { blobs: [] } },
         { kind: 'status', status: 200 },
-        { kind: 'json', body: { ok: true, version: 1 } },
+        { kind: 'json', body: { ok: true, version: 2 } },
       ],
     });
 
@@ -514,7 +514,7 @@ describe('relay health', () => {
   });
 
   it('checks on demand without running a pass', async () => {
-    const target = await rig({ replies: [{ kind: 'json', body: { ok: true, version: 1 } }] });
+    const target = await rig({ replies: [{ kind: 'json', body: { ok: true, version: 2 } }] });
 
     const health = await target.runtime.checkRelay();
 
@@ -524,7 +524,7 @@ describe('relay health', () => {
   });
 
   it('reads the cached verdict without touching the network', async () => {
-    const target = await rig({ replies: [{ kind: 'json', body: { ok: true, version: 1 } }] });
+    const target = await rig({ replies: [{ kind: 'json', body: { ok: true, version: 2 } }] });
     await target.runtime.checkRelay();
     const before = target.http.calls.length;
 
@@ -710,6 +710,7 @@ describe('a bundle carried between two devices', () => {
       { deviceId: hostId, seq: 1 },
       { deviceId: hostId, seq: 2 },
       { deviceId: hostId, seq: 3 },
+      { deviceId: hostId, seq: 4 },
     ]);
   });
 
@@ -735,7 +736,7 @@ describe('a bundle carried between two devices', () => {
     // A file that was already opened must not double-apply, and must not be rejected either —
     // a user who is unsure whether the import worked will simply do it again.
     expect(again).toMatchObject({ reason: 'ok', accepted: 1, applied: 0, rejected: 0 });
-    expect(await b.opRows()).toHaveLength(3);
+    expect(await b.opRows()).toHaveLength(4);
   });
 
   it('still has something to say after a second export, since nobody acked the first', async () => {

@@ -273,7 +273,7 @@ export class SyncRuntime {
         reason: 'ok',
         text: encodeBundle(bundle),
         frames: bundle.frames.length,
-        peers: outcome.pushed.filter((push) => push.ops > 0).length,
+        peers: outcome.pushed.filter((push) => push.ops > 0 || push.needsFullState.length > 0).length,
       };
     } finally {
       await wired.file.close();

@@ -17,7 +17,7 @@ import type {
   TransactionQuery,
   TransactionRecord,
 } from '@/domain/models';
-import type { RepairNote, SyncOpBody } from '@/sync/oplog';
+import type { CausalMeta, RepairNote, SyncOpBody } from '@/sync/oplog';
 import type { DuplicateGroup } from '@/sync/engine/duplicates';
 
 export interface MergeResult {
@@ -80,6 +80,7 @@ export interface FinanceRepository {
   initialize(): Promise<void>;
   refresh(): Promise<void>;
   applyRemoteOps(ops: readonly SyncOpBody[]): Promise<ApplyResult>;
+  applyRemoteState(states: readonly CausalMeta[]): Promise<ApplyResult>;
   /**
    * Recomputes the repair pass over the stored op log, writing only what moved.
    *

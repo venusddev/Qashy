@@ -46,6 +46,8 @@ export {
   type QuarantineChange,
 } from '@/sync/engine/quarantine';
 
+export { compactSyncOps, type CompactionResult } from '@/sync/engine/compaction';
+
 export {
   headsRecord,
   projectableOps,

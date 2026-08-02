@@ -13,7 +13,7 @@
  */
 
 import { SYNC_META, writeMeta } from '@/data/sync-store';
-import { MAX_CLOCK_SKEW_MS } from '@/sync/oplog';
+import { MAX_CLOCK_SKEW_MS, RETENTION_MS } from '@/sync/oplog';
 import { utf8Bytes } from '@/sync/crypto';
 import {
   NOW,
@@ -191,6 +191,27 @@ describe('SyncSession — failure handling', () => {
     expect(outcome.pushed.map((push) => push.peerId)).toEqual([bob.deviceId]);
     expect(await held(bob)).toHaveLength(1);
     expect(await held(carol)).toHaveLength(0);
+  });
+
+  it('compacts sealed history during a foreground pass', async () => {
+    const [alice, bob] = await makeVault();
+    await alice.commit([
+      alice.body('accounts', 'old'),
+      alice.body('accounts', 'head'),
+    ]);
+    await alice.storage.transact(async (tx) => {
+      const row = await tx.table('syncPeers').get(bob.deviceId);
+      expect(row).toBeDefined();
+      await tx.table('syncPeers').put([{
+        ...row!,
+        acked: JSON.stringify({ [alice.deviceId]: 2 }),
+      }]);
+    });
+    alice.clockMs = NOW + RETENTION_MS + 1;
+
+    await alice.session.reconcile();
+
+    expect((await opRows(alice)).map((row) => row.seq)).toEqual([2]);
   });
 
   it('surfaces a frame it cannot open, and keeps the stream usable afterwards', async () => {

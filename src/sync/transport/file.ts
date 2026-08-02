@@ -157,9 +157,8 @@ export class FileTransport implements SyncTransport {
     let delivered = 0;
     for (const held of bundle.frames) {
       if (held.to !== this.deps.selfTag) continue;
-      for (const channel of this.channels.values()) {
-        if (channel.deliver(held.frame, held.seq)) delivered += 1;
-      }
+      const channel = this.channels.get(bundle.from);
+      if (channel?.deliver(held.frame, held.seq)) delivered += 1;
     }
     return delivered;
   }

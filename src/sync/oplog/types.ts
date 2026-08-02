@@ -38,6 +38,9 @@ export const OP_KINDS: readonly OpKind[] = [
   'restore',
 ];
 
+/** Membership controls are stored and forwarded, but intentionally have no finance projection. */
+export const SYNC_CONTROL_ENTITY = '__sync_control__';
+
 /**
  * The signed half of an op.
  *

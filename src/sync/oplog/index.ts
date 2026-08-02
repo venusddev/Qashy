@@ -110,6 +110,7 @@ export {
 export {
   OP_KINDS,
   OpLogError,
+  SYNC_CONTROL_ENTITY,
   emptyMeta,
   metaKey,
   type CausalMeta,

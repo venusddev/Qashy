@@ -28,7 +28,7 @@ import {
   type SigningPublicKey,
   type SigningSecretKey,
 } from '@/sync/crypto';
-import { isHlc, opIdFor, parseHlc, type SyncOp } from '@/sync/oplog';
+import { isEntityType, isHlc, opIdFor, parseHlc, type CausalMeta, type SyncOp } from '@/sync/oplog';
 import {
   BATCH_FORMAT_VERSION,
   SyncEngineError,
@@ -53,6 +53,7 @@ export const MAX_BATCH_OPS = 10_000;
 export const MAX_ROSTER_MEMBERS = 64;
 /** One head per paired device, never an unbounded attacker-controlled persisted map. */
 export const MAX_BATCH_HEADS = MAX_ROSTER_MEMBERS;
+export const MAX_BATCH_STATE = 10_000;
 
 const fail = (message: string): never => {
   throw new SyncEngineError(message, 'badBatch');
@@ -114,12 +115,67 @@ const decodeRosterMember = (value: unknown, index: number): RosterMember => {
   };
 };
 
-export const batchPayload = (batch: SyncBatch | UnsignedSyncBatch): UnsignedSyncBatch => ({
+const validHlcOrNull = (value: unknown): boolean => value === null || isHlc(value);
+
+const decodeState = (value: unknown, index: number): CausalMeta => {
+  if (!isRecord(value)) return fail(`Full-state entry ${index} is not an object.`);
+  if (
+    !isEntityType(value.entityType) ||
+    typeof value.entityId !== 'string' ||
+    !isHlc(value.maxHlc) ||
+    !isRecord(value.registers) ||
+    !isRecord(value.sets) ||
+    !isRecord(value.maps) ||
+    !Array.isArray(value.unknown)
+  ) return fail(`Full-state entry ${index} is malformed.`);
+  if (value.created !== null && !isRecord(value.created)) {
+    return fail(`Full-state entry ${index} has a malformed create state.`);
+  }
+  if (
+    value.created &&
+    (!isHlc(value.created.hlc) ||
+      !isRecord(value.created.fields) ||
+      (value.created.fields.id !== undefined && value.created.fields.id !== value.entityId))
+  ) return fail(`Full-state entry ${index} has a malformed create state.`);
+  if (value.deleted !== null && !isRecord(value.deleted)) {
+    return fail(`Full-state entry ${index} has a malformed deletion state.`);
+  }
+  if (
+    value.deleted &&
+    (!isHlc(value.deleted.hlc) ||
+      (value.deleted.at !== null && typeof value.deleted.at !== 'string'))
+  ) return fail(`Full-state entry ${index} has a malformed deletion state.`);
+  for (const register of Object.values(value.registers)) {
+    if (!isRecord(register) || !isHlc(register.hlc)) return fail(`Full-state entry ${index} has a malformed register.`);
+  }
+  for (const states of Object.values(value.sets)) {
+    if (!isRecord(states)) return fail(`Full-state entry ${index} has a malformed set.`);
+    for (const state of Object.values(states)) {
+      if (!isRecord(state) || !validHlcOrNull(state.addHlc) || !validHlcOrNull(state.removeHlc)) {
+        return fail(`Full-state entry ${index} has a malformed set entry.`);
+      }
+    }
+  }
+  for (const entries of Object.values(value.maps)) {
+    if (!isRecord(entries)) return fail(`Full-state entry ${index} has a malformed map.`);
+    for (const entry of Object.values(entries)) {
+      if (!isRecord(entry) || !isHlc(entry.hlc)) return fail(`Full-state entry ${index} has a malformed map entry.`);
+    }
+  }
+  return value as unknown as CausalMeta;
+};
+
+type BatchPayload = Omit<UnsignedSyncBatch, 'fullState'> & {
+  readonly fullState: readonly CausalMeta[] | null;
+};
+
+export const batchPayload = (batch: SyncBatch | UnsignedSyncBatch): BatchPayload => ({
   version: batch.version,
   epoch: batch.epoch,
   baseCurrency: batch.baseCurrency,
   sender: batch.sender,
   ops: batch.ops,
+  fullState: batch.fullState ?? null,
   heads: batch.heads,
   roster: batch.roster,
 });
@@ -249,6 +305,25 @@ export function decodeBatch(bytes: Uint8Array): SyncBatch {
     );
   }
 
+  let fullState: CausalMeta[] | undefined;
+  if (parsed.fullState !== undefined && parsed.fullState !== null) {
+    if (!Array.isArray(parsed.fullState)) return fail('That batch has a malformed full state.');
+    if (parsed.fullState.length > MAX_BATCH_STATE) {
+      throw new SyncEngineError(
+        `That batch carries ${parsed.fullState.length} state entries; the limit is ${MAX_BATCH_STATE}.`,
+        'tooLarge',
+      );
+    }
+    const seenStateKeys = new Set<string>();
+    fullState = parsed.fullState.map((entry, index) => {
+      const state = decodeState(entry, index);
+      const key = `${state.entityType}:${state.entityId}`;
+      if (seenStateKeys.has(key)) return fail(`Full-state entry ${index} repeats an entity.`);
+      seenStateKeys.add(key);
+      return state;
+    });
+  }
+
   const version = count(parsed.version, "That batch's format version", 1);
   if (version !== BATCH_FORMAT_VERSION) {
     fail(
@@ -262,6 +337,7 @@ export function decodeBatch(bytes: Uint8Array): SyncBatch {
     baseCurrency: text(parsed.baseCurrency, "That batch's base currency"),
     sender: text(parsed.sender, "That batch's sender"),
     ops: ops.map(decodeOp),
+    ...(fullState !== undefined ? { fullState } : {}),
     heads,
     roster: parsed.roster.map(decodeRosterMember),
     signature: signature(parsed.signature, "That batch's sender signature"),

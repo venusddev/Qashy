@@ -93,6 +93,9 @@ const pickRegister = (
 
 /** Total order over the scalar kinds a monotone register can hold. */
 const compareScalar = (left: unknown, right: unknown): number => {
+  if (left === right) return 0;
+  if (left === null || left === undefined) return -1;
+  if (right === null || right === undefined) return 1;
   if (typeof left === 'number' && typeof right === 'number') return left - right;
   const leftText = String(left);
   const rightText = String(right);
@@ -225,7 +228,14 @@ const isInterpretable = (op: SyncOpBody) =>
  * constrained by its declared field group.
  */
 export const hasCompleteKnownRegisters = (op: SyncOpBody): boolean => {
-  if (!isInterpretable(op) || op.kind !== 'set') return true;
+  if (!isInterpretable(op)) return true;
+  if (op.kind === 'create') {
+    const entity = asRecord(op.payload.entity);
+    // Older wire fixtures and forward-compatible entities may omit the immutable id; when it
+    // is present, however, it must agree with the authenticated entity key.
+    return entity.id === undefined || entity.id === op.entityId;
+  }
+  if (op.kind !== 'set') return true;
   const registers = asRecord(op.payload.registers);
   for (const spec of registersOf(op.entityType)) {
     if (!(spec.name in registers)) continue;
@@ -236,8 +246,15 @@ export const hasCompleteKnownRegisters = (op: SyncOpBody): boolean => {
   return true;
 };
 
-/** Identity of an uninterpretable op within one entity: one write, one reading, one kind. */
-const unknownKey = (op: SyncOpBody) => `${op.hlc}:${op.kind}`;
+/** Identity of an uninterpretable op within one entity, including its payload. */
+const unknownKey = (op: SyncOpBody) => canonicalJson({
+  entityId: op.entityId,
+  entityType: op.entityType,
+  hlc: op.hlc,
+  kind: op.kind,
+  payload: op.payload,
+  schema: op.schema,
+});
 
 const sortUnknown = (ops: readonly SyncOpBody[]): SyncOpBody[] =>
   [...ops].sort((first, second) => {
@@ -329,6 +346,8 @@ function applyCreate(meta: CausalMeta, op: SyncOpBody): CausalMeta {
   let next: CausalMeta = { ...meta, created };
 
   for (const spec of registersOf(op.entityType)) {
+    // A malformed sparse create must not erase fields a complete create already supplied.
+    if (spec.fields.some((field) => readPath(entity, field) === undefined)) continue;
     next = withRegister(next, spec, { hlc: op.hlc, value: registerValueOf(spec, entity) });
   }
   for (const path of elementSetsOf(op.entityType)) {

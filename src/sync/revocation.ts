@@ -7,9 +7,10 @@
  */
 
 import type { Peer, Roster } from '@/sync/engine/roster';
-import type { SyncOp } from '@/sync/oplog';
+import { compareHlc, SYNC_CONTROL_ENTITY, type SyncOp } from '@/sync/oplog';
 
-export const SYNC_CONTROL_ENTITY = '__sync_control__';
+export { SYNC_CONTROL_ENTITY };
+
 
 export type RevocationMode = 'any' | 'quorum' | 'owner';
 
@@ -38,6 +39,7 @@ export interface AppliedRevocation {
 type Control =
   | { readonly type: 'policy'; readonly mode: RevocationMode }
   | { readonly type: 'owner'; readonly ownerDeviceId: string }
+  | { readonly type: 'add'; readonly deviceId: string }
   | { readonly type: 'revoke'; readonly targetId: string; readonly cutoff: number; readonly at: string }
   | {
       readonly type: 'propose';
@@ -95,6 +97,8 @@ const readControl = (op: SyncOp): Control => {
       return { type: 'policy', mode: mode(payload.mode) };
     case 'owner':
       return { type: 'owner', ownerDeviceId: text(payload.ownerDeviceId, 'owner') };
+    case 'add':
+      return { type: 'add', deviceId: text(payload.deviceId, 'device') };
     case 'revoke':
       return { type: 'revoke', targetId: text(payload.targetId, 'target'), cutoff: cutoff(payload.cutoff), at: at(payload.at) };
     case 'propose': {
@@ -127,11 +131,11 @@ const activeIdsAt = (roster: Roster, localDeviceId: string, when: string): strin
   return live.sort();
 };
 
-const activeNow = (roster: Roster, localDeviceId: string): Set<string> =>
-  new Set([localDeviceId, ...[...roster.values()].filter((peer) => !peer.revokedAt).map((peer) => peer.deviceId)]);
+const allKnown = (roster: Roster, localDeviceId: string): Set<string> =>
+  new Set([localDeviceId, ...[...roster.values()].map((peer) => peer.deviceId)]);
 
 const ordered = (ops: readonly SyncOp[]) => [...ops].sort((a, b) =>
-  a.hlc.localeCompare(b.hlc) || a.deviceId.localeCompare(b.deviceId) || a.seq - b.seq,
+  compareHlc(a.hlc, b.hlc) || (a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0) || a.seq - b.seq,
 );
 
 export interface RevocationState extends RevocationPolicy {
@@ -175,9 +179,16 @@ export function deriveRevocationState(
 
   for (const op of ordered(ops.filter(isControlOp))) {
     const control = readControl(op);
-    const live = activeNow(roster, localDeviceId);
+    // The current roster already contains historical revocation results. Replaying a revoke
+    // against only active peers would therefore make the author's earlier control look like a
+    // post-revocation write. New controls are checked against the current roster below.
+    const live = allKnown(roster, localDeviceId);
     for (const id of removed) live.delete(id);
-    if (!live.has(op.deviceId)) throw new RevocationError('A removed device tried to change vault membership.');
+    const author = roster.get(op.deviceId);
+    if (!live.has(op.deviceId) || (author?.revokedAt && op.seq > (author.revokedSeq ?? 0))) {
+      throw new RevocationError('A removed device tried to change vault membership.');
+    }
+    if (control.type === 'add') continue;
     if (control.type === 'policy') {
       if (op.deviceId !== policy.ownerDeviceId) throw new RevocationError('Only the vault owner can change removal policy.');
       policy = { ...policy, mode: control.mode };

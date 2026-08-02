@@ -63,6 +63,8 @@ export const UPLOAD_JITTER_MS = 400;
 
 interface Blob {
   readonly slot: number;
+  /** Opaque sender route tag, used only to select the recipient's peer channel. */
+  readonly from: string;
   readonly to: string;
   readonly seq: number;
   readonly frame: string;
@@ -157,6 +159,7 @@ export class RelayTransport implements SyncTransport {
   readonly kind: TransportKind = 'relay';
 
   private readonly channels = new Map<string, RelayChannel>();
+  private readonly pendingByTag = new Map<string, { frame: Uint8Array; seq: number }[]>();
   /**
    * The in-flight poll, shared by every peer.
    *
@@ -224,7 +227,15 @@ export class RelayTransport implements SyncTransport {
         // the next pass; a cursor that refuses to advance past one bad blob would instead
         // re-download it forever and never reach the good ones behind it.
         if (!frame) continue;
-        for (const channel of this.channels.values()) channel.deliver(frame, blob.seq);
+        const channel = [...this.channels.values()].find(
+          (candidate) => this.deps.tagFor(candidate.peerId) === blob.from,
+        );
+        if (channel) channel.deliver(frame, blob.seq);
+        else {
+          const held = this.pendingByTag.get(blob.from) ?? [];
+          held.push({ frame, seq: blob.seq });
+          this.pendingByTag.set(blob.from, held);
+        }
         delivered += 1;
       }
 
@@ -260,7 +271,7 @@ export class RelayTransport implements SyncTransport {
         method: 'PUT',
         url: `${baseUrl}/bucket/${encodeURIComponent(bucketId)}`,
         token,
-        body: { to, seq, frame: toBase64Url(frame) },
+        body: { from: this.deps.selfTag, to, seq, frame: toBase64Url(frame) },
       });
     } catch (error) {
       this.deps.onUpload?.(error);
@@ -289,18 +300,25 @@ export class RelayTransport implements SyncTransport {
   close(): Promise<void> {
     for (const channel of this.channels.values()) channel.close();
     this.channels.clear();
+    this.pendingByTag.clear();
     return Promise.resolve();
   }
 
   private channelFor(peerId: string): RelayChannel {
     const existing = this.channels.get(peerId);
     if (existing) return existing;
+    const tag = this.deps.tagFor(peerId);
     const created = new RelayChannel(
       peerId,
       (frame, seq, to) => this.upload(frame, seq, to),
-      this.deps.tagFor(peerId),
+      tag,
     );
     this.channels.set(peerId, created);
+    const pending = this.pendingByTag.get(tag);
+    if (pending) {
+      this.pendingByTag.delete(tag);
+      for (const held of pending) created.deliver(held.frame, held.seq);
+    }
     return created;
   }
 }
@@ -322,9 +340,9 @@ function parseBlobs(body: FetchResponse): Blob[] {
     if (!entry || typeof entry !== 'object') continue;
     const row = entry as Record<string, unknown>;
     if (typeof row.slot !== 'number' || !Number.isSafeInteger(row.slot) || row.slot < 0) continue;
-    if (typeof row.to !== 'string' || typeof row.frame !== 'string') continue;
+    if (typeof row.from !== 'string' || !row.from || typeof row.to !== 'string' || typeof row.frame !== 'string') continue;
     if (typeof row.seq !== 'number' || !Number.isSafeInteger(row.seq) || row.seq < 0) continue;
-    blobs.push({ slot: row.slot, to: row.to, seq: row.seq, frame: row.frame });
+    blobs.push({ slot: row.slot, from: row.from, to: row.to, seq: row.seq, frame: row.frame });
   }
   // Ascending, so the cursor written after the page is a true high-water mark even if the
   // relay returned the page in some other order.

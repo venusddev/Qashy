@@ -223,6 +223,7 @@ export function mergeAuthenticatedRoster(
   sender: string,
   heldHeads: ReadonlyMap<string, { readonly seq: number }>,
   localDeviceId: string,
+  authorizedAddIds: ReadonlySet<string> = new Set(),
 ): { readonly roster: Roster; readonly changed: readonly Peer[] } {
   const merged = new Map(roster);
   const changed: Peer[] = [];
@@ -239,6 +240,9 @@ export function mergeAuthenticatedRoster(
     const incoming = fromRosterMember(member, batchEpoch, sender);
     const current = merged.get(incoming.deviceId);
     if (!current) {
+      if (!authorizedAddIds.has(incoming.deviceId)) {
+        badRoster('That batch introduced a device without a signed pairing control.', sender);
+      }
       if (merged.size >= MAX_ROSTER_MEMBERS) {
         badRoster(`That batch would exceed the ${MAX_ROSTER_MEMBERS}-device roster limit.`, sender);
       }

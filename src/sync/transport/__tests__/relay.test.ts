@@ -43,8 +43,9 @@ function harness(http: FetchDouble): Harness {
   return { transport, http, cursor: () => cursor };
 }
 
-const blob = (slot: number, to: string, seq: number, bytes: Uint8Array) => ({
+const blob = (slot: number, to: string, seq: number, bytes: Uint8Array, from = PEER) => ({
   slot,
+  from,
   to,
   seq,
   frame: toBase64Url(bytes),
@@ -53,6 +54,41 @@ const blob = (slot: number, to: string, seq: number, bytes: Uint8Array) => ({
 const abort = () => new AbortController().signal;
 
 describe('RelayTransport.connect', () => {
+  it('routes a fetched blob to its sender channel, including when that channel connects later', async () => {
+    const http = fetchDouble(
+      {
+        kind: 'json',
+        body: { blobs: [blob(1, SELF, 0, frame(7), 'tag-b')], more: false },
+      },
+      { kind: 'json', body: { blobs: [], more: false } },
+    );
+    let cursor = 0;
+    const transport = new RelayTransport({
+      fetch: http.fetch,
+      baseUrl: BASE,
+      bucketId: 'bucket-1',
+      token: 'token-1',
+      selfTag: SELF,
+      tagFor: (peerId) => (peerId === 'b' ? 'tag-b' : 'tag-a'),
+      readCursor: () => Promise.resolve(cursor),
+      writeCursor: (slot) => {
+        cursor = slot;
+        return Promise.resolve();
+      },
+      jitterMs: 0,
+    });
+
+    const channelA = await transport.connect({ deviceId: 'a', name: 'A' }, abort());
+    const heardA: number[] = [];
+    channelA.onFrame((_frame, seq) => heardA.push(seq));
+    const channelB = await transport.connect({ deviceId: 'b', name: 'B' }, abort());
+    const heardB: number[] = [];
+    channelB.onFrame((_frame, seq) => heardB.push(seq));
+
+    expect(heardA).toEqual([]);
+    expect(heardB).toEqual([0]);
+  });
+
   it('collects what is addressed to this device and ignores what is not', async () => {
     const http = fetchDouble({
       kind: 'json',
@@ -246,7 +282,7 @@ describe('RelayTransport uploads', () => {
     expect(put.method).toBe('PUT');
     expect(put.url).toBe(`${BASE}/bucket/bucket-1`);
     expect(put.headers.authorization).toBe('Bearer token-1');
-    expect(put.body).toEqual({ to: PEER, seq: 5, frame: toBase64Url(frame(3)) });
+    expect(put.body).toEqual({ from: SELF, to: PEER, seq: 5, frame: toBase64Url(frame(3)) });
   });
 
   it('refuses an oversized frame before it reaches the network', async () => {

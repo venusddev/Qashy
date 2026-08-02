@@ -40,6 +40,7 @@ import type { SigningSecretKey } from '@/sync/crypto';
 import { isEntityType, metaKey } from '@/sync/oplog';
 import { activityEntry, activityCode, transportDetail } from '@/sync/engine/activity';
 import { describeFailure, healQuarantine, recordQuarantine } from '@/sync/engine/quarantine';
+import { compactSyncOps } from '@/sync/engine/compaction';
 import { openBatch, sealBatch, type FrameContext } from '@/sync/engine/frame';
 import { projectableOps, receiveBatch, type ReceiveOutcome } from '@/sync/engine/receive';
 import { activePeers, readRoster, type Peer } from '@/sync/engine/roster';
@@ -303,6 +304,18 @@ export class SyncSession {
           }),
         );
       }
+    }
+
+    const compacted = await compactSyncOps(storage, this.deps.now());
+    if (compacted.dropped) {
+      activity.push(
+        activityEntry({
+          kind: 'compacted',
+          recordedAt: nowIso(),
+          count: compacted.dropped,
+          code: 'retention',
+        }),
+      );
     }
 
     if (activity.length) {

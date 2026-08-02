@@ -30,6 +30,7 @@ import { ENTITY_TYPES, type EntityType, type FinanceEntity } from '@/domain/mode
 import {
   MAX_COUNTER,
   buildOp,
+  compareHlc,
   diffEntity,
   hlcFromTimestamp,
   parseHlc,
@@ -141,7 +142,7 @@ export async function runGenesisMigration(
   // Sorted by HLC so the chain's `seq` order matches causal order. Not required for
   // correctness — the merge sorts by HLC itself — but a log whose two orders agree is one a
   // peer can verify and replay without buffering, and one a human can read.
-  const ordered = [...bodies].sort((first, second) => first.hlc.localeCompare(second.hlc));
+  const ordered = [...bodies].sort((first, second) => compareHlc(first.hlc, second.hlc));
 
   const built = buildOp(ordered, deviceId, head.seq, head.headHash);
   await recordOps(tx, built.ops, 0);

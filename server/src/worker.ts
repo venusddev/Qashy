@@ -7,7 +7,7 @@
  *
  * It does exactly three things:
  *
- * 1. `GET /health` — answers `{ ok: true, version: 1 }`. No id, no auth, no logging, nothing
+ * 1. `GET /health` — answers `{ ok: true, version: 2 }`. No id, no auth, no logging, nothing
  *    correlatable. It exists so the app can say "the relay is down" instead of leaving the
  *    user to infer it from sync being quiet.
  * 2. `GET /rendezvous/:id` (WebSocket) — relays opaque text between exactly two parties that
@@ -60,7 +60,7 @@ export interface Env {
  * has no idea what a sync op is, so the two change for entirely unrelated reasons. Conflating
  * them would mean every op-format change forced a redeploy of a server that does not care.
  */
-const RELAY_API_VERSION = 1;
+const RELAY_API_VERSION = 2;
 
 /** Non-secret liveness marker that tells both sockets their peer has arrived. */
 const PEER_READY_MESSAGE = 'qashy-rendezvous-ready:1';
@@ -222,6 +222,7 @@ export default {
 
 interface BlobRow extends Record<string, SqlStorageValue> {
   readonly slot: number;
+  readonly sender: string;
   readonly recipient: string;
   readonly seq: number;
   readonly frame: string;
@@ -261,12 +262,18 @@ export class BucketRoom {
       this.sql.exec(`
         CREATE TABLE IF NOT EXISTS blobs (
           slot      INTEGER PRIMARY KEY AUTOINCREMENT,
+          sender    TEXT    NOT NULL DEFAULT '',
           recipient TEXT    NOT NULL,
           seq       INTEGER NOT NULL,
           frame     TEXT    NOT NULL,
           stored_at INTEGER NOT NULL
         )
       `);
+      try {
+        this.sql.exec(`ALTER TABLE blobs ADD COLUMN sender TEXT NOT NULL DEFAULT ''`);
+      } catch {
+        // Existing Durable Objects already have the column.
+      }
       this.sql.exec(`CREATE INDEX IF NOT EXISTS blobs_stored_at ON blobs(stored_at)`);
       this.sql.exec(`CREATE TABLE IF NOT EXISTS vault (k TEXT PRIMARY KEY, v TEXT NOT NULL)`);
     });
@@ -333,6 +340,7 @@ export class BucketRoom {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(400, 'body');
 
     const row = body as Record<string, unknown>;
+    if (typeof row.from !== 'string' || !TAG_PATTERN.test(row.from)) return fail(400, 'from');
     if (typeof row.to !== 'string' || !TAG_PATTERN.test(row.to)) return fail(400, 'to');
     if (typeof row.seq !== 'number' || !Number.isSafeInteger(row.seq) || row.seq < 0) {
       return fail(400, 'seq');
@@ -353,7 +361,8 @@ export class BucketRoom {
     }
 
     this.sql.exec(
-      `INSERT INTO blobs (recipient, seq, frame, stored_at) VALUES (?, ?, ?, ?)`,
+      `INSERT INTO blobs (sender, recipient, seq, frame, stored_at) VALUES (?, ?, ?, ?, ?)`,
+      row.from,
       row.to,
       row.seq,
       row.frame,
@@ -371,7 +380,7 @@ export class BucketRoom {
     // One row over the page size, so `more` is a fact rather than a second query.
     const rows = this.sql
       .exec<BlobRow>(
-        `SELECT slot, recipient, seq, frame FROM blobs WHERE slot > ? ORDER BY slot LIMIT ?`,
+        `SELECT slot, sender, recipient, seq, frame FROM blobs WHERE slot > ? ORDER BY slot LIMIT ?`,
         after,
         limit + 1,
       )
@@ -381,6 +390,7 @@ export class BucketRoom {
     return json(200, {
       blobs: page.map((blob) => ({
         slot: blob.slot,
+        from: blob.sender,
         to: blob.recipient,
         seq: blob.seq,
         frame: blob.frame,

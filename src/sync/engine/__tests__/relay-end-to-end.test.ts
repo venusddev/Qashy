@@ -40,7 +40,7 @@ function inMemoryRelay() {
           : input.url;
     const url = new URL(rawUrl);
 
-    if (url.pathname === '/health') return response({ ok: true, version: 1 });
+    if (url.pathname === '/health') return response({ ok: true, version: 2 });
     if (url.pathname !== '/bucket/bucket') return new Response(null, { status: 404 });
 
     if (init?.method === 'GET') {

@@ -20,7 +20,7 @@
  */
 
 import type { StorageAdapter, StorageTx } from '@/data/storage-adapter';
-import { SYNC_META, readMeta, readOutbox } from '@/data/sync-store';
+import { SYNC_META, readAllStates, readMeta, readOutbox } from '@/data/sync-store';
 import type { SigningSecretKey } from '@/sync/crypto';
 import { canServeDelta } from '@/sync/oplog';
 import { authenticateBatch } from '@/sync/engine/batch';
@@ -96,6 +96,9 @@ async function assemble(
   const needsFullState = [...outbox.heads.keys()].filter(
     (chain) => !canServeDelta(peer.acked[chain] ?? 0, chain, outbox.compactedBelow),
   );
+  const fullState = needsFullState.length
+    ? [...(await readAllStates(tx)).values()]
+    : undefined;
 
   return {
     batch: authenticateBatch(
@@ -104,7 +107,10 @@ async function assemble(
         epoch: Number(meta.get(SYNC_META.epoch) ?? '1'),
         baseCurrency: meta.get(SYNC_META.baseCurrency) ?? '',
         sender: deviceId,
-        ops: outbox.ops,
+        // A state snapshot replaces the unusable suffix. Sending both would still make the
+        // receiver verify a chain whose compacted prefix no longer exists.
+        ops: fullState ? [] : outbox.ops,
+        ...(fullState !== undefined ? { fullState } : {}),
         heads: headsRecord(outbox.heads),
         roster: [...roster.values()]
           .filter((member) => member.deviceId !== peer.deviceId)
@@ -112,7 +118,7 @@ async function assemble(
       },
       signingKey,
     ),
-    more: outbox.more,
+    more: fullState ? false : outbox.more,
     needsFullState,
   };
 }

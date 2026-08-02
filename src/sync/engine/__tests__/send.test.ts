@@ -195,8 +195,10 @@ describe('buildBatch', () => {
 
     const behind = await outbox(alice, bob, { [alice.deviceId]: 0 });
     expect(behind.needsFullState).toEqual([alice.deviceId]);
-    // The rest of the batch is still perfectly good and still goes.
-    expect(behind.batch.ops.map((op) => op.seq)).toEqual([3]);
+    // A state snapshot replaces the unusable suffix; sending op 3 would still make the
+    // receiver verify a chain whose compacted prefix no longer exists.
+    expect(behind.batch.ops).toEqual([]);
+    expect(behind.batch.fullState).toBeDefined();
 
     const caughtUp = await outbox(alice, bob, { [alice.deviceId]: 2 });
     expect(caughtUp.needsFullState).toEqual([]);

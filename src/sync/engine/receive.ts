@@ -34,8 +34,8 @@ import type { StorageAdapter, StorageTx } from '@/data/storage-adapter';
 import {
   SYNC_META,
   appendActivity,
-  fromOpRow,
   readChainState,
+  readControlOps,
   readHeldChains,
   readMeta,
   storeOps,
@@ -73,12 +73,13 @@ import {
   writePeers,
 } from '@/sync/engine/roster';
 import { SyncEngineError, type RejectionCode, type SyncBatch } from '@/sync/engine/types';
-import { RevocationError, deriveRevocationState } from '@/sync/revocation';
+import { RevocationError, SYNC_CONTROL_ENTITY, deriveRevocationState } from '@/sync/revocation';
 
 export interface ReceiveDeps {
   readonly storage: StorageAdapter;
-  /** Only `applyRemoteOps` is used; narrowed so tests can stand in a two-line double. */
-  readonly repository: Pick<FinanceRepository, 'applyRemoteOps'>;
+  /** The state method is optional for narrow transport doubles; production repositories provide it. */
+  readonly repository: Pick<FinanceRepository, 'applyRemoteOps'> &
+    Partial<Pick<FinanceRepository, 'applyRemoteState'>>;
   /** Injected so a test can advance time without waiting for it. */
   readonly now: () => number;
   readonly nowIso: () => string;
@@ -167,7 +168,7 @@ async function verifyAndStore(
   batch: SyncBatch,
   nowMs: number,
   nowIso: string,
-): Promise<SyncOp[]> {
+): Promise<{ readonly accepted: SyncOp[]; readonly fullState?: SyncBatch['fullState'] }> {
   const meta = await readMeta(tx, [
     SYNC_META.epoch,
     SYNC_META.baseCurrency,
@@ -210,6 +211,17 @@ async function verifyAndStore(
     tx,
     new Set(batch.ops.map((op) => op.opId)),
   );
+  const existingControls = await readControlOps(tx);
+  const authorizedAddIds = new Set(
+    [...existingControls, ...batch.ops]
+      .filter((op) => String(op.entityType) === SYNC_CONTROL_ENTITY && op.kind === 'set')
+      .map((op) => op.payload)
+      .filter((payload): payload is Record<string, unknown> =>
+        typeof payload === 'object' && payload !== null && payload.control === 'add' && typeof payload.deviceId === 'string',
+      )
+      .map((payload) => payload.deviceId as string),
+  );
+  for (const op of batch.ops) authorizedAddIds.add(op.deviceId);
   const rosterMerge = mergeAuthenticatedRoster(
     storedRoster,
     batch.roster,
@@ -217,6 +229,7 @@ async function verifyAndStore(
     batch.sender,
     held,
     meta.get(SYNC_META.deviceId) ?? '',
+    authorizedAddIds,
   );
   const roster = rosterMerge.roster;
 
@@ -285,7 +298,7 @@ async function verifyAndStore(
   // Past every refusal. From here the batch is being kept.
   let revocations: ReturnType<typeof deriveRevocationState>['revocations'];
   try {
-    const existing = (await tx.table('syncOps').all()).map(fromOpRow);
+    const existing = existingControls;
     const initial = {
       ownerDeviceId: meta.get(SYNC_META.ownerDeviceId) ?? (meta.get(SYNC_META.deviceId) ?? ''),
       mode: meta.get(SYNC_META.revocationMode) === 'quorum'
@@ -294,7 +307,12 @@ async function verifyAndStore(
           ? 'owner' as const
           : 'any' as const,
     };
-    revocations = deriveRevocationState([...existing, ...accepted], roster, initial, meta.get(SYNC_META.deviceId) ?? '').revocations;
+    revocations = deriveRevocationState(
+      [...existing, ...accepted],
+      roster,
+      initial,
+      meta.get(SYNC_META.deviceId) ?? '',
+    ).revocations;
   } catch (error) {
     if (error instanceof RevocationError) {
       throw new SyncEngineError(error.message, 'badBatch', batch.sender);
@@ -320,7 +338,9 @@ async function verifyAndStore(
       ...(roster.get(sender.deviceId) ?? sender),
       // What the peer holds — monotone, so a blob that sat in a relay bucket for a week
       // cannot rewind the watermark compaction depends on.
-      acked: mergeHeads(sender.acked, batch.heads),
+      // A full-state batch is only acknowledged after the repository has committed its
+      // snapshot. If projection fails, leave the watermark unchanged so the sender retries it.
+      acked: batch.fullState === undefined ? mergeHeads(sender.acked, batch.heads) : sender.acked,
       // What *we* hold, so the sync screen can say how far behind a peer is without
       // rescanning the op table on every render.
       known: headsRecord(held),
@@ -329,12 +349,18 @@ async function verifyAndStore(
     ...revocations.flatMap((decision) => {
       const peer = roster.get(decision.targetId);
       return peer && !peer.revokedAt
-        ? [{ ...peer, revokedAt: decision.at, revokedSeq: decision.cutoff }]
+        ? [{
+            ...peer,
+            revokedAt: decision.at,
+            // The signed decision records what the author had seen. This receiver may already
+            // hold more of the target chain, and those earlier ops must remain replayable.
+            revokedSeq: Math.max(decision.cutoff, held.get(decision.targetId)?.seq ?? 0),
+          }]
         : [];
     }),
   ]);
 
-  return accepted;
+  return { accepted, fullState: batch.fullState };
 }
 
 /**
@@ -353,29 +379,57 @@ export async function receiveBatch(
   const receivedAt = nowIso();
 
   let accepted: SyncOp[];
+  let fullState: SyncBatch['fullState'];
   try {
-    accepted = await storage.transact((tx) => verifyAndStore(tx, batch, now(), receivedAt), {
+    ({ accepted, fullState } = await storage.transact((tx) => verifyAndStore(tx, batch, now(), receivedAt), {
       // Nothing a repository subscriber can observe has changed yet: `records` is untouched
       // and the projection is the next step. Notifying here would redraw every screen with
       // the same data and then redraw it again a moment later with the real merge.
       silent: true,
-    });
+    }));
   } catch (error) {
     const entry = rejectionEntry(error, batch.sender, receivedAt);
     await storage.transact((tx) => appendActivity(tx, [entry]), { silent: true });
     throw error;
   }
 
-  const { ready, deferred } = projectableOps(accepted, now());
+  // Membership controls are interpreted by the receive transaction and have no finance
+  // projection. Keep them out of both the repository and clock-skew quarantine; otherwise a
+  // control would be counted as applied by a test double and remain perpetually unprojected.
+  const projectable = accepted.filter((op) => String(op.entityType) !== SYNC_CONTROL_ENTITY);
+  const { ready, deferred } = projectableOps(projectable, now());
 
   let result = EMPTY_APPLY;
   let failure: unknown = null;
-  if (ready.length) {
+  if (fullState !== undefined) {
+    if (!repository.applyRemoteState) {
+      throw new SyncEngineError('This repository cannot apply a full-state sync batch.', 'badBatch', batch.sender);
+    }
+    try {
+      result = await repository.applyRemoteState(fullState);
+    } catch (error) {
+      failure = error;
+    }
+  } else if (ready.length) {
     try {
       result = await repository.applyRemoteOps(ready);
     } catch (error) {
       failure = error;
     }
+  }
+
+  if (fullState !== undefined && !failure) {
+    await storage.transact(async (tx) => {
+      const roster = await readRoster(tx);
+      const senderRow = roster.get(batch.sender);
+      if (senderRow) {
+        await writePeers(tx, [{
+          ...senderRow,
+          acked: mergeHeads(senderRow.acked, batch.heads),
+          lastSeenAt: receivedAt,
+        }]);
+      }
+    }, { silent: true });
   }
 
   // Only entities the repository could actually have projected count as healed. An op naming

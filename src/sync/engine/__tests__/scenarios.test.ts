@@ -481,10 +481,11 @@ describe('merge scenarios — repairing a jointly-invalid state', () => {
     // load-bearing rather than tidy: a repair that emitted even one op would work on two
     // devices and ping-pong forever on three, each reacting to the other's correction.
     const after = await Promise.all([opsOf(alice), opsOf(bob)]);
-    expect(after.map((rows) => rows.length)).toEqual(before.map((rows) => rows.length + 1));
-    expect(after[0].filter((row) => !before[0].some((old) => old.opId === row.opId))).toMatchObject(
-      [{ entityType: 'transactions', kind: 'delete' }],
+    const added = after.map((rows, index) =>
+      rows.filter((row) => !before[index].some((old) => old.opId === row.opId)),
     );
+    expect(added.map((rows) => rows.length)).toEqual([1, 1]);
+    expect(added[0]).toMatchObject([{ entityType: 'transactions', kind: 'delete' }]);
   });
 
   it.each(['en-US', 'he-IL'])('renames colliding categories identically (%s)', async (locale) => {
