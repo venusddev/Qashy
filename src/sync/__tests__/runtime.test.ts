@@ -399,6 +399,24 @@ describe('reuse between passes', () => {
     );
   });
 
+  it('rebuilds when a TURN credential changes even though the URL does not', async () => {
+    const target = await rig({ replies: [...PASS, ...PASS] });
+    await target.set({
+      [SYNC_META.turnUrl]: 'turn:relay.example.com:3478',
+      [SYNC_META.turnUsername]: 'alice',
+      [SYNC_META.turnCredential]: 'first-secret',
+    });
+    await target.runtime.reconcile();
+    const first = target.runtime.transports;
+
+    // The URL is unchanged, but the credential is what the ICE agent presents to the TURN
+    // server. A wiring that outlived the change would keep authenticating with the old one.
+    await target.set({ [SYNC_META.turnCredential]: 'rotated-secret' });
+    await target.runtime.reconcile();
+
+    expect(target.runtime.transports[0]).not.toBe(first[0]);
+  });
+
   it('rebuilds when the vault key is rotated', async () => {
     const target = await rig({ replies: [...PASS, ...PASS] });
     await target.runtime.reconcile();

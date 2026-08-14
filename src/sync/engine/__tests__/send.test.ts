@@ -12,7 +12,7 @@
 
 import { SYNC_META, storeOps, writeMeta } from '@/data/sync-store';
 import type { SyncOp } from '@/sync/oplog';
-import { buildBatch } from '@/sync/engine/send';
+import { FULL_STATE_ENTRY_CAP, buildBatch, loadSendSnapshot } from '@/sync/engine/send';
 import { hasUnsealed, sealPending } from '@/sync/engine/sealer';
 import {
   BASE_CURRENCY,
@@ -22,15 +22,26 @@ import {
   type TestDevice,
 } from '@/sync/engine/__tests__/helpers';
 
-const outbox = (sender: TestDevice, peer: TestDevice, acked: Record<string, number> = {}, limit = 100) =>
-  buildBatch(
-    {
-      storage: sender.storage,
-      deviceId: sender.deviceId,
-      signingKey: sender.identity.signing.secretKey,
-      limit,
-    },
-    { ...peer.asPeer(), acked },
+/** Builds one batch the way the session does: from a freshly loaded snapshot. */
+const outbox = (
+  sender: TestDevice,
+  peer: TestDevice,
+  acked: Record<string, number> = {},
+  limit = 100,
+  stateOffset = 0,
+) =>
+  loadSendSnapshot(sender.storage).then((snapshot) =>
+    buildBatch(
+      {
+        storage: sender.storage,
+        deviceId: sender.deviceId,
+        signingKey: sender.identity.signing.secretKey,
+        limit,
+      },
+      { ...peer.asPeer(), acked },
+      snapshot,
+      stateOffset,
+    ),
   );
 
 /** Puts another device's ops in this one's log, the way a received batch would. */
@@ -199,9 +210,102 @@ describe('buildBatch', () => {
     // receiver verify a chain whose compacted prefix no longer exists.
     expect(behind.batch.ops).toEqual([]);
     expect(behind.batch.fullState).toBeDefined();
+    expect(behind.more).toBe(false);
 
     const caughtUp = await outbox(alice, bob, { [alice.deviceId]: 2 });
     expect(caughtUp.needsFullState).toEqual([]);
+  });
+
+  it('splits a full state that exceeds one chunk across consecutive batches', async () => {
+    const [alice, bob] = await makeVault();
+    const bodies = Array.from(
+      { length: FULL_STATE_ENTRY_CAP + 100 },
+      (_unused, index) => alice.body('accounts', `a${index}`),
+    );
+    const ops = await alice.stage(bodies);
+    // Compact everything but the head, so the whole state has to go as chunks.
+    await alice.storage.transact((tx) =>
+      tx.table('syncOps').delete(ops.slice(0, -1).map((op) => op.opId)),
+    );
+
+    // Walk the chunks exactly the way the session does, respecting every cap it respects.
+    const all: string[] = [];
+    let offset = 0;
+    for (let batch = 0; batch < 32; batch += 1) {
+      const outgoing = await outbox(alice, bob, { [alice.deviceId]: 0 }, 100, offset);
+      expect(outgoing.needsFullState).toEqual([alice.deviceId]);
+      const chunk = outgoing.batch.fullState ?? [];
+      expect(chunk.length).toBeLessThanOrEqual(FULL_STATE_ENTRY_CAP);
+      all.push(...chunk.map((state) => (state as { entityId: string }).entityId));
+      if (!outgoing.more) break;
+      offset += chunk.length;
+    }
+
+    // Every entity's state arrives exactly once, in deterministic key order.
+    expect(new Set(all)).toEqual(new Set(bodies.map((body) => body.entityId)));
+    expect(all).toHaveLength(bodies.length);
+  });
+  it('splits a full state by encoded size as well as by entry count', async () => {
+    const [alice, bob] = await makeVault();
+    // Two staged ops give the chain a head; the first is compacted away so the peer has to
+    // be answered with state. The sealer never runs here, so the head stays unsealed — which
+    // is fine, `needsFullState` is decided from the chain's existence, not its seal state.
+    const ops = await alice.stage([alice.body('accounts', 'fat'), alice.body('accounts', 'fat2')]);
+    await alice.storage.transact((tx) =>
+      tx.table('syncOps').delete([ops[0].opId]),
+    );
+
+    const [op] = ops;
+    const fat = {
+      hlc: op.hlc,
+      entityType: 'accounts' as const,
+      entityId: 'fat',
+      maxHlc: op.hlc,
+      created: { hlc: op.hlc, fields: { id: 'fat', createdAt: op.hlc, name: 'fat' } },
+      registers: {
+        name: { hlc: op.hlc, value: { name: 'x'.repeat(400_000) } },
+      },
+      sets: {},
+      maps: {},
+      unknown: [],
+      deleted: null,
+    };
+    // The state the session would hold: plenty of states, one of them enormous.
+    const states = Array.from({ length: 8 }, (_unused, index) => ({
+      ...fat,
+      entityId: `fat-${index}`,
+    }));
+    await alice.storage.transact(
+      (tx) => tx.table('syncState').put(states.map((state) => ({
+        key: `accounts:${state.entityId}`,
+        type: 'accounts',
+        meta: JSON.stringify(state),
+        maxHlc: state.maxHlc,
+        deletedHlc: null,
+      }))),
+      { silent: true },
+    );
+
+    const first = await outbox(alice, bob, { [alice.deviceId]: 0 });
+    expect(first.needsFullState).toEqual([alice.deviceId]);
+    expect(first.batch.fullState).toBeDefined();
+    // Four enormous entries nearly fill the character budget; the rest follow in later chunks.
+    expect(first.batch.fullState!.length).toBeLessThan(8);
+    expect(first.more).toBe(true);
+
+    const all = [first.batch.fullState ?? []];
+    let offset = first.batch.fullState!.length;
+    while (true) {
+      const next = await outbox(alice, bob, { [alice.deviceId]: 0 }, 100, offset);
+      all.push(next.batch.fullState ?? []);
+      if (!next.more) break;
+      offset += next.batch.fullState!.length;
+    }
+    // Every entity's state arrives exactly once across the chunks, in deterministic key order.
+    const keys = all.flat().map((state) => (state as { entityId: string }).entityId);
+    expect(new Set(keys)).toEqual(
+      new Set(['fat-0', 'fat-1', 'fat-2', 'fat-3', 'fat-4', 'fat-5', 'fat-6', 'fat-7', 'fat', 'fat2']),
+    );
   });
 
   it('carries whatever this vault currently calls its epoch and base currency', async () => {

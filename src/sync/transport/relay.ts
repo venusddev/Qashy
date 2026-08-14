@@ -274,7 +274,13 @@ export class RelayTransport implements SyncTransport {
         body: { from: this.deps.selfTag, to, seq, frame: toBase64Url(frame) },
       });
     } catch (error) {
-      this.deps.onUpload?.(error);
+      // A payload the relay refuses as too large is this device's fault, not the relay's —
+      // counting it would flip a perfectly healthy relay to `degraded` after three such
+      // uploads. It stays visible in the activity log, which is where a self-hoster looks
+      // for a 413.
+      if (!(error instanceof RelayError) || error.code !== 'tooLarge') {
+        this.deps.onUpload?.(error);
+      }
       throw error;
     }
     this.deps.onUpload?.(null);

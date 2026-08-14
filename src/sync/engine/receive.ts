@@ -62,7 +62,7 @@ import {
 } from '@/sync/oplog';
 import { activityEntry, rejectionEntry } from '@/sync/engine/activity';
 import { verifyBatchAuthentication } from '@/sync/engine/batch';
-import { describeFailure, healQuarantine, recordQuarantine } from '@/sync/engine/quarantine';
+import { describeFailure, healQuarantine, recordQuarantine, recordQuarantineStates } from '@/sync/engine/quarantine';
 import {
   mergeAuthenticatedRoster,
   mergeHeads,
@@ -403,7 +403,7 @@ export async function receiveBatch(
   let failure: unknown = null;
   if (fullState !== undefined) {
     if (!repository.applyRemoteState) {
-      throw new SyncEngineError('This repository cannot apply a full-state sync batch.', 'badBatch', batch.sender);
+      throw new SyncEngineError('This app cannot apply a full-state sync batch.', 'badBatch');
     }
     try {
       result = await repository.applyRemoteState(fullState);
@@ -435,12 +435,18 @@ export async function receiveBatch(
   // Only entities the repository could actually have projected count as healed. An op naming
   // an entity type this build has never heard of is stored and forwarded but not rendered,
   // so clearing a quarantine row on its behalf would claim a fix that did not happen.
+  //
+  // A full-state batch carries no ops, so its entities are the entries themselves — and they
+  // must heal (or refuse) the same way a delta's entities do, or a stuck merge would stay
+  // quarantined forever on a device that can only be caught up by state.
   const projected = failure
     ? new Set<string>()
     : new Set(
-        ready
-          .filter((op) => isEntityType(op.entityType))
-          .map((op) => metaKey(op.entityType, op.entityId)),
+        fullState !== undefined
+          ? fullState.map((state) => metaKey(state.entityType, state.entityId))
+          : ready
+              .filter((op) => isEntityType(op.entityType))
+              .map((op) => metaKey(op.entityType, op.entityId)),
       );
 
   const activity: SyncActivityInput[] = [];
@@ -449,13 +455,21 @@ export async function receiveBatch(
       const recovered = await healQuarantine(tx, projected);
       let quarantined = 0;
       if (failure) {
-        quarantined += await recordQuarantine(
-          tx,
-          ready,
-          'overflow',
-          describeFailure(failure),
-          receivedAt,
-        );
+        quarantined += fullState !== undefined
+          ? await recordQuarantineStates(
+              tx,
+              fullState,
+              'overflow',
+              describeFailure(failure),
+              receivedAt,
+            )
+          : await recordQuarantine(
+              tx,
+              ready,
+              'overflow',
+              describeFailure(failure),
+              receivedAt,
+            );
       }
       if (deferred.length) {
         quarantined += await recordQuarantine(

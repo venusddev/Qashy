@@ -74,7 +74,16 @@ export {
 
 export { SEAL_BATCH_SIZE, hasUnsealed, sealPending, type SealerInput } from '@/sync/engine/sealer';
 
-export { SEND_BATCH_OPS, buildBatch, type OutgoingBatch, type SendDeps } from '@/sync/engine/send';
+export {
+  FULL_STATE_CHUNK_CHARS,
+  FULL_STATE_ENTRY_CAP,
+  SEND_BATCH_OPS,
+  buildBatch,
+  loadSendSnapshot,
+  type OutgoingBatch,
+  type SendDeps,
+  type SendSnapshot,
+} from '@/sync/engine/send';
 
 export {
   MAX_BATCHES_PER_PASS,

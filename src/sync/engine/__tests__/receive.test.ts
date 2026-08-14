@@ -25,7 +25,7 @@ import {
   strangerKeys,
   type TestDevice,
 } from '@/sync/engine/__tests__/helpers';
-import { SYNC_META, readMeta, readStates } from '@/data/sync-store';
+import { SYNC_META, readMeta, readStates, writeQuarantine } from '@/data/sync-store';
 import { toPeerRow, toRosterMember } from '@/sync/engine/roster';
 import { MAX_CLOCK_SKEW_MS, emptyMeta, hashOp, sealOp } from '@/sync/oplog';
 import { receiveBatch } from '@/sync/engine/receive';
@@ -557,6 +557,52 @@ describe('receiveBatch — quarantine', () => {
     // re-offer runs off `findUnprojected`, not off the next batch. See `session.test.ts`.)
     const meta = await bob.storage.transact((tx) => readMeta(tx, [SYNC_META.hlcWall]));
     expect(Number(meta.get(SYNC_META.hlcWall))).toBe(NOW);
+  });
+
+  it('holds a refused full-state snapshot back, visibly, and does not acknowledge it', async () => {
+    const [alice, bob] = await makeVault();
+    bob.repository.fail = new Error('Balances would overflow.');
+    const [op] = alice.author([alice.body('accounts', 'account-1')]);
+    const state = emptyMeta('accounts', 'account-1', op.hlc);
+
+    const outcome = await receiveBatch(
+      bob.deps,
+      alice.batch([], { fullState: [state], heads: { [alice.deviceId]: 9 } }),
+    );
+
+    // Not a rejection — the failure is this device's projection, and it must be visible the
+    // same way a refused delta is: a quarantine row and a log line, not silence.
+    expect(outcome).toMatchObject({ stored: 0, applied: 0, quarantined: 1 });
+    expect(await quarantineRowsOf(bob)).toMatchObject([
+      { key: 'accounts:account-1', reason: 'overflow' },
+    ]);
+    expect(await activityRows(bob)).toMatchObject([{ kind: 'quarantined', code: 'invariant' }]);
+
+    // The watermark stays put, so the sender keeps offering the snapshot until it lands.
+    const row = await peerRow(bob, alice.deviceId);
+    expect(JSON.parse(row!.acked)).toEqual({});
+  });
+
+  it('clears a quarantine once a full-state snapshot projects the entity', async () => {
+    const [alice, bob] = await makeVault();
+    const [op] = alice.author([alice.body('accounts', 'account-1')]);
+    const state = emptyMeta('accounts', 'account-1', op.hlc);
+    // A previous pass refused this entity — a delta whose merge overflowed, say.
+    await bob.storage.transact(
+      (tx) => writeQuarantine(tx, [
+        { key: 'accounts:account-1', reason: 'overflow', detail: 'Error', hlc: op.hlc, recordedAt: NOW_ISO },
+      ]),
+      { silent: true },
+    );
+
+    const outcome = await receiveBatch(
+      bob.deps,
+      alice.batch([], { fullState: [state], heads: { [alice.deviceId]: 9 } }),
+    );
+
+    expect(outcome).toMatchObject({ applied: 1, recovered: 1 });
+    expect(await quarantineRowsOf(bob)).toHaveLength(0);
+    expect((await activityRows(bob)).map((row) => row.kind)).toEqual(['received', 'recovered']);
   });
 });
 

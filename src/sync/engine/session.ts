@@ -38,15 +38,16 @@ import {
 import type { FinanceRepository } from '@/data/repository';
 import type { SigningSecretKey } from '@/sync/crypto';
 import { isEntityType, metaKey } from '@/sync/oplog';
-import { activityEntry, activityCode, transportDetail } from '@/sync/engine/activity';
+import { activityEntry, activityCode, rejectionEntry, transportDetail } from '@/sync/engine/activity';
 import { describeFailure, healQuarantine, recordQuarantine } from '@/sync/engine/quarantine';
 import { compactSyncOps } from '@/sync/engine/compaction';
 import { openBatch, sealBatch, type FrameContext } from '@/sync/engine/frame';
 import { projectableOps, receiveBatch, type ReceiveOutcome } from '@/sync/engine/receive';
 import { activePeers, readRoster, type Peer } from '@/sync/engine/roster';
 import { sealPending } from '@/sync/engine/sealer';
-import { buildBatch, SEND_BATCH_OPS } from '@/sync/engine/send';
+import { buildBatch, loadSendSnapshot, SEND_BATCH_OPS, type SendSnapshot } from '@/sync/engine/send';
 import type { SyncChannel, SyncTransport } from '@/sync/engine/transport';
+import type { SyncBatch } from '@/sync/engine/types';
 
 /**
  * How many batches one peer gets in a single pass.
@@ -170,10 +171,26 @@ export class SyncSession {
    * sequence is bound into the envelope's associated data.
    */
   async absorb(channel: SyncChannel, frame: Uint8Array, seq: number): Promise<ReceiveOutcome | null> {
+    let batch: SyncBatch;
     try {
-      const batch = openBatch(this.deps.frame, frame, channel.peerId, seq);
+      batch = openBatch(this.deps.frame, frame, channel.peerId, seq);
+    } catch (error) {
+      // Recorded here as well as reported: an envelope that will not open — a frame past the
+      // size cap, tampered bytes, an old epoch — is a rejection like any other, and the
+      // activity log is the only persistent trace a peer's repeated resend can be traced to.
+      const entry = rejectionEntry(error, channel.peerId, this.deps.nowIso());
+      try {
+        await this.deps.storage.transact((tx) => appendActivity(tx, [entry]), { silent: true });
+      } finally {
+        this.deps.onError?.(error, channel.peerId);
+      }
+      return null;
+    }
+    try {
       return await receiveBatch(this.deps, batch);
     } catch (error) {
+      // `receiveBatch` has already written the rejection to the activity log and rethrown;
+      // all that is swallowed here is the throw, for the transport's sake.
       this.deps.onError?.(error, channel.peerId);
       return null;
     }
@@ -185,8 +202,18 @@ export class SyncSession {
    * Loops on the sender's own `more` flag rather than on the peer's acknowledgements, because
    * an acknowledgement only arrives on the peer's next batch and waiting for one would make a
    * first sync take as many app launches as it takes batches.
+   *
+   * The op table is scanned once, up front, and every batch of the pass is assembled from
+   * that snapshot — a pass that sent twenty batches would otherwise scan the table twenty
+   * times. Ops that arrive from a peer *during* the pass wait for the next one, which is the
+   * cheapest possible staleness here.
    */
-  async push(peer: Peer, channel: SyncChannel, limit = SEND_BATCH_OPS): Promise<PushOutcome> {
+  async push(
+    peer: Peer,
+    channel: SyncChannel,
+    limit = SEND_BATCH_OPS,
+    signal?: AbortSignal,
+  ): Promise<PushOutcome> {
     const { storage, deviceId, signingKey, frame } = this.deps;
     const counters = this.countersFor(channel);
     let batches = 0;
@@ -198,13 +225,22 @@ export class SyncSession {
     // iteration would rebuild the same batch from the same stale `acked` and send it forever.
     const acked: Record<string, number> = { ...peer.acked };
 
+    const snapshot: SendSnapshot = await loadSendSnapshot(storage);
+    // Where the chunked full state stands. Never persisted: a pass that stops halfway — the
+    // per-pass cap, a dropped relay, an aborted sync — restarts from the first chunk on the
+    // next pass, and the receiver's per-register merge makes re-delivered chunks a no-op.
+    let stateOffset = 0;
+
     while (more && batches < MAX_BATCHES_PER_PASS) {
+      if (signal?.aborted) break;
       const outgoing = await buildBatch(
         { storage, deviceId, signingKey, limit },
         { ...peer, acked },
+        snapshot,
+        stateOffset,
       );
       needsFullState = outgoing.needsFullState;
-      if (!outgoing.batch.ops.length) {
+      if (!outgoing.batch.ops.length && outgoing.batch.fullState === undefined) {
         // Still worth one frame: the header is this device's acknowledgement, and a peer that
         // never hears our position is a peer whose compaction can never advance.
         if (!batches) {
@@ -225,6 +261,9 @@ export class SyncSession {
       );
       counters.sent += 1;
       batches += 1;
+      if (outgoing.batch.fullState !== undefined) {
+        stateOffset += outgoing.batch.fullState.length;
+      }
       ops += outgoing.batch.ops.length;
       for (const op of outgoing.batch.ops) {
         acked[op.deviceId] = Math.max(acked[op.deviceId] ?? 0, op.seq);
@@ -266,7 +305,7 @@ export class SyncSession {
         continue;
       }
       try {
-        const outcome = await this.push(peer, channel);
+        const outcome = await this.push(peer, channel, SEND_BATCH_OPS, signal);
         pushed.push(outcome);
         if (outcome.ops) {
           activity.push(

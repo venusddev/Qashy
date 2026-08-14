@@ -296,6 +296,55 @@ describe('RelayTransport uploads', () => {
     expect(http.calls).toHaveLength(1);
   });
 
+  it('does not count a refused oversized upload as a relay health failure', async () => {
+    const uploads: (unknown | null)[] = [];
+    const transport = new RelayTransport({
+      fetch: fetchDouble(
+        { kind: 'json', body: { blobs: [], more: false } },
+        { kind: 'status', status: 413 },
+      ).fetch,
+      baseUrl: BASE,
+      bucketId: 'bucket-1',
+      token: 'token-1',
+      selfTag: SELF,
+      tagFor: () => PEER,
+      readCursor: () => Promise.resolve(0),
+      writeCursor: () => Promise.resolve(),
+      jitterMs: 0,
+      onUpload: (error) => uploads.push(error),
+    });
+    const channel = await transport.connect({ deviceId: 'peer', name: 'Peer' }, abort());
+
+    // A frame the relay refuses as too large is a local payload problem; the relay itself is
+    // fine, so the health verdict must not drift toward `degraded` because of it.
+    await expect(channel.send(frame(3, 64), 0)).rejects.toMatchObject({ code: 'tooLarge' });
+    expect(uploads).toEqual([]);
+  });
+
+  it('still counts a relay that is erroring on normal uploads', async () => {
+    const uploads: (unknown | null)[] = [];
+    const transport = new RelayTransport({
+      fetch: fetchDouble(
+        { kind: 'json', body: { blobs: [], more: false } },
+        { kind: 'status', status: 500 },
+      ).fetch,
+      baseUrl: BASE,
+      bucketId: 'bucket-1',
+      token: 'token-1',
+      selfTag: SELF,
+      tagFor: () => PEER,
+      readCursor: () => Promise.resolve(0),
+      writeCursor: () => Promise.resolve(),
+      jitterMs: 0,
+      onUpload: (error) => uploads.push(error),
+    });
+    const channel = await transport.connect({ deviceId: 'peer', name: 'Peer' }, abort());
+
+    await expect(channel.send(frame(3, 64), 0)).rejects.toMatchObject({ code: 'server' });
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]).toBeInstanceOf(RelayError);
+  });
+
   it('jitters each frame separately, so a burst of batches does not arrive as a burst', async () => {
     const slept: number[] = [];
     const transport = new RelayTransport({

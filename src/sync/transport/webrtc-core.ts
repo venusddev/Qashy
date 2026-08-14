@@ -486,9 +486,17 @@ class DataChannelWire implements SyncChannel {
 
   private absorb(data: unknown): void {
     const bytes = toBytes(data);
-    if (!bytes || bytes.length < 4 || bytes.length > MAX_CHANNEL_MESSAGE) return;
+    if (!bytes || bytes.length < 4) return;
     const seq = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0, false);
-    const frame = bytes.slice(4);
+    // A frame past the channel's hard ceiling is still handed over, as a zero-copy view rather
+    // than a slice. `openBatch` refuses it as `tooLarge` — cheaply, before any allocation —
+    // and the refusal is recorded in the activity log. Dropping it here would be a rejection
+    // with no trace: the sender's ops would sit unacknowledged forever, resent on every pass,
+    // and every resend would be dropped the same silent way.
+    const frame =
+      bytes.length > MAX_CHANNEL_MESSAGE
+        ? new Uint8Array(bytes.buffer, bytes.byteOffset + 4, bytes.byteLength - 4)
+        : bytes.slice(4);
     for (const handler of this.handlers) handler(frame, seq);
   }
 }

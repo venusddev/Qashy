@@ -28,6 +28,7 @@ import { RelayError } from '@/sync/transport/http';
 import { SignalingClient } from '@/sync/transport/signaling';
 import {
   CHANNEL_LABEL,
+  MAX_CHANNEL_MESSAGE,
   UNAVAILABLE_RTC,
   connectWebRtc,
   type WebRtcConnection,
@@ -167,6 +168,29 @@ describe('connectWebRtc', () => {
 
     expect(left.channel.peerId).toBe(b.identity.deviceId);
     expect(right.channel.peerId).toBe(a.identity.deviceId);
+
+    teardown([a, b], [left, right]);
+  });
+
+  it('hands an oversized frame over instead of dropping it, so the refusal can be recorded', async () => {
+    const hub = new SocketHub();
+    const network = new FakeRtcNetwork();
+    const a = await partyFor(hub);
+    const b = await partyFor(hub);
+    const [left, right] = await pair(createVaultRootKey(), a, b, network);
+
+    const heard: { frame: Uint8Array; seq: number }[] = [];
+    right.channel.onFrame((frame, seq) => heard.push({ frame, seq }));
+
+    // Past the channel ceiling. `openBatch` is the layer that refuses it — with a recorded
+    // `tooLarge` rejection — and it can only do that if the bytes actually arrive there.
+    const oversized = new Uint8Array(MAX_CHANNEL_MESSAGE + 1);
+    await left.channel.send(oversized, 3);
+    await flush();
+
+    expect(heard).toHaveLength(1);
+    expect(heard[0].seq).toBe(3);
+    expect(heard[0].frame.length).toBe(oversized.length);
 
     teardown([a, b], [left, right]);
   });

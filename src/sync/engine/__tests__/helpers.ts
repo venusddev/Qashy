@@ -139,6 +139,11 @@ export class FakeRepository {
   }
 
   async applyRemoteState(states: readonly CausalMeta[]): Promise<ApplyResult> {
+    if (this.fail) {
+      const error = this.fail;
+      this.fail = null;
+      throw error;
+    }
     await this.storage.transact((tx) => writeStates(tx, states), { silent: true });
     return { applied: states.length, changedTypes: [], repairs: [] };
   }

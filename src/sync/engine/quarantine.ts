@@ -29,7 +29,7 @@
 import type { StorageTx } from '@/data/storage-adapter';
 import type { SyncQuarantineRow } from '@/data/sync-tables';
 import { clearQuarantine, readQuarantine, writeQuarantine, type QuarantineReason } from '@/data/sync-store';
-import { metaKey, type SyncOp } from '@/sync/oplog';
+import { metaKey, type CausalMeta, type SyncOp } from '@/sync/oplog';
 import type { RejectionCode } from '@/sync/engine/types';
 
 /**
@@ -87,6 +87,28 @@ export function quarantineRows(
   return [...newest.entries()].map(([key, hlc]) => ({ key, reason, detail, hlc, recordedAt }));
 }
 
+/**
+ * One row per entity a refused full-state snapshot touched.
+ *
+ * A full-state batch carries no ops, so `quarantineRows` has nothing to derive keys and
+ * clock readings from — the entries themselves are the entities, and each one's `maxHlc` is
+ * the reading the next corrective state has to beat.
+ */
+export function quarantineStateRows(
+  states: readonly CausalMeta[],
+  reason: QuarantineReason,
+  detail: string,
+  recordedAt: string,
+): SyncQuarantineRow[] {
+  return states.map((state) => ({
+    key: metaKey(state.entityType, state.entityId),
+    reason,
+    detail,
+    hlc: state.maxHlc,
+    recordedAt,
+  }));
+}
+
 export interface QuarantineChange {
   readonly added: number;
   readonly healed: number;
@@ -106,6 +128,19 @@ export async function recordQuarantine(
   recordedAt: string,
 ): Promise<number> {
   const rows = quarantineRows(ops, reason, detail, recordedAt);
+  await writeQuarantine(tx, rows);
+  return rows.length;
+}
+
+/** The full-state twin of `recordQuarantine`: one row per refused state entry. */
+export async function recordQuarantineStates(
+  tx: StorageTx,
+  states: readonly CausalMeta[],
+  reason: QuarantineReason,
+  detail: string,
+  recordedAt: string,
+): Promise<number> {
+  const rows = quarantineStateRows(states, reason, detail, recordedAt);
   await writeQuarantine(tx, rows);
   return rows.length;
 }

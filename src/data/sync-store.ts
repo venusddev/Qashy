@@ -377,11 +377,12 @@ export interface Outbox {
 }
 
 /**
- * Everything the send path needs, in a single scan of the op table.
+ * Everything the send path needs, derived from a single scan of the op table.
  *
- * One pass rather than three separate helpers, because a first sync of a populated vault is
- * tens of thousands of ops sent in bounded batches — and scanning the table once per question
- * per batch turns a linear job into a quadratic one.
+ * Pure so the session can scan the table once per pass and assemble every batch of that pass
+ * from the same rows — a first sync of a populated vault is tens of thousands of ops sent in
+ * bounded batches, and re-scanning the table for every batch turns a linear job into a
+ * quadratic one.
  *
  * Unsealed ops are excluded rather than skipped over: they have never been signed, so sending
  * one would hand a peer something it cannot verify, and *skipping* one would hand it a chain
@@ -393,16 +394,16 @@ export interface Outbox {
  * and because chains resume exactly where they left off there is nothing special about where
  * the boundary falls.
  */
-export async function readOutbox(
-  tx: StorageTx,
+export function deriveOutbox(
+  rows: readonly SyncOpRow[],
   acked: Readonly<Record<string, number>>,
   limit: number,
-): Promise<Outbox> {
+): Outbox {
   const heads = new Map<string, ChainHead>();
   const compactedBelow: Record<string, number> = {};
   const pending: SyncOpRow[] = [];
 
-  for (const row of await tx.table('syncOps').all()) {
+  for (const row of rows) {
     const head = heads.get(row.deviceId);
     if (!head || row.seq > head.seq) heads.set(row.deviceId, { seq: row.seq, headHash: row.opHash });
     const lowest = compactedBelow[row.deviceId];
@@ -423,6 +424,14 @@ export async function readOutbox(
     heads,
     compactedBelow,
   };
+}
+
+export async function readOutbox(
+  tx: StorageTx,
+  acked: Readonly<Record<string, number>>,
+  limit: number,
+): Promise<Outbox> {
+  return deriveOutbox(await tx.table('syncOps').all(), acked, limit);
 }
 
 /**

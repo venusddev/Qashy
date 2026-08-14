@@ -15,12 +15,15 @@
 import { SYNC_META, writeMeta } from '@/data/sync-store';
 import { MAX_CLOCK_SKEW_MS, RETENTION_MS } from '@/sync/oplog';
 import { utf8Bytes } from '@/sync/crypto';
+import { sealPending } from '@/sync/engine/sealer';
+import type { SyncChannel } from '@/sync/engine/transport';
 import {
   NOW,
   activityRows,
   link,
   makeVault,
   opRows,
+  peerRow,
   quarantineRowsOf,
   settle,
   type TestDevice,
@@ -158,6 +161,109 @@ describe('SyncSession — convergence', () => {
     expect(outcome).toMatchObject({ batches: 5, ops: 5, truncated: false });
     expect(await held(bob)).toHaveLength(5);
     expect(bob.errors).toEqual([]);
+  });
+
+  it('resyncs a peer whose history was compacted away, in chunks under the frame cap', async () => {
+    const [alice, bob] = await makeVault();
+    link(alice, bob);
+    // A vault big enough that its state spans several full-state chunks.
+    const bodies = Array.from(
+      { length: 4 * 1_000 },
+      (_unused, index) => alice.body('accounts', `a${index}`),
+    );
+    const ops = await alice.commit(bodies);
+    // Compaction, modelled exactly as it happens: only the chain head survives.
+    await alice.storage.transact((tx) =>
+      tx.table('syncOps').delete(ops.slice(0, -1).map((op) => op.opId)),
+    );
+
+    const outcome = await alice.session.reconcile();
+    await settle(6);
+
+    expect(outcome.pushed).toEqual([
+      expect.objectContaining({ peerId: bob.deviceId, needsFullState: [alice.deviceId] }),
+    ]);
+    // More than one frame, so the whole exchange demonstrably crossed the per-frame limits.
+    expect(outcome.pushed[0].batches).toBeGreaterThan(1);
+
+    // Every entity's state landed on the peer, however the state was split.
+    const received = await bob.storage.transact((tx) => tx.table('syncState').all());
+    expect(received).toHaveLength(bodies.length);
+
+    // The full state was acknowledged, so the sender stops offering it again.
+    const row = await peerRow(bob, alice.deviceId);
+    expect(JSON.parse(row!.acked)).toEqual({ [alice.deviceId]: bodies.length });
+    await bob.session.reconcile();
+    await settle(6);
+    const again = await peerRow(bob, alice.deviceId);
+    expect(JSON.parse(again!.acked)).toEqual({ [alice.deviceId]: bodies.length });
+  });
+
+  it('stops pushing mid-pass when the caller aborts', async () => {
+    const [alice, bob] = await makeVault();
+    const wire = link(alice, bob);
+    await alice.stage(
+      Array.from({ length: 5 }, (_unused, index) => alice.body('accounts', `a${index}`)),
+    );
+    // Sealed without a pass, so nothing reaches Bob until the push under test sends it.
+    await sealPending({
+      storage: alice.storage,
+      deviceId: alice.deviceId,
+      signingKey: alice.identity.signing.secretKey,
+    });
+
+    // A channel whose send holds the pass open long enough for the abort to land between
+    // batches — a real relay upload is network time, so this is the ordinary shape of it.
+    const real = wire.channels[0];
+    let sent = 0;
+    const slow: SyncChannel = {
+      peerId: real.peerId,
+      send: async (frame, seq) => {
+        sent += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return real.send(frame, seq);
+      },
+      onFrame: (handler) => real.onFrame(handler),
+      close: () => real.close(),
+    };
+    const controller = new AbortController();
+    const outcome = alice.session.push(bob.asPeer(), slow, 1, controller.signal);
+    // The first batch is in flight; cancel before the second one is even assembled.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    controller.abort();
+
+    expect(await outcome).toMatchObject({ batches: 1, ops: 1, truncated: true });
+    expect(sent).toBe(1);
+    await settle(3);
+    expect(await held(bob)).toHaveLength(1);
+    expect(bob.errors).toEqual([]);
+  });
+
+  it('records an oversized frame as a rejection rather than dropping it silently', async () => {
+    const [alice, bob] = await makeVault();
+    const wire = link(alice, bob);
+    await alice.stage([alice.body('accounts', 'a1')]);
+
+    // One sealed frame of the size a single-batch full state used to reach: past the cap the
+    // transport used to drop without a trace, and now refused whole, in writing.
+    const absorbed = await bob.session.absorb(
+      wire.channels[1],
+      new Uint8Array(8 * 1024 * 1024 + 8),
+      0,
+    );
+    await settle(3);
+
+    expect(absorbed).toBeNull();
+    expect(bob.errors).toHaveLength(1);
+    expect(bob.errors[0].error).toMatchObject({ code: 'tooLarge' });
+    const activity = await activityRows(bob);
+    expect(activity.map((row) => row.kind)).toContain('rejected');
+    expect(activity.at(-1)).toMatchObject({ code: 'tooLarge', peerId: alice.deviceId });
+
+    // The stream stays usable: the genuine batch that follows lands as if nothing happened.
+    await gossip([alice, bob]);
+    expect(await held(bob)).toHaveLength(1);
+    expect(bob.errors).toHaveLength(1);
   });
 });
 

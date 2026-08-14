@@ -391,7 +391,12 @@ export class SyncRuntime {
       endpoints.relayUrl,
       endpoints.relayEnabled ? '1' : '0',
       endpoints.directEnabled ? '1' : '0',
-      endpoints.iceServers.map((server) => server.urls).join(' '),
+      // Username and credential ride along with the URL: the transport hands them to the ICE
+      // agent at connection time, so a credential-only change must rebuild the wiring or the
+      // direct path would keep authenticating with the old one.
+      endpoints.iceServers
+        .map((server) => `${server.urls}|${server.username ?? ''}|${server.credential ?? ''}`)
+        .join(' '),
     ].join('\0');
 
     const held = this.wiring;
