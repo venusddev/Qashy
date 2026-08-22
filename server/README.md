@@ -7,7 +7,7 @@ It does three things:
 
 | Route | What it does |
 | --- | --- |
-| `GET /health` | Returns `{ "ok": true, "version": 1 }`. No id, no auth, nothing correlatable. This is what the app's **More → Sync** relay-status row asks. |
+| `GET /health` | Returns `{ "ok": true, "version": 2 }`. No id, no auth, nothing correlatable. This is what the app's **More → Sync** relay-status row asks. |
 | `GET /rendezvous/:id` (WebSocket) | Relays opaque text between exactly two parties at the same rotating id. Once both are connected it sends the fixed `qashy-rendezvous-ready:1` marker, then relays opaque text. Stores nothing. |
 | `PUT`/`GET`/`DELETE` `/bucket/:id` | A drop-box of sealed, padded frames addressed to a blinded route tag. |
 
@@ -56,7 +56,7 @@ Verify it before trusting it:
 
 ```bash
 curl https://qashy-relay.<your-subdomain>.workers.dev/health
-# {"ok":true,"version":1}
+# {"ok":true,"version":2}
 ```
 
 There is **no KV namespace and no R2 bucket to create.** Storage lives inside the Durable
@@ -145,10 +145,10 @@ single-writer per bucket, and a WebSocket pair per rendezvous. The wire contract
 satisfy is:
 
 ```
-GET    /health                              → 200 {"ok":true,"version":1}
+GET    /health                              → 200 {"ok":true,"version":2}
 GET    /rendezvous/{id}   (Upgrade)         → 101, sends `qashy-rendezvous-ready:1` to both once paired, then relays text
-PUT    /bucket/{id}       Bearer {token}    ← {"to":"…","seq":0,"frame":"base64url"}
-GET    /bucket/{id}?after={slot}&limit={n}  → 200 {"blobs":[{"slot","to","seq","frame"}],"more":bool}
+PUT    /bucket/{id}       Bearer {token}    ← {"from":"…","to":"…","seq":0,"frame":"base64url"}
+GET    /bucket/{id}?after={slot}&limit={n}  → 200 {"blobs":[{"slot","from","to","seq","frame"}],"more":bool}
 DELETE /bucket/{id}       Bearer {token}    → 200 {"ok":true}
 ```
 

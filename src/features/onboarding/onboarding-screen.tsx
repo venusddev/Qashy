@@ -215,13 +215,16 @@ export function OnboardingScreen() {
                   ['Private by default', 'No account and no finance data leaves this device.'],
                   ['Flexible, not fussy', 'Track the categories and time periods that fit your life.'],
                   ['Ready everywhere', 'A native-feeling phone app and a responsive desktop PWA.'],
-                ].map(([title, description], index) => (
-                  <MotionView key={title} delay={index * 45} variant="right" style={{ flexDirection: 'row', gap: 14, alignItems: 'flex-start' }}>
+                ].map(([title, description]) => (
+                  // Rows stay static on purpose: the keyed step box around this
+                  // content owns the transition, so the rows must not run
+                  // entrances of their own inside it.
+                  <View key={title} style={{ flexDirection: 'row', gap: 14, alignItems: 'flex-start' }}>
                     <View style={{ width: 34, height: 34, borderRadius: radius.control, backgroundColor: theme.accentContainer, alignItems: 'center', justifyContent: 'center' }}>
                       <AppIcon name="checkmark" color={theme.accent} size={18} />
                     </View>
                     <View style={{ flex: 1, gap: 2 }}><AppText variant="label">{title}</AppText><AppText muted>{description}</AppText></View>
-                  </MotionView>
+                  </View>
                 ))}
               </View>
             ) : null}

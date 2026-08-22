@@ -12,7 +12,6 @@ import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
 import { useAnimatedMinorAmount } from '@/components/finance/animated-money';
 import { AppText } from '@/components/ui/app-text';
-import { MotionView } from '@/components/ui/motion';
 import type { DashboardSummary } from '@/domain/models';
 import { useLocalization } from '@/localization/localization';
 import { useScreenMetrics } from '@/theme/layout';
@@ -108,8 +107,9 @@ export function SpendLineChart({ points, currency, locale }: { points: Dashboard
     ? `Daily spending from ${firstDate} to ${lastDate}. Highest day ${formatMoney(actualMax, currency, locale)}.${refundNote}`
     : `No spending from ${firstDate ?? 'the start of this period'} to ${lastDate ?? 'the end of this period'}.`;
   return (
-    <MotionView
-      variant="fade"
+    // No entrance of its own: the keyed month transition around this chart
+    // owns the motion, and the line reveal below carries the data change.
+    <View
       accessibilityRole="image"
       accessibilityLabel={label}
       onLayout={onLayout}
@@ -175,7 +175,7 @@ export function SpendLineChart({ points, currency, locale }: { points: Dashboard
           )}
         </View>
       )}
-    </MotionView>
+    </View>
   );
 }
 
@@ -259,9 +259,9 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
       .join('. ')}.`
     : 'Spending by category. No spending yet.';
   return (
-    <MotionView
-      variant="zoom"
-      delay={70}
+    // Like the line chart: the surrounding month transition animates the box;
+    // the donut only sweeps its cover arc to draw the data.
+    <View
       accessibilityRole="image"
       accessibilityLabel={label}
       style={{ flexDirection: 'row', alignItems: 'center', gap: space.xl, flexWrap: 'wrap' }}>
@@ -312,6 +312,6 @@ export function CategoryDonut({ items, currency, locale }: { items: DashboardSum
         ))}
         {!items.length ? <AppText muted>No spending yet</AppText> : null}
       </View>
-    </MotionView>
+    </View>
   );
 }
