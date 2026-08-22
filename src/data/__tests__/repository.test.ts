@@ -9,6 +9,7 @@ import type {
   TransactionStatus,
 } from '@/domain/models';
 import { diffEntity, hlcFromTimestamp } from '@/sync/oplog';
+import type { StorageTx, TransactOptions } from '@/data/storage-adapter';
 import { parseCsvTable } from '@/utils/csv';
 
 async function createRepository(storage = new MemoryStorageAdapter(), locale = 'en-US') {
@@ -2415,8 +2416,11 @@ describe('applyRemoteOps', () => {
     const listener = jest.fn();
     repository.subscribe(listener);
 
+    // Use a future timestamp so the edit's HLC wall is guaranteed to be after the
+    // create's wall (which is `category.createdAt` → wall clock at onboarding, now
+    // ~2026-08-22). Using a fixed Aug 1 date broke once wall time moved past it.
     const result = await repository.applyRemoteOps(
-      remoteOps('categories', category, { ...category, name: 'Food' }, '2026-08-01T10:00:00.000Z'),
+      remoteOps('categories', category, { ...category, name: 'Food' }, '2100-01-01T10:00:00.000Z'),
     );
 
     expect(result.changedTypes).toEqual(['categories']);
@@ -2431,7 +2435,7 @@ describe('applyRemoteOps', () => {
     // stale for an edit that changed nothing.
     const { repository } = await createRepository();
     const category = findCategory(repository, 'Groceries')!;
-    const ops = remoteOps('categories', category, { ...category, name: 'Food' }, '2026-08-01T10:00:00.000Z');
+    const ops = remoteOps('categories', category, { ...category, name: 'Food' }, '2100-01-01T10:00:00.000Z');
 
     await repository.applyRemoteOps(ops);
     const afterFirst = findCategory(repository, 'Food')!;
@@ -2470,6 +2474,26 @@ describe('applyRemoteOps', () => {
         await super.putMany(records, source);
       }
 
+      // `projectNow` performs its reads/writes inside a `transact` (see
+      // LocalFinanceRepository.projectNow), so the outer `readAll`/`putMany`
+      // above do not capture them. Record the inner transaction as well.
+      override async transact<T>(work: (tx: StorageTx) => Promise<T>, options?: TransactOptions): Promise<T> {
+        return super.transact(async (tx: StorageTx) => {
+          const originalReadAll = tx.readAll.bind(tx) as unknown as (type: unknown) => Promise<unknown>;
+          const originalPutMany = tx.putMany.bind(tx) as unknown as (records: unknown) => Promise<void>;
+          (tx as unknown as { readAll: (type: unknown) => Promise<unknown> }).readAll = async (type: unknown) => {
+            this.calls.push('read');
+            return originalReadAll(type);
+          };
+          (tx as unknown as { putMany: (records: unknown) => Promise<void> }).putMany = async (records: unknown) => {
+            // `transact` writes are also logical writes; count them.
+            this.calls.push('write');
+            return originalPutMany(records);
+          };
+          return work(tx);
+        }, options);
+      }
+
       releasePaused() {
         this.release?.();
         this.release = null;
@@ -2486,7 +2510,7 @@ describe('applyRemoteOps', () => {
     await Promise.resolve();
     await Promise.resolve();
     const merge = repository.applyRemoteOps(
-      remoteOps('accounts', account, { ...account, color: '#112233' }, '2026-08-01T10:00:00.000Z'),
+      remoteOps('accounts', account, { ...account, color: '#112233' }, '2100-01-01T10:00:00.000Z'),
     );
     await Promise.resolve();
     await Promise.resolve();
@@ -2514,9 +2538,9 @@ describe('applyRemoteOps', () => {
     });
 
     const ops = [
-      ...remoteOps('accounts', account, { ...account, name: 'Renamed' }, '2026-08-01T10:00:00.000Z'),
-      ...remoteOps('transactions', null, inflated('11111111-1111-4111-8111-111111111111'), '2026-08-01T10:00:01.000Z'),
-      ...remoteOps('transactions', null, inflated('22222222-2222-4222-8222-222222222222'), '2026-08-01T10:00:02.000Z'),
+      ...remoteOps('accounts', account, { ...account, name: 'Renamed' }, '2100-01-01T10:00:00.000Z'),
+      ...remoteOps('transactions', null, inflated('11111111-1111-4111-8111-111111111111'), '2100-01-01T10:00:01.000Z'),
+      ...remoteOps('transactions', null, inflated('22222222-2222-4222-8222-222222222222'), '2100-01-01T10:00:02.000Z'),
     ];
     await expect(repository.applyRemoteOps(ops)).rejects.toThrow();
 
@@ -2534,7 +2558,7 @@ describe('applyRemoteOps', () => {
     const before = repository.getSnapshot();
 
     const result = await repository.applyRemoteOps([{
-      hlc: at('2026-08-01T10:00:00.000Z'),
+      hlc: at('2100-01-01T10:00:00.000Z'),
       entityType: 'receipts' as EntityType,
       entityId: 'receipt-1',
       kind: 'create',
@@ -2562,7 +2586,7 @@ describe('applyRemoteOps', () => {
     };
 
     const result = await repository.applyRemoteOps(
-      remoteOps('accounts', null, twin, '2026-08-01T10:00:00.000Z'),
+      remoteOps('accounts', null, twin, '2100-01-01T10:00:00.000Z'),
     );
 
     expect(result.repairs.map((note) => note.code)).toContain('nameDisambiguated');

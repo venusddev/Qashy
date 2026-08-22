@@ -65,6 +65,11 @@ function detectDelimiter(input: string) {
     let quoted = false;
     for (let index = 0; index < header.length; index += 1) {
       const character = header[index];
+      if (character === '"' && quoted && header[index + 1] === '"') {
+        // Escaped quote inside a quoted header field — skip both without toggling.
+        index += 1;
+        continue;
+      }
       if (character === '"') quoted = !quoted;
       else if (character === candidate && !quoted) count += 1;
     }

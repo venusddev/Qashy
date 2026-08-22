@@ -69,9 +69,14 @@ const timingConfig = {
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
-const REST_STATE: PressableStateCallbackType = { pressed: false, hovered: false };
-const PRESSED_STATE: PressableStateCallbackType = { pressed: true, hovered: false };
-const HOVERED_STATE: PressableStateCallbackType = { pressed: false, hovered: true };
+// PressableStateCallbackType in RN 0.86 is { pressed: boolean } only. The motion
+// system tracks hover separately via onHoverIn/Out and the shared values below, so
+// extend the type locally rather than pretending RN provides it.
+type ExtendedPressableState = PressableStateCallbackType & { hovered: boolean };
+
+const REST_STATE: ExtendedPressableState = { pressed: false, hovered: false };
+const PRESSED_STATE: ExtendedPressableState = { pressed: true, hovered: false };
+const HOVERED_STATE: ExtendedPressableState = { pressed: false, hovered: true };
 
 type MotionVariant = 'fade' | 'up' | 'down' | 'left' | 'right' | 'zoom';
 // Moved onto the animated wrapper: box-model and flex participation belong to
@@ -341,7 +346,7 @@ export function MotionPressable({
   enteringDelay = 0,
   ...props
 }: Omit<PressableProps, 'children' | 'style'> & {
-  children?: ReactNode | ((state: PressableStateCallbackType) => ReactNode);
+  children?: ReactNode | ((state: ExtendedPressableState) => ReactNode);
   style?: PressableProps['style'];
   pressedScale?: number;
   hoverScale?: number;
@@ -376,8 +381,12 @@ export function MotionPressable({
     ],
   }));
 
-  const resolveStyle = (pressableState: PressableStateCallbackType): ViewStyle =>
-    (StyleSheet.flatten(typeof style === 'function' ? style(pressableState) : style) ?? {}) as ViewStyle;
+  const resolveStyle = (pressableState: ExtendedPressableState): ViewStyle =>
+    (StyleSheet.flatten(
+      typeof style === 'function'
+        ? (style as unknown as (s: ExtendedPressableState) => ViewStyle)(pressableState)
+        : style,
+    ) ?? {}) as ViewStyle;
 
   // Evaluate the caller's style callback once per state up front. Everything a
   // press changes then becomes data the UI thread can pick between, instead of
@@ -400,7 +409,7 @@ export function MotionPressable({
   // render-per-touch behaviour so consumers keep working.
   const usesJsState = typeof children === 'function' || (stateKeys.length > 0 && !canDriveFromUiThread);
 
-  const state: PressableStateCallbackType = usesJsState
+  const state: ExtendedPressableState = usesJsState
     ? { pressed: jsPressed, hovered: jsHovered }
     : REST_STATE;
   const flattenedStyle = usesJsState ? resolveStyle(state) : restStyle;

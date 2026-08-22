@@ -162,8 +162,10 @@ export function formatMoney(
   // Compact notation only starts abbreviating at a thousand. Below that it would
   // render the exact same magnitude while silently dropping minor units
   // ($12.50 -> "$12.5", $0.00 -> "$0"), so fall through to the exact formatter.
+  // Use Decimal comparison directly to avoid an intermediate double that could
+  // lose integer precision near MAX_SAFE_INTEGER.
   const compact = options?.compact === true
-    && Math.abs(new Decimal(minor).div(new Decimal(10).pow(digits)).toNumber()) >= 1000;
+    && new Decimal(minor).abs().div(new Decimal(10).pow(digits)).gte(1000);
   if (!compact) {
     const fixed = minorToDecimalString(Math.abs(minor), currency, locale);
     const [integer, fraction = ''] = fixed.split('.');
