@@ -48,9 +48,9 @@ npx wrangler login
 npx wrangler deploy
 ```
 
-`wrangler deploy` prints a URL like `https://qashy-relay.<your-subdomain>.workers.dev`. That is
-the value you paste into **More → Sync → Advanced → Relay address** in the app, and the one to
-hand back if you want it baked in as the shipped default.
+`wrangler deploy` prints a URL like `https://qashy-relay.<your-subdomain>.workers.dev`. The app
+ships pointed at the project's own relay; paste yours into **More → Sync → Advanced → Relay
+address** to replace it, or blank the field to keep this device direct-only.
 
 Verify it before trusting it:
 

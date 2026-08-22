@@ -28,7 +28,9 @@ const NOW = '2026-06-01T12:00:00.000Z';
 async function vault(relayUrl = RELAY) {
   const adapter = new MemoryStorageAdapter();
   await adapter.initialize();
-  if (relayUrl) await adapter.transact((tx) => writeEndpoints(tx, { relayUrl }));
+  // Always written, including the blank: a stored empty string is how a device says "no
+  // relay" now that an untouched install falls back to the shipped default.
+  await adapter.transact((tx) => writeEndpoints(tx, { relayUrl }));
   return adapter;
 }
 

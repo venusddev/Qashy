@@ -18,15 +18,14 @@ import type { StorageTx } from '@/data/storage-adapter';
 import { SYNC_META, readMeta, writeMeta } from '@/data/sync-store';
 
 /**
- * The relay this build points at out of the box.
+ * The relay this build points at out of the box: the project's own deployment from
+ * `server/README.md`, so cross-network sync works without a setup step.
  *
- * Empty on purpose. The relay is a service the vault's owner operates — `server/README.md`
- * is a fifteen-minute deploy — and shipping somebody else's address as a default would mean
- * every install silently uploads to a host chosen by whoever built the binary. Until this is
- * set, sync works over a direct connection and nowhere else, which is a coherent and honest
- * state rather than a broken one.
+ * It stays an ordinary setting rather than a compiled-in fact about the vault. Pointing this
+ * device at a self-hosted relay — or at nothing, which keeps sync direct-only — is one field in
+ * More → Sync → Advanced, and a stored blank always wins over this default.
  */
-export const DEFAULT_RELAY_URL = '';
+export const DEFAULT_RELAY_URL = 'https://qashy-relay.qashy.workers.dev';
 
 /**
  * Optional STUN servers for direct connections.

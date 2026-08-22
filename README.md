@@ -18,7 +18,8 @@ end-to-end encrypted with keys that never leave your devices.
 - On the same network, devices connect directly and contact no server at all.
 - When they can't, sealed and padded ciphertext is left in a blind drop-box for the other device to collect.
   The server sees an opaque identifier, ciphertext, and an IP address — never who you are, what changed, or
-  how much of it there is.
+  how much of it there is. The app ships pointed at the project's own relay; swap or blank it under
+  **More → Sync → Advanced**.
 - Conflicting edits merge automatically without losing either side; deletions and rejected updates are
   recorded in a visible activity log rather than applied silently.
 

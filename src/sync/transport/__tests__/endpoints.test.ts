@@ -9,6 +9,7 @@
 import { MemoryStorageAdapter } from '@/data/memory-storage';
 import { SYNC_META, readMeta, writeMeta } from '@/data/sync-store';
 import {
+  DEFAULT_RELAY_URL,
   DEFAULT_STUN_URLS,
   EndpointError,
   normalizeEndpointUrl,
@@ -74,15 +75,23 @@ describe('parseStunUrls and normalizeTurnUrl', () => {
 });
 
 describe('readEndpoints', () => {
-  it('ships with no relay, so an untouched install uploads nowhere', async () => {
+  it('ships pointed at the project relay, with everything else off by default', async () => {
     const adapter = await storage();
     const endpoints = await adapter.transact((tx) => readEndpoints(tx));
 
-    expect(endpoints.relayUrl).toBe('');
+    expect(endpoints.relayUrl).toBe(DEFAULT_RELAY_URL);
     expect(endpoints.relayEnabled).toBe(true);
     expect(endpoints.directEnabled).toBe(true);
     expect(DEFAULT_STUN_URLS).toBe('');
     expect(endpoints.iceServers).toEqual([]);
+  });
+
+  it('lets an explicitly blanked relay win over the shipped default', async () => {
+    const adapter = await storage();
+    await adapter.transact((tx) => writeEndpoints(tx, { relayUrl: '' }));
+
+    const endpoints = await adapter.transact((tx) => readEndpoints(tx));
+    expect(endpoints.relayUrl).toBe('');
   });
 
   it('degrades a stored value that no longer parses instead of throwing on every launch', async () => {
@@ -129,7 +138,7 @@ describe('writeEndpoints', () => {
     // Neither field landed. A half-applied endpoint change is the state that produces
     // "it worked yesterday", so the good half must not survive the bad half.
     const endpoints = await adapter.transact((tx) => readEndpoints(tx));
-    expect(endpoints.relayUrl).toBe('');
+    expect(endpoints.relayUrl).toBe(DEFAULT_RELAY_URL);
   });
 
   it('clears the cached health and the cursor when the relay moves', async () => {
