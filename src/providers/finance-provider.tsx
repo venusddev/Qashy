@@ -1,4 +1,4 @@
-import { createContext, use, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, startTransition, use, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { ActivityIndicator, AppState, Pressable, Text, View, useColorScheme } from 'react-native';
 
 import type { FinanceRepository } from '@/data/repository';
@@ -32,8 +32,14 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   // loading and error states from the static token sets.
   const scheme = useColorScheme();
   const tokens = scheme === 'dark' ? darkTokens : lightTokens;
+  // Re-render the tree as a transition so a mutation (e.g. saving a budget)
+  // doesn't block the UI while every mounted screen recomputes its projections.
+  const subscribe = useCallback(
+    (listener: () => void) => financeRepository.subscribe(() => startTransition(listener)),
+    [],
+  );
   const state = useSyncExternalStore(
-    financeRepository.subscribe,
+    subscribe,
     financeRepository.getSnapshot,
     financeRepository.getSnapshot,
   );

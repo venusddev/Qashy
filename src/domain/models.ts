@@ -198,7 +198,7 @@ export interface TransactionQuery {
   maxMinor?: number;
   limit?: number;
   offset?: number;
-  sort?: 'newest' | 'oldest' | 'amount-desc';
+  sort?: 'newest' | 'oldest' | 'amount-desc' | false;
 }
 
 export interface DashboardSummary {

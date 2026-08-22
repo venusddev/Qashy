@@ -1,4 +1,5 @@
 import { router } from 'expo-router';
+import { useMemo } from 'react';
 import { ScrollView, View } from 'react-native';
 
 import { AnimatedMoney } from '@/components/finance/animated-money';
@@ -31,8 +32,23 @@ export function PlanScreen() {
   const { contentWidth } = useScreenMetrics();
   const wide = contentWidth >= 860;
   const today = todayLocal();
-  const budgets = repository.getBudgetStatuses(today, { includeInactiveCustom: true });
-  const goals = state.goals.filter((item) => !item.archived && !item.deletedAt);
+    // The repository reads these state slices internally, so they must stay in
+    // the deps even though the callback does not reference them directly.
+    const budgets = useMemo(
+      () => repository.getBudgetStatuses(today, { includeInactiveCustom: true }),
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- repository reads these slices internally
+      [repository, today, state.budgets, state.budgetPeriods, state.transactions, state.categories],
+    );
+    const goals = useMemo(
+      () => state.goals.filter((item) => !item.archived && !item.deletedAt),
+      [state.goals],
+    );
+    const goalProgress = useMemo(() => {
+      const progress = new Map<string, number>();
+      for (const goal of goals) progress.set(goal.id, repository.getGoalProgress(goal.id));
+      return progress;
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- repository reads these slices internally
+    }, [repository, goals, state.contributions, state.transactions, state.categories]);
 
   return (
     <ScrollView contentInsetAdjustmentBehavior="automatic" style={{ flex: 1, backgroundColor: theme.background }}>
@@ -95,7 +111,7 @@ export function PlanScreen() {
           <View style={{ flex: 1, width: '100%', gap: space.md }}>
             <SectionHeader title="Goals" />
             {goals.length ? goals.map((goal) => {
-              const progress = repository.getGoalProgress(goal.id);
+                          const progress = goalProgress.get(goal.id) ?? 0;
               const displayProgress = Math.max(0, progress);
               const ratio = goal.targetMinor > 0 ? displayProgress / goal.targetMinor : 0;
               const tile = toneColors(goal.color, theme.staticSurface, theme.staticText, theme.mode === 'dark');

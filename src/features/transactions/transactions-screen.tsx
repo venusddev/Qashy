@@ -47,11 +47,13 @@ export function TransactionsScreen() {
     .filter((item) => item.kind !== 'transfer')
     .map((item) => item.kind))];
   const compatibleCategoryKind = selectedKinds.length === 1 ? selectedKinds[0] : null;
-  const transactions = repository.queryTransactions({
-      search,
-      kinds: kind !== 'all' && kind !== 'upcoming' ? [kind] : undefined,
-      statuses: kind === 'upcoming' ? ['upcoming'] : kind === 'all' ? ['posted', 'upcoming'] : ['posted'],
-    }, state.transactions);
+  // The repository reads state.categories internally for hierarchy matching.
+    const transactions = useMemo(() => repository.queryTransactions({
+        search,
+        kinds: kind !== 'all' && kind !== 'upcoming' ? [kind] : undefined,
+        statuses: kind === 'upcoming' ? ['upcoming'] : kind === 'all' ? ['posted', 'upcoming'] : ['posted'],
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- repository reads state.categories internally
+        }, state.transactions), [repository, search, kind, state.transactions, state.categories]);
   const sections = useMemo(() => {
     const groups = new Map<string, typeof transactions>();
     transactions.forEach((transaction) => {

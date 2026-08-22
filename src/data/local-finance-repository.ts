@@ -860,35 +860,38 @@ export class LocalFinanceRepository implements FinanceRepository {
 
   queryTransactions(query: TransactionQuery = {}, snapshot = this.state.transactions) {
     const normalizedSearch = query.search?.trim().toLocaleLowerCase();
-    let result = this.active(snapshot).filter((transaction) => {
-      if (normalizedSearch && !`${transaction.title} ${transaction.note}`.toLocaleLowerCase().includes(normalizedSearch)) return false;
-      if (
-        query.accountIds?.length &&
-        !query.accountIds.includes(transaction.accountId) &&
-        !(transaction.kind === 'transfer' && transaction.destinationAccountId && query.accountIds.includes(transaction.destinationAccountId))
-      ) return false;
-      // Hierarchy-aware, matching `budgetSpend` and goal progress. Selecting a
-      // parent category used to return nothing for transactions filed under its
-      // children, so the same category could read "spent 240.00" in a budget while
-      // the transaction list filtered to it came back empty.
-      if (query.categoryIds?.length && !this.categoryMatches(transaction.categoryId, query.categoryIds)) return false;
-      if (query.tagIds?.length && !query.tagIds.some((id) => transaction.tagIds.includes(id))) return false;
-      if (query.kinds?.length && !query.kinds.includes(transaction.kind)) return false;
-      if (query.statuses?.length && !query.statuses.includes(transaction.status)) return false;
-      if (query.fromDate && transaction.localDate < query.fromDate) return false;
-      if (query.toDate && transaction.localDate > query.toDate) return false;
-      if (query.minMinor !== undefined && transaction.baseAmountMinor < query.minMinor) return false;
-      if (query.maxMinor !== undefined && transaction.baseAmountMinor > query.maxMinor) return false;
-      return true;
-    });
-    result = result.sort((a, b) => {
-      if (query.sort === 'oldest') return a.localDate.localeCompare(b.localDate) || a.createdAt.localeCompare(b.createdAt);
-      if (query.sort === 'amount-desc') return b.baseAmountMinor - a.baseAmountMinor;
-      return b.localDate.localeCompare(a.localDate) || b.createdAt.localeCompare(a.createdAt);
-    });
-    const offset = query.offset ?? 0;
-    return result.slice(offset, query.limit ? offset + query.limit : undefined);
-  }
+      const matchesCategory = query.categoryIds?.length ? this.categoryMatcher(query.categoryIds) : null;
+      let result = this.active(snapshot).filter((transaction) => {
+        if (normalizedSearch && !`${transaction.title} ${transaction.note}`.toLocaleLowerCase().includes(normalizedSearch)) return false;
+        if (
+          query.accountIds?.length &&
+          !query.accountIds.includes(transaction.accountId) &&
+          !(transaction.kind === 'transfer' && transaction.destinationAccountId && query.accountIds.includes(transaction.destinationAccountId))
+        ) return false;
+        // Hierarchy-aware, matching `budgetSpend` and goal progress. Selecting a
+        // parent category used to return nothing for transactions filed under its
+        // children, so the same category could read "spent 240.00" in a budget while
+        // the transaction list filtered to it came back empty.
+        if (matchesCategory && !matchesCategory(transaction.categoryId)) return false;
+        if (query.tagIds?.length && !query.tagIds.some((id) => transaction.tagIds.includes(id))) return false;
+        if (query.kinds?.length && !query.kinds.includes(transaction.kind)) return false;
+        if (query.statuses?.length && !query.statuses.includes(transaction.status)) return false;
+        if (query.fromDate && transaction.localDate < query.fromDate) return false;
+        if (query.toDate && transaction.localDate > query.toDate) return false;
+        if (query.minMinor !== undefined && transaction.baseAmountMinor < query.minMinor) return false;
+        if (query.maxMinor !== undefined && transaction.baseAmountMinor > query.maxMinor) return false;
+        return true;
+      });
+      if (query.sort !== false) {
+        result = result.sort((a, b) => {
+          if (query.sort === 'oldest') return a.localDate.localeCompare(b.localDate) || a.createdAt.localeCompare(b.createdAt);
+          if (query.sort === 'amount-desc') return b.baseAmountMinor - a.baseAmountMinor;
+          return b.localDate.localeCompare(a.localDate) || b.createdAt.localeCompare(a.createdAt);
+        });
+      }
+      const offset = query.offset ?? 0;
+      return result.slice(offset, query.limit ? offset + query.limit : undefined);
+    }
 
   getDashboard(fromDate: string, toDate: string): DashboardSummary {
     this.assertDate(fromDate);
@@ -897,30 +900,28 @@ export class LocalFinanceRepository implements FinanceRepository {
     if (this.daySpan(fromDate, toDate) > MAX_DASHBOARD_DAYS) {
       throw new Error('Choose a dashboard range no longer than a century.');
     }
-    const posted = this.queryTransactions({ fromDate, toDate, statuses: ['posted'] });
-    const allPosted = this.queryTransactions({ statuses: ['posted'], sort: 'oldest' });
+    const posted = this.queryTransactions({ fromDate, toDate, statuses: ['posted'], sort: false });
+    const allPosted = this.queryTransactions({ statuses: ['posted'], sort: false });
     const accounts = this.active(this.state.accounts);
-    const accountBalances = accounts.map((account) => {
-      let balanceMinor = account.openingBalanceMinor;
-      for (const transaction of allPosted) {
-        if (transaction.accountId === account.id) {
-          if (transaction.kind === 'expense' || transaction.kind === 'transfer') {
-            balanceMinor = subtractMinor(balanceMinor, transaction.amountMinor, `${account.name} balance`);
-          }
-          if (transaction.kind === 'income') {
-            balanceMinor = addMinor(balanceMinor, transaction.amountMinor, `${account.name} balance`);
-          }
-        }
-        if (transaction.kind === 'transfer' && transaction.destinationAccountId === account.id) {
-          balanceMinor = addMinor(
-            balanceMinor,
-            transaction.destinationAmountMinor ?? 0,
-            `${account.name} balance`,
-          );
-        }
+    // One pass over every posted transaction keeps balances O(n + accounts)
+    // instead of O(accounts × n); a running total does not need the sort.
+    const balances = new Map(accounts.map((account) => [account.id, account.openingBalanceMinor]));
+    for (const transaction of allPosted) {
+      if (transaction.kind === 'expense' || transaction.kind === 'transfer') {
+        const current = balances.get(transaction.accountId);
+        if (current !== undefined) balances.set(transaction.accountId, subtractMinor(current, transaction.amountMinor, 'Account balance'));
       }
-      return { account, balanceMinor };
-    })
+      if (transaction.kind === 'income') {
+        const current = balances.get(transaction.accountId);
+        if (current !== undefined) balances.set(transaction.accountId, addMinor(current, transaction.amountMinor, 'Account balance'));
+      }
+      if (transaction.kind === 'transfer' && transaction.destinationAccountId) {
+        const current = balances.get(transaction.destinationAccountId);
+        if (current !== undefined) balances.set(transaction.destinationAccountId, addMinor(current, transaction.destinationAmountMinor ?? 0, 'Account balance'));
+      }
+    }
+    const accountBalances = accounts
+      .map((account) => ({ account, balanceMinor: balances.get(account.id) ?? account.openingBalanceMinor }))
       // An archived account still holds real money. Dropping it here removed its
       // balance from net worth while its transactions kept counting toward the
       // income and expense totals, so the summary contradicted itself: deleting
@@ -928,31 +929,43 @@ export class LocalFinanceRepository implements FinanceRepository {
       // account on screen to explain where the money went. Hide an archived
       // account only once it is actually empty.
       .filter(({ account, balanceMinor }) => !account.archived || balanceMinor !== 0);
-    const incomeMinor = sumMinor(
-      posted.filter((item) => item.kind === 'income').map((item) => item.baseAmountMinor),
-      'Income total',
-    );
-    const expenseMinor = sumMinor(
-      posted.filter((item) => item.kind === 'expense').map((item) => item.baseAmountMinor),
-      'Expense total',
-    );
     const expenseCategories = this.active(this.state.categories)
       .filter((category) => category.kind === 'expense');
-    const categorySpend: DashboardSummary['categorySpend'] = expenseCategories
-      .map((category) => ({
-        category,
-        amountMinor: sumMinor(posted
-          .filter((item) => item.kind === 'expense' && item.categoryId === category.id)
-          .map((item) => item.baseAmountMinor), `${category.name} spending`),
-      }))
-      .filter((item) => item.amountMinor > 0);
     const expenseCategoryIds = new Set(expenseCategories.map((category) => category.id));
-    const uncategorizedMinor = sumMinor(posted
-      .filter((item) =>
-        item.kind === 'expense' &&
-        (!item.categoryId || !expenseCategoryIds.has(item.categoryId)),
-      )
-      .map((item) => item.baseAmountMinor), 'Uncategorized spending');
+    // One pass over the range for income, expense, category, uncategorized, and
+        // daily totals, tracking the 5 newest rows for recentTransactions so the
+        // whole range never needs sorting.
+        let incomeMinor = 0;
+        let expenseMinor = 0;
+        const categoryTotals = new Map<string, number>();
+        const dayTotals = new Map<string, number>();
+        const recentTransactions: TransactionRecord[] = [];
+        let uncategorizedMinor = 0;
+        for (const item of posted) {
+          if (item.kind === 'income') {
+            incomeMinor = addMinor(incomeMinor, item.baseAmountMinor, 'Income total');
+          } else if (item.kind === 'expense') {
+            expenseMinor = addMinor(expenseMinor, item.baseAmountMinor, 'Expense total');
+            dayTotals.set(item.localDate, addMinor(dayTotals.get(item.localDate) ?? 0, item.baseAmountMinor, 'Daily spending'));
+            if (item.categoryId && expenseCategoryIds.has(item.categoryId)) {
+              categoryTotals.set(item.categoryId, addMinor(categoryTotals.get(item.categoryId) ?? 0, item.baseAmountMinor, 'Category spending'));
+            } else {
+              uncategorizedMinor = addMinor(uncategorizedMinor, item.baseAmountMinor, 'Uncategorized spending');
+            }
+          }
+          const insertAt = recentTransactions.findIndex((existing) =>
+            item.localDate > existing.localDate ||
+            (item.localDate === existing.localDate && item.createdAt > existing.createdAt));
+          if (insertAt === -1) {
+            if (recentTransactions.length < 5) recentTransactions.push(item);
+          } else {
+            recentTransactions.splice(insertAt, 0, item);
+            if (recentTransactions.length > 5) recentTransactions.pop();
+          }
+        }
+    const categorySpend: DashboardSummary['categorySpend'] = expenseCategories
+      .map((category) => ({ category, amountMinor: categoryTotals.get(category.id) ?? 0 }))
+      .filter((item) => item.amountMinor > 0);
     if (uncategorizedMinor > 0) {
       categorySpend.push({ category: null, amountMinor: uncategorizedMinor });
     }
@@ -972,13 +985,6 @@ export class LocalFinanceRepository implements FinanceRepository {
       budgetEntries.map((entry) => entry.spentMinor),
       'Budget spending total',
     );
-    const dayTotals = new Map<string, number>();
-    posted.filter((item) => item.kind === 'expense').forEach((item) => {
-      dayTotals.set(
-        item.localDate,
-        addMinor(dayTotals.get(item.localDate) ?? 0, item.baseAmountMinor, 'Daily spending'),
-      );
-    });
     const dailySpend: DashboardSummary['dailySpend'] = [];
     let spendDate = fromDate;
     let spendGuard = 0;
@@ -1028,7 +1034,7 @@ export class LocalFinanceRepository implements FinanceRepository {
       budgetSpentMinor,
       accountBalances,
       categorySpend,
-      recentTransactions: posted.slice(0, 5),
+      recentTransactions,
       upcomingTransactions: this.queryTransactions({ statuses: ['upcoming'], sort: 'oldest', limit: 5 }),
       dailySpend,
       missingExchangeRates,
@@ -2006,17 +2012,22 @@ export class LocalFinanceRepository implements FinanceRepository {
     return Math.max(floor, Math.min(ceiling, rolloverMinor));
   }
 
-  private categoryMatches(categoryId: string | null, selectedIds: string[]) {
-    if (!categoryId) return false;
+  // Pre-indexes the selected ids and the category tree once so hierarchy
+  // matching is O(depth) per transaction instead of O(categories) per transaction.
+  private categoryMatcher(selectedIds: string[]) {
     const selected = new Set(selectedIds);
-    let currentId: string | null = categoryId;
-    const visited = new Set<string>();
-    while (currentId && !visited.has(currentId)) {
-      if (selected.has(currentId)) return true;
-      visited.add(currentId);
-      currentId = this.state.categories.find((category) => category.id === currentId)?.parentId ?? null;
-    }
-    return false;
+    const byId = new Map(this.state.categories.map((category) => [category.id, category]));
+    return (categoryId: string | null) => {
+      if (!categoryId) return false;
+      let currentId: string | null = categoryId;
+      const visited = new Set<string>();
+      while (currentId && !visited.has(currentId)) {
+        if (selected.has(currentId)) return true;
+        visited.add(currentId);
+        currentId = byId.get(currentId)?.parentId ?? null;
+      }
+      return false;
+    };
   }
 
   private assertBudgetSetSafe(budgets: Budget[]) {
@@ -2033,9 +2044,10 @@ export class LocalFinanceRepository implements FinanceRepository {
   }
 
   private budgetSpend(filters: BudgetFilters, fromDate: string, toDate: string) {
-    return sumMinor(this.queryTransactions({ fromDate, toDate, statuses: ['posted'], kinds: ['expense'] })
+    const matchesCategory = filters.categoryIds.length ? this.categoryMatcher(filters.categoryIds) : null;
+    return sumMinor(this.queryTransactions({ fromDate, toDate, statuses: ['posted'], kinds: ['expense'], sort: false })
       .filter((item) => !filters.accountIds.length || filters.accountIds.includes(item.accountId))
-      .filter((item) => !filters.categoryIds.length || this.categoryMatches(item.categoryId, filters.categoryIds))
+      .filter((item) => !matchesCategory || matchesCategory(item.categoryId))
       .filter((item) => !filters.tagIds.length || filters.tagIds.some((id) => item.tagIds.includes(id)))
       .map((item) => item.baseAmountMinor), 'Budget spending');
   }
@@ -2442,9 +2454,10 @@ export class LocalFinanceRepository implements FinanceRepository {
       return addMinor(goal.initialMinor, manual, `${goal.name} progress`);
     }
     let linked = 0;
+    const matchesCategory = goal.linkedCategoryId ? this.categoryMatcher([goal.linkedCategoryId]) : null;
     for (const item of transactions) {
       if (item.deletedAt || item.status !== 'posted') continue;
-      if (goal.linkedCategoryId && !this.categoryMatches(item.categoryId, [goal.linkedCategoryId])) continue;
+      if (matchesCategory && !matchesCategory(item.categoryId)) continue;
       if (goal.kind === 'spending') {
         if (item.kind !== 'expense') continue;
         if (goal.linkedAccountId && item.accountId !== goal.linkedAccountId) continue;

@@ -29,13 +29,16 @@ export function useAnimatedMinorAmount(target: number) {
       cancelAnimationFrame(frameRef.current);
       frameRef.current = null;
     }
-    if (!mountedRef.current || reduceMotion || displayRef.current === target) {
+    const from = displayRef.current;
+    // A large jump (e.g. a new budget period or account switch) reads as a
+    // snap, not motion; counting up through it would feel sluggish.
+    const largeChange = Math.abs(target - from) > Math.max(Math.abs(from), Math.abs(target)) * 0.5;
+    if (!mountedRef.current || reduceMotion || from === target || largeChange) {
       mountedRef.current = true;
       displayRef.current = target;
       setDisplay(target);
       return;
     }
-    const from = displayRef.current;
     const start = Date.now();
     const step = () => {
       const progress = Math.min(1, (Date.now() - start) / COUNT_DURATION);
