@@ -1,4 +1,4 @@
-<H1 div align="center"> Qashy </H1>
+<H2 div align="center"> Qashy </H2>
 
 <div align="center">
   
@@ -11,10 +11,10 @@ cool app, THANK YOU FOR YOUR ATTENTION TO THIS MATTER
 
 <div align="left">
 
-### Architecture
+<H3 div align="center"> Architecture </H3>
 Qashy is an Expo app backed by a local `FinanceRepository`. Native builds persist records in SQLite, while the PWA uses Dexie and IndexedDB. Open web tabs observe local database changes and reconcile their repository snapshots without sending finance data to a server.
 
-### Sync
+<H3 div align="center"> Sync </H3>
 Qashy can sync between your own devices. It is **off until you turn it on**, there is no account, and it is
 end-to-end encrypted with keys that never leave your devices.
 
@@ -40,8 +40,7 @@ script out is the actual defence, and `e2e/qashy.spec.ts` fails the build on any
 is deliberately absent because a `<meta>` policy cannot deliver it; if you host Qashy yourself, send
 `X-Frame-Options: DENY` (or `frame-ancestors 'none'`) as a real response header.
 
-### App Store export compliance
-
+<H3 div align="center"> App Store export compliance </H3>
 `app.json` declares `ITSAppUsesNonExemptEncryption: false`. That predates sync, so it has been re-reviewed
 rather than inherited:
 
@@ -54,9 +53,9 @@ That is the standard exemption, so `false` still reads as correct. **It is a com
 name on it, not a code decision** — confirm it against current App Store guidance at submission time, since
 the criteria change independently of this repository.
 
-### Roadmap
+<H3 div align="center"> Roadmap </H3>
 TBD
 
-### Installation
+<H1 div align="center"> Installation </H1>
 TBD
 </div>
