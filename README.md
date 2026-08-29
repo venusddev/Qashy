@@ -56,6 +56,6 @@ the criteria change independently of this repository.
 <H3 div align="center"> Roadmap </H3>
 TBD
 
-<H1 div align="center"> Installation </H1>
+<H3 div align="center"> Installation </H3>
 TBD
 </div>
