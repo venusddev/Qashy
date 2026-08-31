@@ -4,6 +4,9 @@
   
 private and fully open source budgeting app
 
+### Update
+I am archiving this repository as it was mostly a fun little experiment, but actually publishing or doing anything with the app carries large risks due to the nature of not properly reviewed AI generated code, and as it produced too many files for me to read I'm also unable to properly review it, you may do whatever you want with the code but I'm gonna be focusing efforts on just creating my own app
+
 ### Description
 cool app, THANK YOU FOR YOUR ATTENTION TO THIS MATTER
 
