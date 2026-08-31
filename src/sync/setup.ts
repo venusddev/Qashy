@@ -1,0 +1,748 @@
+/**
+ * Turning sync on, off, and inside out.
+ *
+ * `SyncRuntime` answers "how do I reach my peers"; this file answers "am I in a vault at all,
+ * and who else is". Those are different questions with different lifetimes — the runtime is
+ * rebuilt whenever an address changes, whereas the things here happen a handful of times in a
+ * device's life — so they are deliberately separate objects with separate tests.
+ *
+ * Every function here is a *whole* state transition. There is no `createIdentity` for a caller
+ * to compose with `writeMeta`, because the intermediate states are all wrong: a device with an
+ * identity but no key is unpaired, a device with a key but no roster rejects every batch it
+ * receives, and a device whose `records` were never converted to ops is one that will silently
+ * fail to tell anybody about the data it already has. So each function takes what it needs and
+ * leaves the device in exactly one of the states `readSyncStatus` can describe.
+ *
+ * The ordering rule that shows up in `enable` and `adopt` alike: **the keystore is written
+ * before the transaction, never after.** A key nobody references is inert and is overwritten by
+ * the next attempt; a `sync_meta` claiming a `deviceId` whose key was never stored is a device
+ * that says it is paired and cannot prove it.
+ */
+
+import type { StorageAdapter, StorageTx } from '@/data/storage-adapter';
+import { syncRowKey } from '@/data/sync-tables';
+import { runGenesisMigration } from '@/data/sync-genesis';
+import {
+  SYNC_META,
+  appendActivity,
+  readChainState,
+  readControlOps,
+  readActivity,
+  readHeldChains,
+  readMeta,
+  storeOps,
+  writeChainState,
+  writeMeta,
+} from '@/data/sync-store';
+import type { SyncActivityRow } from '@/data/sync-tables';
+import {
+  createDeviceIdentity,
+  createVaultRootKey,
+  OP_SCHEMA_VERSION,
+  type DeviceIdentity,
+  type VaultRootKey,
+} from '@/sync/crypto';
+import { activityEntry, hasUnsealed, quarantineCount, readRoster, writePeers, type Peer } from '@/sync/engine';
+import { KeystoreError, type KeystoreStatus, type SyncKeystore } from '@/sync/keystore';
+import { buildOp, sealOp, tick, type SyncOpBody } from '@/sync/oplog';
+import {
+  SYNC_CONTROL_ENTITY,
+  deriveRevocationState,
+  type RevocationMode,
+  type RevocationPolicy,
+  type RevocationProposal,
+} from '@/sync/revocation';
+import {
+  readEndpoints,
+  writeEndpoints,
+  type EndpointPatch,
+  type SyncEndpoints,
+} from '@/sync/transport/endpoints';
+import { readRelayHealth, type RelayHealth } from '@/sync/transport/relay-health';
+import { makeId, nowIso as defaultNowIso } from '@/utils/entity';
+
+/**
+ * The epoch a brand-new vault starts on.
+ *
+ * One, not zero, and `pairing.ts` depends on it: a pairing frame is sealed under epoch 0
+ * because the joiner cannot know the real one until the frame carrying it opens, so a live
+ * vault has to start above that or the two contexts could collide.
+ */
+export const INITIAL_EPOCH = 1;
+
+/** How many activity lines the sync screen shows. The table keeps more; nobody reads them. */
+export const ACTIVITY_VIEW_LIMIT = 50;
+
+export interface SyncSetupDeps {
+  readonly storage: StorageAdapter;
+  readonly keystore: SyncKeystore;
+  readonly nowIso?: () => string;
+}
+
+/** How this device introduces itself. Both fields are display-only; nothing keys off them. */
+export interface DeviceProfile {
+  readonly name: string;
+  readonly platform: string;
+}
+
+/**
+ * Everything the sync screens render, in one read.
+ *
+ * One object rather than a dozen hooks because these values are only meaningful together: a
+ * roster of three devices means something different when `enabled` is false, and a relay
+ * verdict of `unreachable` means nothing at all when `keystore` is `empty`. Assembling them in
+ * one transaction also means the screen can never show a peer list from before a revocation
+ * beside an activity log from after it.
+ */
+export interface SyncStatus {
+  readonly enabled: boolean;
+  readonly keystore: KeystoreStatus;
+  /** Empty strings until this device has been enrolled in a vault. */
+  readonly deviceId: string;
+  readonly deviceName: string;
+  readonly epoch: number;
+  /** The vault's base currency, which every incoming batch is checked against. */
+  readonly baseCurrency: string;
+  readonly revocation: RevocationPolicy;
+  readonly proposals: readonly RevocationProposal[];
+  /** Peers only — this device is never in its own roster. Includes revoked ones. */
+  readonly peers: readonly Peer[];
+  readonly endpoints: SyncEndpoints;
+  /** Cached, never measured here. Measuring is `SyncRuntime.checkRelay`. */
+  readonly relay: RelayHealth;
+  readonly activity: readonly SyncActivityRow[];
+  readonly quarantined: number;
+  /** Local edits written but not yet signed, so not yet sendable. Cleared by the next pass. */
+  readonly pending: boolean;
+  /** When ops last moved in either direction, from the activity log. */
+  readonly lastSyncedAt: string | null;
+}
+
+/** The state of a device that has never been near a vault. */
+const UNPAIRED = { deviceId: '', deviceName: '', epoch: 0, baseCurrency: '' } as const;
+
+const toInt = (value: string | undefined, fallback: number) => {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : fallback;
+};
+
+const parseRevocationMode = (value: string | undefined): RevocationMode =>
+  value === 'quorum' || value === 'owner' ? value : 'any';
+
+/** Ops moved, in either direction. What "last synced" honestly means. */
+const MOVED = new Set(['sent', 'received']);
+
+/** Tables that belong to the vault being left, rather than to the finance records themselves. */
+const FORGOTTEN_VAULT_TABLES = [
+  'syncOps',
+  'syncState',
+  'syncPeers',
+  'syncQuarantine',
+  'syncActivity',
+] as const;
+
+/**
+ * Drops the local copy of a vault's sync history while leaving the finance records and the
+ * user's transport configuration alone. A later setup must genesis the records under its new
+ * identity; retaining the old chain would make the new identity continue at the old sequence
+ * and would make a peer list from the old vault look current.
+ */
+async function clearForgottenVaultState(tx: StorageTx): Promise<void> {
+  for (const name of FORGOTTEN_VAULT_TABLES) {
+    const table = tx.table(name);
+    const rows = await table.all();
+    if (rows.length) await table.delete(rows.map((row) => syncRowKey(name, row)));
+  }
+
+  await tx.table('syncMeta').delete([
+    SYNC_META.deviceId,
+    SYNC_META.deviceName,
+    SYNC_META.epoch,
+    SYNC_META.seq,
+    SYNC_META.headHash,
+    SYNC_META.hlcWall,
+    SYNC_META.hlcCounter,
+    SYNC_META.baseCurrency,
+    SYNC_META.ownerDeviceId,
+    SYNC_META.revocationMode,
+    SYNC_META.genesisAt,
+    SYNC_META.enabled,
+    SYNC_META.relayCursor,
+    SYNC_META.relayStatus,
+    SYNC_META.relayCheckedAt,
+    SYNC_META.relayDetail,
+    SYNC_META.relayFailures,
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Reading
+// ---------------------------------------------------------------------------
+
+/**
+ * The whole picture, with no network access.
+ *
+ * Safe to call on every foreground and after every mutation. A database restore can leave the
+ * finance records beside sync metadata whose device-only key was not restored; that state is
+ * discarded here before it can be paired with a newly generated identity.
+ */
+export async function readSyncStatus(deps: SyncSetupDeps): Promise<SyncStatus> {
+  // Outside the transaction on purpose. The keystore is the Keychain or a WebCrypto unwrap,
+  // and awaiting either inside `work` would leave Dexie's promise zone mid-transaction.
+  const keystore = await readKeystoreStatus(deps.keystore);
+  // An unlocked key is the authority for this device's membership. An empty keystore paired
+  // with leftover vault rows is the inverse failure: the database was restored without the
+  // device-only key, so those rows are discarded in the transaction below before setup can
+  // create a new identity over them.
+  const vault = keystore === 'unlocked' ? await deps.keystore.read() : null;
+
+  const status = await deps.storage.transact(async (tx) => {
+    let meta = await readMeta(tx, [
+      SYNC_META.enabled,
+      SYNC_META.deviceId,
+      SYNC_META.deviceName,
+      SYNC_META.epoch,
+      SYNC_META.seq,
+      SYNC_META.headHash,
+      SYNC_META.baseCurrency,
+      SYNC_META.genesisAt,
+      SYNC_META.ownerDeviceId,
+      SYNC_META.revocationMode,
+    ]);
+
+    if (keystore === 'empty' && (await hasForgottenVaultState(tx, meta))) {
+      // The key is the authority for membership. Without it, this metadata and its chain can
+      // never be resumed, and allowing setup to continue over it would pair a new identity with
+      // old signed history. Keep finance records and transport configuration, but start a fresh
+      // vault boundary before the next explicit setup action.
+      await clearForgottenVaultState(tx);
+      meta = new Map();
+    }
+
+    const roster = await readRoster(tx);
+    const activity = await readActivity(tx, ACTIVITY_VIEW_LIMIT);
+    const moved = activity.find((row) => MOVED.has(row.kind) && row.count > 0);
+
+    const hasVault = keystore !== 'empty' && (keystore !== 'unlocked' || vault !== null);
+    const deviceId = keystore === 'empty' ? '' : vault?.identity.deviceId ?? meta.get(SYNC_META.deviceId) ?? '';
+    const initial: RevocationPolicy = {
+      ownerDeviceId: meta.get(SYNC_META.ownerDeviceId) ?? deviceId,
+      mode: parseRevocationMode(meta.get(SYNC_META.revocationMode)),
+    };
+    const controls = await readControlOps(tx);
+    const revocation = deviceId
+      ? deriveRevocationState(controls, roster, initial, deviceId)
+      : { ...initial, proposals: [], revocations: [] };
+
+    return {
+      enabled: hasVault && meta.get(SYNC_META.enabled) === '1',
+      keystore,
+      deviceId: deviceId || UNPAIRED.deviceId,
+      deviceName: keystore === 'empty' ? UNPAIRED.deviceName : meta.get(SYNC_META.deviceName) ?? UNPAIRED.deviceName,
+      epoch: keystore === 'empty' ? UNPAIRED.epoch : vault?.epoch ?? toInt(meta.get(SYNC_META.epoch), UNPAIRED.epoch),
+      baseCurrency: keystore === 'empty' ? UNPAIRED.baseCurrency : meta.get(SYNC_META.baseCurrency) ?? UNPAIRED.baseCurrency,
+      revocation,
+      proposals: revocation.proposals.filter((proposal) => proposal.approvals.length < proposal.required),
+      peers: [...roster.values()].sort((first, second) =>
+        first.addedAt < second.addedAt ? -1 : first.addedAt > second.addedAt ? 1 : 0,
+      ),
+      endpoints: await readEndpoints(tx),
+      relay: await readRelayHealth(tx),
+      activity,
+      quarantined: await quarantineCount(tx),
+      lastSyncedAt: moved?.recordedAt ?? null,
+    };
+  });
+
+  // A second read-only transaction rather than a scan inlined above, because `hasUnsealed`
+  // opens its own. Two reads can in principle straddle a write, which for a status display
+  // is worth strictly less than having one definition of "not yet signed".
+  return {
+    ...status,
+    pending: status.deviceId ? await hasUnsealed(deps.storage, status.deviceId) : false,
+  };
+}
+
+async function hasForgottenVaultState(
+  tx: StorageTx,
+  meta: ReadonlyMap<string, string>,
+): Promise<boolean> {
+  if (
+    meta.has(SYNC_META.deviceId)
+    || meta.has(SYNC_META.deviceName)
+    || meta.has(SYNC_META.epoch)
+    || meta.has(SYNC_META.seq)
+    || meta.has(SYNC_META.headHash)
+    || meta.has(SYNC_META.baseCurrency)
+    || meta.has(SYNC_META.genesisAt)
+    || meta.has(SYNC_META.enabled)
+  ) return true;
+
+  for (const name of FORGOTTEN_VAULT_TABLES) {
+    if ((await tx.table(name).all()).length) return true;
+  }
+  return false;
+}
+
+/**
+ * The keystore's state, with a corrupt store reported rather than thrown.
+ *
+ * `status()` is allowed to fail on a platform with no secure storage at all, and the sync
+ * screen has to render on that platform too — saying "this device can't store a key safely" is
+ * the entire point of the `unavailable` state, and it cannot say it from an error boundary.
+ */
+async function readKeystoreStatus(keystore: SyncKeystore): Promise<KeystoreStatus> {
+  try {
+    return await keystore.status();
+  } catch (error) {
+    if (error instanceof KeystoreError) return error.code === 'locked' ? 'locked' : 'unavailable';
+    throw error;
+  }
+}
+
+/**
+ * This device's identity, for a flow that is about to speak for it.
+ *
+ * Returns null when the device holds no vault, which both pairing roles handle differently:
+ * the host cannot proceed at all, and the joiner is *expected* to have none and makes a fresh
+ * one. Never creates anything, so calling it has no side effects a cancelled flow must undo.
+ */
+export async function readIdentity(deps: SyncSetupDeps): Promise<DeviceIdentity | null> {
+  const vault = await deps.keystore.read();
+  return vault?.identity ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Becoming a vault
+// ---------------------------------------------------------------------------
+
+export interface EnableResult {
+  readonly deviceId: string;
+  /** Ops written by the genesis conversion. Zero on a device with no data yet. */
+  readonly opCount: number;
+}
+
+/**
+ * Creates a vault on this device and switches sync on.
+ *
+ * The first device's side of pairing, and the only place a `VaultRootKey` is ever created. It
+ * is also where this device's existing data becomes history: `runGenesisMigration` re-describes
+ * every row already on disk as `create` ops, which is what lets a populated device pair with
+ * another populated device without either one's data appearing out of nowhere.
+ *
+ * Idempotent by refusal rather than by re-running. A second call on a device that already holds
+ * a vault would mint a second root key and orphan every peer paired under the first, so it
+ * throws instead — "already set up" is a UI state, not an operation to repeat.
+ */
+export async function enableSync(
+  deps: SyncSetupDeps,
+  profile: DeviceProfile,
+): Promise<EnableResult> {
+  // A plain Error, not a `KeystoreError`: nothing is wrong with the keystore. Reaching here
+  // means the caller skipped the status check, which is a bug rather than a state to render.
+  if (await deps.keystore.read()) {
+    throw new Error('This device is already part of a vault.');
+  }
+
+  const identity = createDeviceIdentity();
+  const vaultKey = createVaultRootKey();
+  await deps.keystore.write({ vaultKey, identity, epoch: INITIAL_EPOCH });
+
+  const at = (deps.nowIso ?? defaultNowIso)();
+  const opCount = await deps.storage.transact(async (tx) => {
+    await enrol(tx, {
+      deviceId: identity.deviceId,
+      profile,
+      epoch: INITIAL_EPOCH,
+      baseCurrency: await readLocalBaseCurrency(tx),
+      ownerDeviceId: identity.deviceId,
+      revocationMode: 'any',
+    });
+    const genesis = await runGenesisMigration(tx, identity.deviceId, at);
+    await appendActivity(tx, [activityEntry({ kind: 'paired', recordedAt: at, count: 0 })]);
+    return genesis.opCount;
+  });
+
+  return { deviceId: identity.deviceId, opCount };
+}
+
+/**
+ * Joins a vault another device already holds.
+ *
+ * The joiner's half of pairing, called with what `PairingJoiner` returned and the identity it
+ * used to earn it — the same identity, necessarily, because the host has already written that
+ * device id and those public keys into its own roster.
+ *
+ * Key, roster, epoch, and base currency land together. A device that adopted the key but not
+ * the roster would reject every batch its new peers send it as coming from an unknown device,
+ * and would look, from both ends, exactly like a pairing that had silently failed.
+ */
+export async function adoptVault(
+  deps: SyncSetupDeps,
+  input: {
+    readonly identity: DeviceIdentity;
+    readonly vaultKey: VaultRootKey;
+    readonly epoch: number;
+    readonly baseCurrency: string;
+    readonly ownerDeviceId?: string;
+    readonly revocationMode?: RevocationMode;
+    readonly peers: readonly Peer[];
+    readonly profile: DeviceProfile;
+  },
+): Promise<EnableResult> {
+  await deps.keystore.write({
+    vaultKey: input.vaultKey,
+    identity: input.identity,
+    epoch: input.epoch,
+  });
+
+  const at = (deps.nowIso ?? defaultNowIso)();
+  const opCount = await deps.storage.transact(async (tx) => {
+    await enrol(tx, {
+      deviceId: input.identity.deviceId,
+      profile: input.profile,
+      epoch: input.epoch,
+      // The vault's value wins over this device's own. A joiner that had not been onboarded
+      // has nothing to re-base and adopts it outright; one that had, only got this far because
+      // `PairingJoiner` already checked the two agree.
+      baseCurrency: input.baseCurrency || (await readLocalBaseCurrency(tx)),
+      ownerDeviceId: input.ownerDeviceId,
+      revocationMode: input.revocationMode,
+    });
+    await writePeers(tx, input.peers);
+    // This device's own rows become ops too. Skipping it here is the mistake that makes a
+    // two-populated-vault pairing look like it worked and then quietly sync in one direction.
+    const genesis = await runGenesisMigration(tx, input.identity.deviceId, at);
+    await appendActivity(
+      tx,
+      input.peers.map((peer) =>
+        activityEntry({ kind: 'paired', recordedAt: at, peerId: peer.deviceId }),
+      ),
+    );
+    return genesis.opCount;
+  });
+
+  return { deviceId: input.identity.deviceId, opCount };
+}
+
+/**
+ * Records a device this one just let in. The host's half of pairing.
+ *
+ * Only a roster row: the host's key, epoch, and history all already exist, and this is the one
+ * pairing outcome that changes nothing about the vault itself.
+ */
+export async function recordPairedPeer(deps: SyncSetupDeps, peer: Peer): Promise<void> {
+  const at = (deps.nowIso ?? defaultNowIso)();
+  await deps.storage.transact(async (tx) => {
+    await writePeers(tx, [peer]);
+    await appendActivity(tx, [
+      activityEntry({ kind: 'paired', recordedAt: at, peerId: peer.deviceId }),
+    ]);
+  });
+  await appendMembershipControl(deps, () => ({ control: 'add', deviceId: peer.deviceId }));
+}
+
+/** The `sync_meta` half of joining a vault, shared by both ways of doing it. */
+async function enrol(
+  tx: StorageTx,
+  input: {
+    readonly deviceId: string;
+    readonly profile: DeviceProfile;
+    readonly epoch: number;
+    readonly baseCurrency: string;
+    readonly ownerDeviceId?: string;
+    readonly revocationMode?: RevocationMode;
+  },
+): Promise<void> {
+  await writeMeta(tx, {
+    [SYNC_META.deviceId]: input.deviceId,
+    [SYNC_META.deviceName]: input.profile.name.trim() || input.profile.platform,
+    [SYNC_META.epoch]: String(input.epoch),
+    [SYNC_META.baseCurrency]: input.baseCurrency,
+    [SYNC_META.enabled]: '1',
+    [SYNC_META.ownerDeviceId]: input.ownerDeviceId ?? input.deviceId,
+    [SYNC_META.revocationMode]: input.revocationMode ?? 'any',
+  });
+}
+
+/**
+ * This device's own base currency, from the settings row rather than from a caller.
+ *
+ * Read here rather than passed in because getting it wrong is unrecoverable: it is the value
+ * every peer's batch is checked against, and a device that recorded the wrong one refuses every
+ * batch forever with a mismatch it cannot be talked out of. `''` on a device that has not
+ * finished onboarding, which is a legitimate state — it then accepts whatever it pairs with.
+ */
+async function readLocalBaseCurrency(tx: StorageTx): Promise<string> {
+  const [settings] = await tx.readAll('settings');
+  return settings && 'baseCurrency' in settings ? settings.baseCurrency : '';
+}
+
+// ---------------------------------------------------------------------------
+// Changing the arrangement
+// ---------------------------------------------------------------------------
+
+/** Renames this device. Peers keep the old name until they are next told one at pairing. */
+export const renameDevice = (deps: SyncSetupDeps, name: string) =>
+  deps.storage.transact(
+    (tx) => writeMeta(tx, { [SYNC_META.deviceName]: name.trim() }),
+    { silent: true },
+  );
+
+/**
+ * Removes a device from the vault.
+ *
+ * The row is marked, never deleted, and the difference matters: its past ops stay attributable,
+ * so history this vault already accepted from it remains verifiable rather than becoming a
+ * batch from an unknown author that every peer must then reject.
+ *
+ * Revocation is forward-only. It stops that device's *future* ops from being accepted here, and
+ * `rotateVaultKey` is what stops it reading the drop-box — it cannot take back the plaintext the
+ * device already has, and the UI says so.
+ */
+const initialPolicy = (meta: ReadonlyMap<string, string>, deviceId: string): RevocationPolicy => ({
+  ownerDeviceId: meta.get(SYNC_META.ownerDeviceId) ?? deviceId,
+  mode: parseRevocationMode(meta.get(SYNC_META.revocationMode)),
+});
+
+const controlBody = (hlc: string, payload: Readonly<Record<string, unknown>>): SyncOpBody => ({
+  hlc: hlc as SyncOpBody['hlc'],
+  // This deliberately remains an unknown entity to the finance projection. The sync engine
+  // stores and forwards it like any other signed op, while membership code interprets it.
+  entityType: SYNC_CONTROL_ENTITY as SyncOpBody['entityType'],
+  entityId: 'revocation',
+  kind: 'set',
+  payload,
+  schema: OP_SCHEMA_VERSION,
+});
+
+async function appendMembershipControl(
+  deps: SyncSetupDeps,
+  makePayload: (
+    state: ReturnType<typeof deriveRevocationState>,
+    roster: ReadonlyMap<string, Peer>,
+    deviceId: string,
+    heads: ReadonlyMap<string, { readonly seq: number }>,
+    at: string,
+  ) => Readonly<Record<string, unknown>>,
+): Promise<void> {
+  const vault = await deps.keystore.read();
+  if (!vault) throw new KeystoreError('There is no vault on this device.', 'empty');
+  const at = (deps.nowIso ?? defaultNowIso)();
+  await deps.storage.transact(async (tx) => {
+    const meta = await readMeta(tx, [SYNC_META.deviceId, SYNC_META.ownerDeviceId, SYNC_META.revocationMode]);
+    const deviceId = meta.get(SYNC_META.deviceId) ?? vault.identity.deviceId;
+    if (deviceId !== vault.identity.deviceId) throw new Error('This device identity does not match its vault.');
+    const roster = await readRoster(tx);
+    const existing = await readControlOps(tx);
+    const before = deriveRevocationState(existing, roster, initialPolicy(meta, deviceId), deviceId);
+    const held = await readHeldChains(tx);
+    const { clock, head } = await readChainState(tx);
+    const stamped = tick(clock, deviceId, Date.parse(at));
+    const payload = makePayload(before, roster, deviceId, held.heads, at);
+    const built = buildOp([controlBody(stamped.hlc, payload)], deviceId, head.seq, head.headHash);
+    const op = sealOp(built.ops[0], vault.identity.signing.secretKey);
+    const after = deriveRevocationState([...existing, op], roster, initialPolicy(meta, deviceId), deviceId);
+
+    await storeOps(tx, [op], 0);
+    await writeChainState(tx, { clock: stamped.clock, head: { seq: built.seq, headHash: built.headHash } });
+    const changed: Peer[] = [];
+    for (const decision of after.revocations) {
+      const peer = roster.get(decision.targetId);
+      if (peer && !peer.revokedAt) {
+        changed.push({
+          ...peer,
+          revokedAt: decision.at,
+          revokedSeq: Math.max(decision.cutoff, held.heads.get(decision.targetId)?.seq ?? 0),
+        });
+      }
+    }
+    if (changed.length) {
+      await writePeers(tx, changed);
+      await appendActivity(tx, changed.map((peer) => activityEntry({ kind: 'revoked', recordedAt: peer.revokedAt!, peerId: peer.deviceId })));
+    }
+  });
+}
+
+/** Starts or approves a signed removal under the vault's selected policy. */
+export async function revokePeer(deps: SyncSetupDeps, peerId: string): Promise<void> {
+  const exists = await deps.storage.transact(async (tx) => {
+    const peer = (await readRoster(tx)).get(peerId);
+    return Boolean(peer && !peer.revokedAt);
+  }, { silent: true });
+  if (!exists) return;
+  await appendMembershipControl(deps, (state, roster, deviceId, heads, at) => {
+    const cutoff = heads.get(peerId)?.seq ?? 0;
+    if (state.mode === 'quorum') {
+      const existing = state.proposals.find((proposal) => proposal.targetId === peerId && proposal.approvals.length < proposal.required);
+      if (existing) return { control: 'approve', proposalId: existing.id, targetId: peerId };
+      const voters = [deviceId, ...[...roster.values()].filter((peer) => !peer.revokedAt).map((peer) => peer.deviceId)].sort();
+      return { control: 'propose', proposalId: makeId(), targetId: peerId, voters, required: Math.ceil(voters.length / 2), cutoff, at };
+    }
+    return { control: 'revoke', targetId: peerId, cutoff, at };
+  });
+}
+
+export const setRevocationPolicy = (deps: SyncSetupDeps, mode: RevocationMode) =>
+  appendMembershipControl(deps, () => ({ control: 'policy', mode }));
+
+export const transferVaultOwnership = (deps: SyncSetupDeps, ownerDeviceId: string) =>
+  appendMembershipControl(deps, () => ({ control: 'owner', ownerDeviceId }));
+
+/** Validates and stores the transport configuration. Throws `EndpointError` on a bad address. */
+export const setEndpoints = (deps: SyncSetupDeps, patch: EndpointPatch) =>
+  deps.storage.transact((tx) => writeEndpoints(tx, patch));
+
+/**
+ * Switches sync back on for a device that already holds a vault.
+ *
+ * The other half of `disableSync` without `forget`, and the reason that option exists at all:
+ * pausing is meant to be a switch rather than a decision, and a switch that only travels one
+ * way would make "off for the afternoon" indistinguishable from leaving the vault.
+ *
+ * Refuses on a device with no key, because there is nothing to resume — that device has never
+ * paired, and the screen should be offering it pairing rather than a switch. `enableSync` is
+ * the function for that case and it refuses in the opposite direction, so between the two
+ * there is no state where both would work and no state where neither does.
+ */
+export async function resumeSync(deps: SyncSetupDeps): Promise<void> {
+  const vault = await deps.keystore.read();
+  if (!vault) {
+    throw new KeystoreError('There is no vault on this device to resume.', 'empty');
+  }
+
+  const at = (deps.nowIso ?? defaultNowIso)();
+  await deps.storage.transact(async (tx) => {
+    const meta = await readMeta(tx, [
+      SYNC_META.deviceId,
+      SYNC_META.deviceName,
+      SYNC_META.epoch,
+      SYNC_META.baseCurrency,
+      SYNC_META.genesisAt,
+    ]);
+    const complete = meta.get(SYNC_META.deviceId) === vault.identity.deviceId
+      && meta.get(SYNC_META.epoch) === String(vault.epoch)
+      && meta.has(SYNC_META.genesisAt);
+    if (complete) {
+      await writeMeta(tx, { [SYNC_META.enabled]: '1' });
+      return;
+    }
+
+    // A keystore write and a database transaction cannot be one atomic primitive. Treat an
+    // epoch disagreement as an interrupted rotation, never as a forgotten vault: clearing the
+    // oplog here would destroy the only recoverable copy of the local sync history.
+    const storedEpoch = meta.get(SYNC_META.epoch);
+    if (meta.get(SYNC_META.deviceId) === vault.identity.deviceId && storedEpoch && storedEpoch !== String(vault.epoch)) {
+      throw new Error(
+        'Sync key rotation was interrupted before local state could be finalized. Your local history is preserved; restore the matching vault key before resuming sync.',
+      );
+    }
+
+    // A reset from an older build (or a partial database restore) may leave the key while
+    // removing the local roster, chain, and genesis marker. Never merely flip enabled in that
+    // state: the next local edit would extend a different history under an old identity.
+    const baseCurrency = meta.get(SYNC_META.baseCurrency) ?? await readLocalBaseCurrency(tx);
+    const deviceName = meta.get(SYNC_META.deviceName) ?? '';
+    await clearForgottenVaultState(tx);
+    await enrol(tx, {
+      deviceId: vault.identity.deviceId,
+      profile: { name: deviceName, platform: 'unknown' },
+      epoch: vault.epoch,
+      baseCurrency,
+    });
+    const genesis = await runGenesisMigration(tx, vault.identity.deviceId, at);
+    await appendActivity(tx, [activityEntry({ kind: 'paired', recordedAt: at, count: genesis.opCount })]);
+  });
+}
+
+/**
+ * Replaces the vault key and moves every remaining device to a new epoch.
+ *
+ * What it is for: a lost device. Revoking it stops this vault accepting its ops, but it still
+ * holds the old root key, and that key is what addresses and decrypts the drop-box. Rotating
+ * makes the bucket it knows about the wrong bucket, sealed under a key it does not have.
+ *
+ * The cost is stated plainly and cannot be engineered away here: **every device you keep has to
+ * be paired again.** Handing the new key to the remaining peers over the old one would mean the
+ * lost device could read the handover, which is precisely the thing being prevented. So every
+ * peer is revoked, and re-pairing is a deliberate, in-person act — the same one that made them
+ * peers in the first place.
+ */
+export async function rotateVaultKey(deps: SyncSetupDeps): Promise<number> {
+  const vault = await deps.keystore.read();
+  if (!vault) throw new KeystoreError('There is no vault on this device to rotate.', 'empty');
+
+  const epoch = vault.epoch + 1;
+  await deps.keystore.write({
+    vaultKey: createVaultRootKey(),
+    identity: vault.identity,
+    epoch,
+  });
+
+  const at = (deps.nowIso ?? defaultNowIso)();
+  await deps.storage.transact(async (tx) => {
+    await writeMeta(tx, { [SYNC_META.epoch]: String(epoch) });
+    const roster = await readRoster(tx);
+    const held = await readHeldChains(tx);
+    const live = [...roster.values()].filter((peer) => !peer.revokedAt);
+    await writePeers(
+      tx,
+      live.map((peer) => ({
+        ...peer,
+        revokedAt: at,
+        revokedSeq: held.heads.get(peer.deviceId)?.seq ?? 0,
+      })),
+    );
+    await appendActivity(tx, [
+      // The cursor counts slots in a bucket this vault no longer uses.
+      ...live.map((peer) => activityEntry({ kind: 'revoked', recordedAt: at, peerId: peer.deviceId })),
+    ]);
+    await writeMeta(tx, { [SYNC_META.relayCursor]: '0' });
+  });
+
+  return epoch;
+}
+
+// ---------------------------------------------------------------------------
+// Turning it off
+// ---------------------------------------------------------------------------
+
+export interface DisableOptions {
+  /**
+   * Also destroy the key and leave the vault, rather than merely pausing.
+   *
+   * Without it, sync stops and everything needed to resume it survives — the switch on the
+   * screen. With it, this device is no longer a member: its peers keep syncing with each other
+   * and this one has to be paired again from scratch.
+   */
+  readonly forget?: boolean;
+}
+
+/**
+ * Stops syncing, optionally for good.
+ *
+ * **Finance data is never touched.** When `forget` is requested, this device's old sync history
+ * is discarded with the vault it belonged to so the next setup can genesis the same finance
+ * records under a fresh identity. The other devices retain their own history and keep syncing;
+ * the only user data kept here is the finance projection itself.
+ *
+ * The keystore is erased last. An erase that succeeded before a failed transaction would leave
+ * a device still marked as a vault member with no key to act as one, which reads as `unpaired`
+ * on a screen offering to revoke peers it can no longer talk to.
+ */
+export async function disableSync(
+  deps: SyncSetupDeps,
+  options: DisableOptions = {},
+): Promise<void> {
+  await deps.storage.transact(async (tx) => {
+    await writeMeta(tx, { [SYNC_META.enabled]: '0' });
+    if (!options.forget) return;
+
+    // This device is leaving, not revoking a peer from a vault it still owns. Its local roster,
+    // chain, and activity belong to the old vault and must not be presented as the next one.
+    // The other devices retain their own copies and continue syncing with one another.
+    await clearForgottenVaultState(tx);
+  });
+
+  if (options.forget) await deps.keystore.erase();
+}

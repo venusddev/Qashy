@@ -1,0 +1,24 @@
+name: Create Production Builds
+
+# Releases are cut from a version tag, with a manual escape hatch. Deliberately
+# not `push: branches: [main]` — every merge would ship a store submission.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+jobs:
+  build_android_apk:
+    name: Build Android APK
+    type: build
+    params:
+      platform: android
+      profile: development
+
+  build_android:
+    name: Build Android release AAB
+    type: build
+    params:
+      platform: android
+      profile: production

@@ -1,0 +1,74 @@
+{
+  "expo": {
+    "name": "Qashy",
+    "slug": "qashy",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/images/icon.png",
+    "backgroundColor": "#F6F7F9",
+    "scheme": "qashy",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "icon": "./assets/images/icon.png",
+      "bundleIdentifier": "com.venusddev.qashy",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#5966E9",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": true,
+      "package": "com.venusddev.qashy"
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png",
+      "name": "Qashy — Calm Budgeting",
+      "shortName": "Qashy",
+      "themeColor": "#5966E9",
+      "backgroundColor": "#F6F7F9"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#5966E9",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 108,
+          "dark": {
+            "backgroundColor": "#0E0F13",
+            "image": "./assets/images/splash-icon.png"
+          }
+        }
+      ],
+      "expo-sqlite",
+      "expo-sharing",
+      "expo-localization",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Qashy uses the camera only to scan the pairing code shown on another of your own devices. Nothing is recorded, stored, or sent anywhere.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e7487171-c787-48dc-aea9-736d63f07042"
+      }
+    },
+    "owner": "venusddev"
+  }
+}

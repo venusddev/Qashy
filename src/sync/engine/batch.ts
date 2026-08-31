@@ -1,0 +1,345 @@
+/**
+ * The batch codec, and the structural gate every received batch passes through first.
+ *
+ * Decoding is where a hostile peer gets its cheapest shot, so this module is written as a
+ * validator that happens to return a value rather than a parser that happens to check a few
+ * things. Nothing is coerced, nothing is defaulted, and no field is trusted because a
+ * neighbouring field looked plausible. A batch either satisfies every rule below or it does
+ * not exist.
+ *
+ * The order of the checks is part of the defence: size before allocation, shape before
+ * content, structure before cryptography. By the time `verifyChain` and the signature checks
+ * run — which are the expensive parts — the batch is already known to be well-formed, so a
+ * malformed blob costs a JSON parse rather than several thousand Ed25519 verifications.
+ *
+ * **What is deliberately *not* validated here: `entityType` and `kind`.** Both are checked
+ * against closed unions everywhere else in the app, and doing it here would be a bug. An op
+ * from a newer build naming a type this one has never heard of has to be stored, hashed, and
+ * forwarded byte-for-byte, because it is part of a hash chain that other peers depend on —
+ * dropping it truncates history for everyone downstream, permanently. The merge decides what
+ * it can interpret; this decides only what is structurally a batch.
+ */
+
+import {
+  bytesToUtf8,
+  signBatchPayload,
+  utf8Bytes,
+  verifyBatchPayload,
+  type SigningPublicKey,
+  type SigningSecretKey,
+} from '@/sync/crypto';
+import { isEntityType, isHlc, opIdFor, parseHlc, type CausalMeta, type SyncOp } from '@/sync/oplog';
+import {
+  BATCH_FORMAT_VERSION,
+  SyncEngineError,
+  type RosterMember,
+  type SyncBatch,
+  type UnsignedSyncBatch,
+} from '@/sync/engine/types';
+import { canonicalJson } from '@/utils/canonical-json';
+
+/**
+ * The most ops one batch may carry.
+ *
+ * Sized against the genesis migration, which is by far the largest legitimate batch anyone
+ * sends: it converts an entire existing vault into `create` ops in one go. Ten thousand is
+ * comfortably beyond a personal finance history and still small enough that verifying every
+ * signature in the batch is a fraction of a second rather than a frozen screen.
+ *
+ * A sender with more than this splits; there is nothing special about the boundary because
+ * chains resume exactly where they left off.
+ */
+export const MAX_BATCH_OPS = 10_000;
+export const MAX_ROSTER_MEMBERS = 64;
+/** One head per paired device, never an unbounded attacker-controlled persisted map. */
+export const MAX_BATCH_HEADS = MAX_ROSTER_MEMBERS;
+export const MAX_BATCH_STATE = 10_000;
+
+const fail = (message: string): never => {
+  throw new SyncEngineError(message, 'badBatch');
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const text = (value: unknown, what: string): string => {
+  if (typeof value !== 'string' || !value) fail(`${what} is missing.`);
+  return value as string;
+};
+
+/** Allows `''`, which is what a chain's first op carries as its `prevHash`. */
+const optionalText = (value: unknown, what: string): string => {
+  if (typeof value !== 'string') fail(`${what} is not a string.`);
+  return value as string;
+};
+
+const count = (value: unknown, what: string, minimum: number): number => {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) {
+    fail(`${what} is not a valid number.`);
+  }
+  return value as number;
+};
+
+const nullableCount = (value: unknown, what: string, minimum: number): number | null => {
+  if (value === null) return null;
+  return count(value, what, minimum);
+};
+
+const nullableText = (value: unknown, what: string): string | null => {
+  if (value === null) return null;
+  return text(value, what);
+};
+
+const signature = (value: unknown, what: string): string => {
+  const encoded = text(value, what);
+  if (!/^[0-9a-f]{128}$/i.test(encoded)) fail(`${what} is not an Ed25519 signature.`);
+  return encoded;
+};
+
+const decodeRosterMember = (value: unknown, index: number): RosterMember => {
+  if (!isRecord(value)) return fail(`Roster member ${index} is not an object.`);
+  return {
+    deviceId: text(value.deviceId, `Roster member ${index}'s device id`),
+    name: text(value.name, `Roster member ${index}'s name`),
+    platform: text(value.platform, `Roster member ${index}'s platform`),
+    signingKey: text(value.signingKey, `Roster member ${index}'s signing key`),
+    agreementKey: text(value.agreementKey, `Roster member ${index}'s agreement key`),
+    epoch: count(value.epoch, `Roster member ${index}'s epoch`, 1),
+    addedAt: text(value.addedAt, `Roster member ${index}'s added time`),
+    revokedAt: nullableText(value.revokedAt, `Roster member ${index}'s revoked time`),
+    revokedSeq: nullableCount(
+      value.revokedSeq,
+      `Roster member ${index}'s revocation sequence`,
+      0,
+    ),
+  };
+};
+
+const validHlcOrNull = (value: unknown): boolean => value === null || isHlc(value);
+
+const decodeState = (value: unknown, index: number): CausalMeta => {
+  if (!isRecord(value)) return fail(`Full-state entry ${index} is not an object.`);
+  if (
+    !isEntityType(value.entityType) ||
+    typeof value.entityId !== 'string' ||
+    !isHlc(value.maxHlc) ||
+    !isRecord(value.registers) ||
+    !isRecord(value.sets) ||
+    !isRecord(value.maps) ||
+    !Array.isArray(value.unknown)
+  ) return fail(`Full-state entry ${index} is malformed.`);
+  if (value.created !== null && !isRecord(value.created)) {
+    return fail(`Full-state entry ${index} has a malformed create state.`);
+  }
+  if (
+    value.created &&
+    (!isHlc(value.created.hlc) ||
+      !isRecord(value.created.fields) ||
+      (value.created.fields.id !== undefined && value.created.fields.id !== value.entityId))
+  ) return fail(`Full-state entry ${index} has a malformed create state.`);
+  if (value.deleted !== null && !isRecord(value.deleted)) {
+    return fail(`Full-state entry ${index} has a malformed deletion state.`);
+  }
+  if (
+    value.deleted &&
+    (!isHlc(value.deleted.hlc) ||
+      (value.deleted.at !== null && typeof value.deleted.at !== 'string'))
+  ) return fail(`Full-state entry ${index} has a malformed deletion state.`);
+  for (const register of Object.values(value.registers)) {
+    if (!isRecord(register) || !isHlc(register.hlc)) return fail(`Full-state entry ${index} has a malformed register.`);
+  }
+  for (const states of Object.values(value.sets)) {
+    if (!isRecord(states)) return fail(`Full-state entry ${index} has a malformed set.`);
+    for (const state of Object.values(states)) {
+      if (!isRecord(state) || !validHlcOrNull(state.addHlc) || !validHlcOrNull(state.removeHlc)) {
+        return fail(`Full-state entry ${index} has a malformed set entry.`);
+      }
+    }
+  }
+  for (const entries of Object.values(value.maps)) {
+    if (!isRecord(entries)) return fail(`Full-state entry ${index} has a malformed map.`);
+    for (const entry of Object.values(entries)) {
+      if (!isRecord(entry) || !isHlc(entry.hlc)) return fail(`Full-state entry ${index} has a malformed map entry.`);
+    }
+  }
+  return value as unknown as CausalMeta;
+};
+
+type BatchPayload = Omit<UnsignedSyncBatch, 'fullState'> & {
+  readonly fullState: readonly CausalMeta[] | null;
+};
+
+export const batchPayload = (batch: SyncBatch | UnsignedSyncBatch): BatchPayload => ({
+  version: batch.version,
+  epoch: batch.epoch,
+  baseCurrency: batch.baseCurrency,
+  sender: batch.sender,
+  ops: batch.ops,
+  fullState: batch.fullState ?? null,
+  heads: batch.heads,
+  roster: batch.roster,
+});
+
+export const authenticateBatch = (
+  batch: UnsignedSyncBatch,
+  secretKey: SigningSecretKey,
+): SyncBatch => ({
+  ...batch,
+  signature: signBatchPayload(batchPayload(batch), secretKey),
+});
+
+export const verifyBatchAuthentication = (
+  batch: SyncBatch,
+  publicKey: SigningPublicKey,
+): boolean => verifyBatchPayload(batchPayload(batch), batch.signature, publicKey);
+
+// ---------------------------------------------------------------------------
+// Ops
+// ---------------------------------------------------------------------------
+
+const decodeOp = (value: unknown, index: number): SyncOp => {
+  if (!isRecord(value)) return fail(`Op ${index} is not an object.`);
+
+  const deviceId = text(value.deviceId, `Op ${index}'s device`);
+  const seq = count(value.seq, `Op ${index}'s sequence number`, 1);
+
+  // `opId` is derivable from the two fields above, so a disagreement means the batch was
+  // assembled by something that does not know the rule — or edited by something that hoped
+  // one of the three would not be checked.
+  if (value.opId !== opIdFor(deviceId, seq)) {
+    fail(`Op ${index} has an id that does not match its chain position.`);
+  }
+
+  const hlc = text(value.hlc, `Op ${index}'s clock reading`);
+  if (!isHlc(hlc)) fail(`Op ${index} has a malformed clock reading.`);
+  // The author's device id is embedded in its own clock reading, which makes the two
+  // independently forgeable only together. Checking them against each other closes the gap
+  // where an op is attributed to one device and ordered as though it came from another.
+  if (parseHlc(hlc).deviceId !== deviceId) {
+    fail(`Op ${index}'s clock reading belongs to a different device.`);
+  }
+
+  if (!isRecord(value.payload)) fail(`Op ${index} has no payload.`);
+
+  return {
+    opId: value.opId as string,
+    deviceId,
+    seq,
+    prevHash: optionalText(value.prevHash, `Op ${index}'s previous hash`),
+    opHash: text(value.opHash, `Op ${index}'s hash`),
+    hlc,
+    // Cast without checking, on purpose — see the note at the top of this file.
+    entityType: text(value.entityType, `Op ${index}'s entity type`) as SyncOp['entityType'],
+    entityId: text(value.entityId, `Op ${index}'s entity id`),
+    kind: text(value.kind, `Op ${index}'s kind`) as SyncOp['kind'],
+    payload: value.payload as Record<string, unknown>,
+    schema: count(value.schema, `Op ${index}'s schema version`, 1),
+    // An unsealed op has never been signed, so nothing about it can be verified and nothing
+    // downstream would catch that. Only sealed ops are ever transmitted, which makes an
+    // empty signature here a malformed batch rather than a batch that needs verifying.
+    signature: signature(value.signature, `Op ${index}'s signature`),
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Encode / decode
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical JSON, not `JSON.stringify`.
+ *
+ * The batch itself is not hashed, so this is not strictly required for correctness — but
+ * the ops inside it are, and encoding them two different ways depending on which side of a
+ * function boundary you are on is exactly the sort of asymmetry that produces a chain break
+ * nobody can reproduce. One encoder, everywhere.
+ */
+export const encodeBatch = (batch: SyncBatch): Uint8Array => utf8Bytes(canonicalJson(batch));
+
+/**
+ * Parses and validates a batch, or throws.
+ *
+ * There is no lenient mode and no partial result. A caller that got a `SyncEngineError` from
+ * here has learned everything there is to learn: the bytes are not a batch this device can
+ * act on, and the correct response is to record why and drop them.
+ */
+export function decodeBatch(bytes: Uint8Array): SyncBatch {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytesToUtf8(bytes));
+  } catch {
+    // Deliberately not rethrown as-is: a `SyntaxError` from deep inside JSON.parse names a
+    // character offset, which tells a user nothing and tells an attacker where the parser is.
+    throw new SyncEngineError('That batch is not readable.', 'badBatch');
+  }
+  if (!isRecord(parsed)) return fail('That batch is not an object.');
+
+  const ops = parsed.ops;
+  if (!Array.isArray(ops)) return fail('That batch has no ops.');
+  if (ops.length > MAX_BATCH_OPS) {
+    throw new SyncEngineError(
+      `That batch carries ${ops.length} ops; the limit is ${MAX_BATCH_OPS}.`,
+      'tooLarge',
+    );
+  }
+
+  if (!isRecord(parsed.heads)) return fail('That batch does not say what the sender holds.');
+  if (Object.keys(parsed.heads).length > MAX_BATCH_HEADS) {
+    throw new SyncEngineError(
+      `That batch carries too many chain heads; the limit is ${MAX_BATCH_HEADS}.`,
+      'tooLarge',
+    );
+  }
+  const heads: Record<string, number> = {};
+  for (const [deviceId, seq] of Object.entries(parsed.heads)) {
+    // Rebuilt entry by entry rather than passed through, so nothing a peer chose the name of
+    // survives into an object this device will later index into.
+    if (!deviceId) fail('That batch names a device with no id.');
+    heads[deviceId] = count(seq, `The sender's position on chain ${deviceId}`, 0);
+  }
+
+  if (!Array.isArray(parsed.roster)) return fail('That batch has no signed device roster.');
+  if (parsed.roster.length > MAX_ROSTER_MEMBERS) {
+    throw new SyncEngineError(
+      `That batch carries ${parsed.roster.length} devices; the limit is ${MAX_ROSTER_MEMBERS}.`,
+      'tooLarge',
+    );
+  }
+
+  let fullState: CausalMeta[] | undefined;
+  if (parsed.fullState !== undefined && parsed.fullState !== null) {
+    if (!Array.isArray(parsed.fullState)) return fail('That batch has a malformed full state.');
+    if (parsed.fullState.length > MAX_BATCH_STATE) {
+      throw new SyncEngineError(
+        `That batch carries ${parsed.fullState.length} state entries; the limit is ${MAX_BATCH_STATE}.`,
+        'tooLarge',
+      );
+    }
+    const seenStateKeys = new Set<string>();
+    fullState = parsed.fullState.map((entry, index) => {
+      const state = decodeState(entry, index);
+      const key = `${state.entityType}:${state.entityId}`;
+      if (seenStateKeys.has(key)) return fail(`Full-state entry ${index} repeats an entity.`);
+      seenStateKeys.add(key);
+      return state;
+    });
+  }
+
+  const version = count(parsed.version, "That batch's format version", 1);
+  if (version !== BATCH_FORMAT_VERSION) {
+    fail(
+      `That device uses sync batch format v${version}; this app requires v${BATCH_FORMAT_VERSION}.`,
+    );
+  }
+
+  return {
+    version: BATCH_FORMAT_VERSION,
+    epoch: count(parsed.epoch, "That batch's vault epoch", 1),
+    baseCurrency: text(parsed.baseCurrency, "That batch's base currency"),
+    sender: text(parsed.sender, "That batch's sender"),
+    ops: ops.map(decodeOp),
+    ...(fullState !== undefined ? { fullState } : {}),
+    heads,
+    roster: parsed.roster.map(decodeRosterMember),
+    signature: signature(parsed.signature, "That batch's sender signature"),
+  };
+}

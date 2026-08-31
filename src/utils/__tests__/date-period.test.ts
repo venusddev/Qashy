@@ -1,0 +1,45 @@
+import { addRecurrence, firstRecurrenceOnOrAfter } from '@/utils/date';
+import { resolvePeriod } from '@/utils/period';
+
+describe('calendar behavior', () => {
+  it('clamps month-end recurrence without skipping February', () => {
+    expect(addRecurrence('2028-01-31', 'month', 1)).toBe('2028-02-29');
+    expect(addRecurrence('2027-01-31', 'month', 1)).toBe('2027-02-28');
+  });
+
+  it('preserves a non-month-end recurrence anchor after a short month', () => {
+    const february = addRecurrence('2026-01-30', 'month', 1, '2026-01-30');
+    expect(february).toBe('2026-02-28');
+    expect(addRecurrence(february, 'month', 1, '2026-01-30')).toBe('2026-03-30');
+  });
+
+  it('does not infer month-end from February 28 or a 30-day month', () => {
+    expect(addRecurrence('2026-02-28', 'month', 1)).toBe('2026-03-28');
+    expect(addRecurrence('2026-04-30', 'month', 1)).toBe('2026-05-30');
+  });
+
+  it('finds the first aligned recurrence at or after a lower bound', () => {
+    expect(firstRecurrenceOnOrAfter('2026-01-01', 'week', 1, '2026-08-01')).toBe('2026-08-06');
+    expect(firstRecurrenceOnOrAfter('2026-01-31', 'month', 1, '2026-03-01')).toBe('2026-03-31');
+  });
+
+  it('refuses an interval that would create an invalid calendar date', () => {
+    expect(() => addRecurrence('2026-01-01', 'year', Number.MAX_SAFE_INTEGER)).toThrow(RangeError);
+  });
+
+  it('snaps monthly periods to calendar months regardless of anchor day', () => {
+    // Intentional behavior: see the comment in resolvePeriod. Persisted budget
+    // snapshots are keyed by periodStart, so these boundaries must stay stable.
+    expect(resolvePeriod({ unit: 'month', interval: 1, anchorDate: '2026-01-15', endDate: null }, '2026-02-10')).toEqual({
+      start: '2026-02-01',
+      end: '2026-02-28',
+    });
+  });
+
+  it('resolves anchored multi-month budget periods', () => {
+    expect(resolvePeriod({ unit: 'month', interval: 3, anchorDate: '2026-01-01', endDate: null }, '2026-05-15')).toEqual({
+      start: '2026-04-01',
+      end: '2026-06-30',
+    });
+  });
+});

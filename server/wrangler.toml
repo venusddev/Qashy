@@ -1,0 +1,67 @@
+#
+# Qashy relay — Cloudflare Workers deployment.
+#
+# Deploy with:   npm install && npx wrangler deploy
+# Run locally:   npx wrangler dev            (http://127.0.0.1:8787)
+#
+# See README.md. Nothing here is secret: there are no bindings to credentials, no KV
+# namespace, and no environment variables beyond a retention window.
+#
+name = "qashy-relay"
+main = "src/worker.ts"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+[vars]
+# Days an undelivered blob is kept before it is swept.
+#
+# This is a privacy setting before it is a cost one — ciphertext nobody collected should not
+# sit on a disk forever — and it is safe to shorten. A device that was away longer simply
+# receives the ops again from the sender's outbox, which never got an acknowledgement for
+# them. Nothing is lost by expiring a blob; something is only delayed.
+RETENTION_DAYS = "14"
+
+# Logs are off.
+#
+# The app's settings screen tells the user this relay keeps no record of who asked for what.
+# Turning observability on would make that false — request logs carry IP addresses and bucket
+# ids, which together are exactly the correlation the whole design exists to prevent. If you
+# need to debug a deploy, turn it on, debug it, and turn it back off.
+[observability]
+enabled = false
+
+# Shared edge limits. The authenticated bucket quota uses a constant key so a vault cannot evade
+# it by choosing a fresh opaque id. The allocation quota is keyed by Cloudflare's source address
+# only before a Durable Object can be named, and the rendezvous quota is an aggregate room cap.
+[[ratelimits]]
+name = "REQUEST_RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 120, period = 60 }
+
+[[ratelimits]]
+name = "ALLOCATION_RATE_LIMITER"
+namespace_id = "1002"
+simple = { limit = 120, period = 60 }
+
+[[ratelimits]]
+name = "RENDEZVOUS_RATE_LIMITER"
+namespace_id = "1003"
+simple = { limit = 120, period = 60 }
+
+[[durable_objects.bindings]]
+name = "BUCKET"
+class_name = "BucketRoom"
+
+[[durable_objects.bindings]]
+name = "RENDEZVOUS"
+class_name = "RendezvousRoom"
+
+# SQLite-backed Durable Objects, which are included in the Workers free plan.
+#
+# `new_sqlite_classes` rather than `new_classes`: the bucket needs SQL for the monotonic slot
+# allocation the client's cursor depends on, and the key-value storage backend cannot provide
+# it. Do not change this tag or the class names after a deploy — that is a data migration,
+# not an edit.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BucketRoom", "RendezvousRoom"]
